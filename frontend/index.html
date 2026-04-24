@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CC Desktop Switch</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="icon" href="assets/app-icon.png">
+    <link href="css/style.css" rel="stylesheet">
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="#dashboard" aria-label="CC Desktop Switch">
+        <span class="brand-mark"><img src="assets/app-icon.png" alt=""></span>
+        <span class="brand-title">CC Desktop Switch</span>
+      </a>
+      <div class="header-actions">
+        <div class="lang-switch" aria-label="language switch">
+          <button class="text-button active" type="button" data-lang="zh">中</button>
+          <span>/</span>
+          <button class="text-button" type="button" data-lang="en">EN</button>
+        </div>
+        <span class="header-divider"></span>
+        <button class="theme-btn" type="button" data-theme-action="toggle" aria-label="Toggle theme">
+          <i class="bi bi-moon-stars-fill"></i>
+        </button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <nav class="route-tabs" aria-label="Primary navigation">
+        <a href="#dashboard" class="route-tab" data-nav="dashboard"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
+        <a href="#providers" class="route-tab" data-nav="providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
+        <a href="#models" class="route-tab" data-nav="models"><i class="bi bi-arrow-left-right"></i><span data-i18n="nav.models">模型映射</span></a>
+        <a href="#desktop" class="route-tab" data-nav="desktop"><i class="bi bi-pc-display"></i><span data-i18n="nav.desktop">Desktop</span></a>
+        <a href="#proxy" class="route-tab" data-nav="proxy"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">代理</span></a>
+        <a href="#settings" class="route-tab" data-nav="settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
+        <a href="#guide" class="route-tab" data-nav="guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
+      </nav>
+
+      <section class="page active" id="page-dashboard" data-page="dashboard">
+        <div class="status-grid">
+          <article class="status-card">
+            <h2 data-i18n="dashboard.desktopStatus">Desktop 状态</h2>
+            <div class="hero-status muted" id="dashboardDesktopIcon"><i class="bi bi-exclamation-lg"></i></div>
+            <strong class="muted-text" id="dashboardDesktopStatus" data-i18n="status.notConfigured">未配置</strong>
+          </article>
+          <article class="status-card">
+            <h2 data-i18n="dashboard.proxyStatus">代理状态</h2>
+            <div class="hero-line-icon success"><i class="bi bi-hdd-network"></i><i class="bi bi-activity badge-icon"></i></div>
+            <strong id="dashboardProxyStatus">运行中 :18080</strong>
+          </article>
+          <article class="status-card">
+            <h2 data-i18n="dashboard.activeProvider">当前提供商</h2>
+            <span class="large-dot"></span>
+            <strong id="dashboardProviderName">DeepSeek</strong>
+          </article>
+        </div>
+
+        <div class="quick-actions">
+          <a href="#desktop" class="btn btn-primary action-button"><i class="bi bi-gear"></i><span data-i18n="dashboard.configureDesktop">配置 Desktop</span></a>
+          <button class="btn btn-success action-button" type="button" data-action="proxy-start"><i class="bi bi-play-circle"></i><span data-i18n="proxy.start">启动代理</span></button>
+          <a href="#providers" class="btn btn-outline-primary action-button"><i class="bi bi-arrow-left-right"></i><span data-i18n="dashboard.switchProvider">切换提供商</span></a>
+        </div>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="title-with-icon">
+              <span class="soft-icon"><i class="bi bi-file-earmark-text"></i></span>
+              <h2 data-i18n="dashboard.recentActivity">最近操作</h2>
+            </div>
+            <button class="btn btn-outline-primary btn-sm" type="button" data-action="view-logs"><span data-i18n="common.viewAll">查看全部</span><i class="bi bi-chevron-right"></i></button>
+          </div>
+          <div class="activity-list" id="activityList"></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-providers-add" data-page="providers/add">
+        <div class="page-title">
+          <h1 data-i18n="providersAdd.title">添加提供商</h1>
+          <p data-i18n="providersAdd.subtitle">添加新的 API 提供商或选择预设</p>
+        </div>
+
+        <div class="two-column">
+          <article class="panel form-panel">
+            <form id="providerForm" autocomplete="off">
+              <div class="mb-4">
+                <label class="form-label required" for="providerName" data-i18n="providers.name">提供商名称</label>
+                <input class="form-control form-control-lg" id="providerName" name="name" value="My DeepSeek" autocomplete="organization" required>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" for="providerBaseUrl">API Base URL</label>
+                <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/anthropic" autocomplete="url" required>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" for="providerApiKey">API Key</label>
+                <div class="input-with-button">
+                  <input class="form-control form-control-lg" id="providerApiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="current-password" required>
+                  <button type="button" class="input-icon" data-action="toggle-key" aria-label="toggle api key"><i class="bi bi-eye"></i></button>
+                </div>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" for="providerAuth">Auth Scheme</label>
+                <select class="form-select form-select-lg" id="providerAuth" name="authScheme">
+                  <option value="bearer">bearer</option>
+                  <option value="x-api-key">x-api-key</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" data-i18n="providers.format">API 格式</label>
+                <div class="segmented">
+                  <input type="radio" class="btn-check" name="apiFormat" id="formatAnthropic" value="Anthropic" checked>
+                  <label class="btn" for="formatAnthropic">Anthropic</label>
+                  <input type="radio" class="btn-check" name="apiFormat" id="formatOpenai" value="OpenAI">
+                  <label class="btn" for="formatOpenai">OpenAI</label>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="btn btn-primary btn-lg" type="submit" data-i18n="common.save">保存</button>
+                <a class="btn btn-outline-primary btn-lg" href="#providers" data-i18n="common.cancel">取消</a>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel preset-panel">
+            <h2 data-i18n="providersAdd.presets">快捷预设</h2>
+            <div id="presetList" class="preset-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-providers" data-page="providers">
+        <div class="page-title with-action">
+          <div>
+            <h1 data-i18n="providers.title">提供商</h1>
+            <p data-i18n="providers.subtitle">管理已配置的 API 提供商</p>
+          </div>
+          <a href="#providers/add" class="btn btn-primary btn-lg"><i class="bi bi-plus-lg"></i><span data-i18n="providers.add">添加提供商</span></a>
+        </div>
+
+        <article class="panel table-panel">
+          <div class="provider-table-header">
+            <span></span>
+            <span data-i18n="providers.name">提供商名称</span>
+            <span data-i18n="providers.baseUrl">API Base URL</span>
+            <span data-i18n="providers.mapping">模型映射</span>
+            <span data-i18n="providers.status">状态</span>
+            <span data-i18n="providers.actions">操作</span>
+          </div>
+          <div id="providerRows"></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-models" data-page="models">
+        <div class="page-title">
+          <h1 data-i18n="models.title">模型映射</h1>
+          <p data-i18n="models.subtitle">为每个提供商配置模型别名</p>
+        </div>
+
+        <div class="narrow-field">
+          <label class="form-label" for="modelProvider" data-i18n="models.provider">提供商</label>
+          <select class="form-select form-select-lg" id="modelProvider"></select>
+        </div>
+
+        <div class="mapping-stack" id="mappingStack"></div>
+
+        <div class="narrow-field mt-4">
+          <label class="form-label" for="defaultModel" data-i18n="models.defaultModel">默认模型</label>
+          <select class="form-select form-select-lg" id="defaultModel">
+            <option>Sonnet</option>
+            <option>Haiku</option>
+            <option>Opus</option>
+          </select>
+        </div>
+
+        <div class="info-box">
+          <i class="bi bi-info-circle"></i>
+          <p data-i18n="models.hint">Desktop 发送 claude-sonnet-4-6 等模型别名，本地代理会映射到你选择的提供商模型。</p>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-primary btn-lg" type="button" data-action="save-models"><i class="bi bi-floppy"></i><span data-i18n="common.save">保存</span></button>
+          <button class="btn btn-outline-primary btn-lg" type="button" data-action="reset-models"><i class="bi bi-arrow-clockwise"></i><span data-i18n="common.reset">重置</span></button>
+        </div>
+      </section>
+
+      <section class="page" id="page-desktop" data-page="desktop">
+        <div class="page-title title-with-back">
+          <a class="square-button" href="#dashboard" aria-label="back"><i class="bi bi-arrow-left"></i></a>
+          <div>
+            <h1 data-i18n="desktop.title">Desktop 集成</h1>
+            <p data-i18n="desktop.subtitle">一键配置 Claude Desktop 3P 模式</p>
+          </div>
+        </div>
+
+        <div class="two-column desktop-layout">
+          <div>
+            <article class="panel desktop-card">
+              <h2 data-i18n="desktop.configTitle">Desktop 3P 配置</h2>
+              <div class="configured-row">
+                <span class="circle-check"><i class="bi bi-check-lg"></i></span>
+                <strong id="desktopConfiguredText" data-i18n="status.configured">已配置</strong>
+              </div>
+              <div class="config-list" id="desktopConfigList"></div>
+              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用 Desktop 配置</span></button>
+            </article>
+            <article class="panel details-panel">
+              <div class="panel-header">
+                <h2 data-i18n="desktop.details">配置详情</h2>
+                <i class="bi bi-chevron-down"></i>
+              </div>
+              <pre class="code-block" id="desktopJson"></pre>
+            </article>
+            <button class="btn btn-outline-danger btn-lg w-100 danger-outline" type="button" data-action="clear-desktop"><i class="bi bi-trash"></i><span data-i18n="desktop.clear">清除配置</span></button>
+          </div>
+
+          <article class="panel guide-panel">
+            <h2 data-i18n="desktop.quickGuide">快速引导</h2>
+            <div class="mini-steps">
+              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">点击应用</strong><p data-i18n="desktop.step1Text">将配置写入 Claude Desktop</p></div>
+              <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">重启 Claude Desktop</strong><p data-i18n="desktop.step2Text">关闭并重新打开 Claude Desktop</p></div>
+              <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">选择 3P 模式</strong><p data-i18n="desktop.step3Text">在设置中选择 Cowork on 3P</p></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-proxy" data-page="proxy">
+        <div class="page-title">
+          <h1 data-i18n="proxy.title">代理控制台</h1>
+          <p data-i18n="proxy.subtitle">监控并控制本地代理</p>
+        </div>
+
+        <article class="panel proxy-control">
+          <div class="proxy-running">
+            <span class="pulse-dot"></span>
+            <div>
+              <strong id="proxyStateText">运行中</strong>
+              <p data-i18n="proxy.localhost">监听 localhost</p>
+            </div>
+          </div>
+          <div class="port-control">
+            <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">代理端口</label>
+            <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
+          </div>
+          <button class="btn btn-outline-secondary btn-lg" type="button" data-action="proxy-start"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动</span></button>
+          <button class="btn btn-danger btn-lg" type="button" data-action="proxy-stop"><i class="bi bi-stop-fill"></i><span data-i18n="proxy.stop">停止</span></button>
+        </article>
+
+        <article class="terminal-panel">
+          <div class="terminal-toolbar">
+            <button class="btn btn-outline-light btn-sm" type="button" data-action="clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
+            <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="autoScroll" checked><span class="switch-ui"></span></label>
+          </div>
+          <div class="terminal-log" id="proxyLog"></div>
+        </article>
+
+        <div class="stats-grid" id="proxyStats"></div>
+      </section>
+
+      <section class="page" id="page-settings" data-page="settings">
+        <div class="page-title">
+          <h1 data-i18n="settings.title">设置</h1>
+          <p data-i18n="settings.subtitle">全局偏好和应用信息</p>
+        </div>
+
+        <article class="panel settings-panel">
+          <div class="settings-row">
+            <strong data-i18n="settings.theme">主题</strong>
+            <div class="segmented theme-segment">
+              <button class="btn active" type="button" data-theme-action="light"><i class="bi bi-sun"></i><span data-i18n="theme.light">浅色</span></button>
+              <button class="btn" type="button" data-theme-action="dark"><i class="bi bi-moon"></i><span data-i18n="theme.dark">深色</span></button>
+              <button class="btn" type="button" data-theme-action="auto"><i class="bi bi-display"></i><span data-i18n="theme.auto">跟随系统</span></button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <strong data-i18n="settings.language">语言</strong>
+            <div class="segmented language-segment">
+              <button class="btn active" type="button" data-lang="zh">中文</button>
+              <button class="btn" type="button" data-lang="en">EN</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <strong data-i18n="settings.proxyPort">代理端口</strong>
+            <input class="form-control form-control-lg" type="number" id="settingsProxyPort" value="18080">
+          </div>
+          <div class="settings-row">
+            <strong data-i18n="settings.adminPort">管理端口</strong>
+            <input class="form-control form-control-lg" type="number" id="settingsAdminPort" value="18081">
+          </div>
+          <div class="settings-row">
+            <strong data-i18n="settings.autoStart">开机自启</strong>
+            <label class="switch-label only-switch"><input type="checkbox" id="autoStart" checked><span class="switch-ui"></span></label>
+          </div>
+          <div class="settings-row">
+            <strong data-i18n="settings.updateUrl">更新地址</strong>
+            <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
+          </div>
+        </article>
+
+        <article class="panel about-panel">
+          <h2 data-i18n="settings.about">关于</h2>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.0</strong></div>
+          <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
+          <div><span data-i18n="settings.checkUpdate">检查更新</span><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button></div>
+          <p class="update-status" id="updateStatus"></p>
+          <div><span>GitHub</span><a href="https://github.com/" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
+        </article>
+      </section>
+
+      <section class="page" id="page-guide" data-page="guide">
+        <div class="guide-hero">
+          <img src="assets/app-icon.png" alt="CC Desktop Switch icon">
+          <div>
+            <h1 data-i18n="guide.title">使用引导</h1>
+            <p data-i18n="guide.subtitle">按下面 4 步完成 Desktop 3P 接入。</p>
+          </div>
+        </div>
+        <div class="timeline">
+          <article class="timeline-card"><span>1</span><i class="bi bi-plug"></i><div><h2 data-i18n="guide.step1">添加提供商</h2><p data-i18n="guide.step1Text">选择预设或手动填写 API Base URL 和 API Key。</p></div></article>
+          <article class="timeline-card"><span>2</span><i class="bi bi-pc-display"></i><div><h2 data-i18n="guide.step2">配置 Desktop</h2><p data-i18n="guide.step2Text">写入 inferenceProvider、gateway 地址和模型列表。</p></div></article>
+          <article class="timeline-card"><span>3</span><i class="bi bi-broadcast-pin"></i><div><h2 data-i18n="guide.step3">启动代理</h2><p data-i18n="guide.step3Text">确认本地端口可用，并观察请求日志。</p></div></article>
+          <article class="timeline-card"><span>4</span><i class="bi bi-arrow-repeat"></i><div><h2 data-i18n="guide.step4">重启 Claude Desktop</h2><p data-i18n="guide.step4Text">重启后选择 3P 模式开始使用。</p></div></article>
+        </div>
+        <a class="btn btn-primary btn-lg guide-start" href="#providers/add"><i class="bi bi-arrow-right-circle"></i><span data-i18n="guide.start">开始使用</span></a>
+      </section>
+    </main>
+
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" data-i18n="providers.deleteTitle">删除提供商</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" data-i18n="providers.deleteMessage">确认删除这个提供商吗？此操作会更新当前配置文件。</div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="common.cancel">取消</button>
+            <button type="button" class="btn btn-danger" id="confirmDelete" data-i18n="common.delete">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+      <div id="appToast" class="toast" role="status" aria-live="polite" aria-atomic="true">
+        <div class="toast-body" id="toastBody"></div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/i18n.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

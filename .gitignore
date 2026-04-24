@@ -1,0 +1,26 @@
+.release-signing/
+.packaged-runtime-home/
+.onefile-runtime-home/
+.runtime-home/
+.playwright-mcp/
+__pycache__/
+*.pyc
+*.log
+.pytest_cache/
+.ruff_cache/
+
+build/
+dist/
+release/
+*.zip
+*.exe
+*.sig
+latest.json
+
+# Local-only project materials and generated review screenshots.
+prompt-codex.md
+image/
+ccds-*.png
+
+# Failed favicon download kept locally for reference; the app uses zhipu.png.
+frontend/assets/providers/zhipu.ico
