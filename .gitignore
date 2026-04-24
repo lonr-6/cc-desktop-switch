@@ -21,6 +21,7 @@ latest.json
 prompt-codex.md
 image/
 ccds-*.png
+docs/promo/screenshots/
 
 # Failed favicon download kept locally for reference; the app uses zhipu.png.
 frontend/assets/providers/zhipu.ico
