@@ -1,6 +1,10 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
 import threading
+import time
+from urllib.parse import urlparse
+
+import httpx
 import uvicorn
 from pathlib import Path
 from typing import Optional
@@ -14,6 +18,7 @@ from backend import registry
 from backend import update as updater
 from backend.proxy import (
     create_proxy_app,
+    get_upstream_headers,
     stats as proxy_stats,
     log_buffer as proxy_logs,
 )
@@ -34,9 +39,57 @@ def _public_provider(provider: Optional[dict]) -> Optional[dict]:
     return public
 
 
+async def _test_provider_connection(provider: dict) -> dict:
+    """测试 provider 基础地址的网络可达性，不发送模型推理请求。"""
+    base_url = str(provider.get("baseUrl", "")).strip()
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {
+            "success": False,
+            "message": "API 地址无效",
+        }
+
+    headers = get_upstream_headers(provider)
+    headers.pop("Content-Type", None)
+    started = time.perf_counter()
+
+    try:
+        timeout = httpx.Timeout(8.0, connect=5.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await client.head(base_url, headers=headers)
+            if response.status_code in {404, 405}:
+                response = await client.get(base_url, headers=headers)
+    except httpx.RequestError as exc:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        return {
+            "success": True,
+            "ok": False,
+            "latencyMs": latency_ms,
+            "message": f"连接失败：{exc.__class__.__name__}",
+        }
+
+    latency_ms = round((time.perf_counter() - started) * 1000)
+    status_code = response.status_code
+    reachable = status_code < 500
+    if 200 <= status_code < 300:
+        message = f"连接正常，{latency_ms} ms"
+    elif status_code in {401, 403}:
+        message = f"地址可达，认证返回 {status_code}，{latency_ms} ms"
+    else:
+        message = f"地址可达，HTTP {status_code}，{latency_ms} ms"
+
+    return {
+        "success": True,
+        "ok": reachable,
+        "latencyMs": latency_ms,
+        "statusCode": status_code,
+        "message": message,
+    }
+
+
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.0")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.1")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -114,6 +167,23 @@ def create_admin_app() -> FastAPI:
         """设为默认"""
         if cfg.set_active_provider(provider_id):
             return {"success": True, "message": "默认提供商已更新"}
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "message": "提供商不存在"},
+        )
+
+    @app.post("/api/providers/test")
+    async def test_provider_payload(request: Request):
+        """测试表单中尚未保存的 provider 连接。"""
+        data = await request.json()
+        return await _test_provider_connection(data)
+
+    @app.post("/api/providers/{provider_id}/test")
+    async def test_saved_provider(provider_id: str):
+        """测试已保存 provider 的连接延迟。"""
+        for provider in cfg.get_providers():
+            if provider["id"] == provider_id:
+                return await _test_provider_connection(provider)
         return JSONResponse(
             status_code=404,
             content={"success": False, "message": "提供商不存在"},
@@ -283,7 +353,9 @@ def _start_proxy_server(port: int) -> bool:
         proxy_app,
         host="127.0.0.1",
         port=port,
-        log_level="info",
+        log_level="warning",
+        access_log=False,
+        log_config=None,
     )
     _proxy_server = uvicorn.Server(config)
 

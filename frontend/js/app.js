@@ -7,6 +7,7 @@
   ];
   let pendingDeleteId = null;
   let selectedPreset = null;
+  let editingProviderId = null;
   let deleteModal = null;
   let toast = null;
 
@@ -38,9 +39,81 @@
     return `<i class="bi ${item.icon || "bi-plug-fill"}"></i>`;
   }
 
+  function providerPayloadFromForm(includeModels = true) {
+    const apiFormat = $("[name='apiFormat']:checked")?.value || "Anthropic";
+    const payload = {
+      name: $("#providerName").value.trim(),
+      baseUrl: $("#providerBaseUrl").value.trim(),
+      apiKey: $("#providerApiKey").value.trim(),
+      authScheme: $("#providerAuth").value,
+      apiFormat,
+      extraHeaders: selectedPreset?.extraHeaders || {},
+    };
+    if (includeModels) {
+      payload.models = selectedPreset?.models || {
+        sonnet: "",
+        haiku: "",
+        opus: "",
+        default: "",
+      };
+    }
+    return payload;
+  }
+
+  function providerCardMarkup(provider) {
+    const mapping = [provider.mappings.sonnet, provider.mappings.haiku, provider.mappings.opus]
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" / ");
+    return `
+      <article class="provider-switch-card ${provider.default ? "active" : ""}">
+        <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+        <span class="provider-logo">${iconMarkup(provider)}</span>
+        <span class="provider-main">
+          <strong>${provider.name}</strong>
+          <a class="truncate" href="${provider.baseUrl}" target="_blank" rel="noreferrer">${provider.baseUrl}</a>
+        </span>
+        <span class="provider-meta truncate">${mapping || provider.apiFormat}</span>
+        <span class="provider-actions">
+          <button class="btn btn-primary compact-enable" type="button" data-action="set-default" data-id="${provider.id}" ${provider.default ? "disabled" : ""}>
+            <i class="bi bi-play-fill"></i><span>${provider.default ? t("status.default") : t("providers.enable")}</span>
+          </button>
+          <button class="icon-action" type="button" data-action="test-provider" data-id="${provider.id}" title="${t("providers.testSpeed")}" aria-label="${t("providers.testSpeed")}"><i class="bi bi-lightning-charge"></i></button>
+          <button class="icon-action" type="button" data-action="edit-provider" data-id="${provider.id}" title="${t("common.edit")}" aria-label="${t("common.edit")}"><i class="bi bi-pencil-square"></i></button>
+          <button class="icon-action" type="button" data-action="copy-url" data-url="${provider.baseUrl}" title="${t("common.copy")}" aria-label="${t("common.copy")}"><i class="bi bi-copy"></i></button>
+          <a class="icon-action" href="#models" title="${t("nav.models")}" aria-label="${t("nav.models")}"><i class="bi bi-diagram-3"></i></a>
+          <a class="icon-action" href="#proxy" title="${t("nav.proxy")}" aria-label="${t("nav.proxy")}"><i class="bi bi-terminal"></i></a>
+          <button class="icon-action danger" type="button" data-action="delete-provider" data-id="${provider.id}" title="${t("common.delete")}" aria-label="${t("common.delete")}"><i class="bi bi-trash"></i></button>
+        </span>
+        <span class="speed-result inline" data-speed-for="${provider.id}"></span>
+      </article>
+    `;
+  }
+
+  async function renderProviderCards(targetSelector) {
+    const target = $(targetSelector);
+    if (!target) return;
+    const providers = await CCApi.getProviders();
+    if (!providers.length) {
+      const presets = await CCApi.getPresets();
+      target.innerHTML = presets.map((preset) => `
+        <button class="provider-switch-card preset-card" type="button" data-action="new-from-preset" data-preset="${preset.id}">
+          <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
+          <span class="provider-logo">${iconMarkup(preset)}</span>
+          <span class="provider-main"><strong>${preset.name}</strong><span class="truncate">${preset.baseUrl}</span></span>
+          <span class="provider-meta">${preset.apiFormat}</span>
+          <span class="provider-actions"><span class="compact-enable ghost"><i class="bi bi-plus-lg"></i><span>${t("providers.add")}</span></span></span>
+        </button>
+      `).join("");
+      return;
+    }
+    target.innerHTML = providers.map(providerCardMarkup).join("");
+  }
+
   async function renderDashboard() {
     const status = await CCApi.getStatus();
     const activities = await CCApi.getActivities();
+    await renderProviderCards("#dashboardProviderCards");
     const desktopIcon = $("#dashboardDesktopIcon");
     desktopIcon.classList.toggle("muted", !status.desktopConfigured);
     desktopIcon.innerHTML = `<i class="bi ${status.desktopConfigured ? "bi-check-lg" : "bi-exclamation-lg"}"></i>`;
@@ -65,25 +138,74 @@
     `).join("");
   }
 
-  async function renderProviders() {
+  function setProviderFormMode(titleKey) {
+    const title = $("#page-providers-add .page-title h1");
+    if (title) title.textContent = t(titleKey);
+    const submit = $("#providerForm button[type='submit']");
+    if (submit) submit.textContent = t("common.save");
+    const result = $("#formSpeedResult");
+    if (result) {
+      result.textContent = "";
+      result.className = "speed-result";
+    }
+  }
+
+  function resetProviderForm() {
+    editingProviderId = null;
+    selectedPreset = null;
+    setProviderFormMode("providersAdd.title");
+    $("#providerName").value = "";
+    $("#providerBaseUrl").value = "";
+    $("#providerApiKey").value = "";
+    $("#providerAuth").value = "bearer";
+    $all("[name='apiFormat']").forEach((input) => {
+      input.checked = input.value === "Anthropic";
+    });
+  }
+
+  function applyPresetToForm(preset, notify = true) {
+    $("#providerName").value = preset.name;
+    $("#providerBaseUrl").value = preset.baseUrl;
+    $("#providerAuth").value = preset.authScheme;
+    selectedPreset = preset;
+    $all("[name='apiFormat']").forEach((input) => {
+      input.checked = input.value === preset.apiFormat;
+    });
+    if (notify) showToast(`${preset.name} ${t("toast.presetFilled")}`);
+  }
+
+  async function fillProviderForEdit(providerId) {
     const providers = await CCApi.getProviders();
-    $("#providerRows").innerHTML = providers.map((provider) => {
-      const mapping = `S:${provider.mappings.sonnet}　H:${provider.mappings.haiku}　P:${provider.mappings.opus}`;
-      return `
-        <div class="provider-row ${provider.default ? "default" : ""}">
-          <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
-          <span class="provider-name"><span class="provider-logo">${iconMarkup(provider)}</span><span>${provider.name}</span></span>
-          <span class="truncate">${provider.baseUrl}</span>
-          <span class="truncate">${mapping}</span>
-          <span class="status-badge ${provider.default ? "active" : ""}"><i class="bi bi-circle-fill"></i>${provider.default ? t("status.default") : t("status.standby")}</span>
-          <span class="row-actions">
-            <button class="btn btn-outline-primary" type="button" data-action="set-default" data-id="${provider.id}"><i class="bi bi-star"></i><span>${t("providers.setDefault")}</span></button>
-            <a class="btn btn-outline-secondary" href="#providers/add" aria-label="edit ${provider.name}"><i class="bi bi-pencil"></i></a>
-            <button class="btn btn-outline-danger" type="button" data-action="delete-provider" data-id="${provider.id}" aria-label="delete ${provider.name}"><i class="bi bi-trash"></i></button>
-          </span>
-        </div>
-      `;
-    }).join("");
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider) return;
+    editingProviderId = provider.id;
+    selectedPreset = { models: provider.mappings, extraHeaders: {} };
+    setProviderFormMode("providersAdd.editTitle");
+    $("#providerName").value = provider.name;
+    $("#providerBaseUrl").value = provider.baseUrl;
+    $("#providerApiKey").value = "";
+    $("#providerAuth").value = provider.authScheme;
+    $all("[name='apiFormat']").forEach((input) => {
+      input.checked = input.value.toLowerCase() === provider.apiFormat.toLowerCase();
+    });
+  }
+
+  async function renderProviderForm() {
+    await renderPresets();
+    if (editingProviderId) {
+      await fillProviderForEdit(editingProviderId);
+      return;
+    }
+    if (selectedPreset) {
+      setProviderFormMode("providersAdd.title");
+      applyPresetToForm(selectedPreset, false);
+      return;
+    }
+    resetProviderForm();
+  }
+
+  async function renderProviders() {
+    await renderProviderCards("#providerRows");
   }
 
   async function renderModelSelectors() {
@@ -160,7 +282,7 @@
       tab.classList.toggle("active", tab.dataset.nav === key);
     });
     if (route === "dashboard") await renderDashboard();
-    if (route === "providers/add") await renderPresets();
+    if (route === "providers/add") await renderProviderForm();
     if (route === "providers") await renderProviders();
     if (route === "models") await renderModelSelectors();
     if (route === "desktop") await renderDesktop();
@@ -206,9 +328,62 @@
     try {
       if (action === "set-default") {
         await CCApi.setDefaultProvider(actionEl.dataset.id);
+        await renderProviderCards("#dashboardProviderCards");
         await renderProviders();
         await renderDashboard();
         showToast(t("toast.defaultUpdated"));
+      }
+
+      if (action === "new-from-preset") {
+        const presets = await CCApi.getPresets();
+        selectedPreset = presets.find((item) => item.id === actionEl.dataset.preset) || null;
+        editingProviderId = null;
+        window.location.hash = "providers/add";
+      }
+
+      if (action === "edit-provider") {
+        editingProviderId = actionEl.dataset.id;
+        selectedPreset = null;
+        window.location.hash = "providers/add";
+      }
+
+      if (action === "copy-url") {
+        await navigator.clipboard.writeText(actionEl.dataset.url || "");
+        showToast(t("toast.copied"));
+      }
+
+      if (action === "test-provider") {
+        const resultEl = $(`[data-speed-for="${actionEl.dataset.id}"]`);
+        actionEl.disabled = true;
+        if (resultEl) {
+          resultEl.textContent = t("providers.testing");
+          resultEl.classList.remove("bad");
+        }
+        try {
+          const result = await CCApi.testProvider(actionEl.dataset.id);
+          if (resultEl) {
+            resultEl.textContent = result.message || `${result.latencyMs} ms`;
+            resultEl.classList.toggle("bad", result.ok === false);
+          }
+          showToast(result.message || t("providers.testDone"));
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
+      if (action === "test-provider-form") {
+        const resultEl = $("#formSpeedResult");
+        actionEl.disabled = true;
+        resultEl.textContent = t("providers.testing");
+        resultEl.classList.remove("bad");
+        try {
+          const result = await CCApi.testProviderPayload(providerPayloadFromForm(false));
+          resultEl.textContent = result.message || `${result.latencyMs} ms`;
+          resultEl.classList.toggle("bad", result.ok === false);
+          showToast(result.message || t("providers.testDone"));
+        } finally {
+          actionEl.disabled = false;
+        }
       }
 
       if (action === "delete-provider") {
@@ -290,14 +465,8 @@
     const presets = await CCApi.getPresets();
     const preset = presets.find((item) => item.id === presetId);
     if (!preset) return;
-    $("#providerName").value = preset.name;
-    $("#providerBaseUrl").value = preset.baseUrl;
-    $("#providerAuth").value = preset.authScheme;
-    selectedPreset = preset;
-    $all("[name='apiFormat']").forEach((input) => {
-      input.checked = input.value === preset.apiFormat;
-    });
-    showToast(`${preset.name} ${t("toast.presetFilled")}`);
+    editingProviderId = null;
+    applyPresetToForm(preset);
   }
 
   function bindEvents() {
@@ -311,27 +480,31 @@
     document.addEventListener("click", (event) => {
       const langButton = event.target.closest("[data-lang]");
       if (langButton) CCI18n.apply(langButton.dataset.lang);
+      const addLink = event.target.closest("a[href='#providers/add']");
+      if (addLink) {
+        editingProviderId = null;
+        selectedPreset = null;
+      }
       const themeButton = event.target.closest("[data-theme-action]");
       if (themeButton) applyTheme(themeButton.dataset.themeAction);
       const presetButton = event.target.closest("[data-preset]");
-      if (presetButton) fillPreset(presetButton.dataset.preset);
+      if (presetButton && presetButton.closest("#presetList")) fillPreset(presetButton.dataset.preset);
       handleAction(event.target);
     });
 
     $("#providerForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const form = new FormData(event.currentTarget);
       try {
-        await CCApi.addProvider({
-          name: form.get("name"),
-          baseUrl: form.get("baseUrl"),
-          apiKey: form.get("apiKey"),
-          authScheme: form.get("authScheme"),
-          apiFormat: form.get("apiFormat"),
-          models: selectedPreset?.models || {},
-          extraHeaders: selectedPreset?.extraHeaders || {},
-        });
-        showToast(t("toast.providerSaved"));
+        const payload = providerPayloadFromForm(true);
+        if (editingProviderId) {
+          await CCApi.updateProvider(editingProviderId, payload);
+          showToast(t("toast.providerUpdated"));
+        } else {
+          await CCApi.addProvider(payload);
+          showToast(t("toast.providerSaved"));
+        }
+        editingProviderId = null;
+        selectedPreset = null;
         window.location.hash = "providers";
       } catch (error) {
         console.error(error);

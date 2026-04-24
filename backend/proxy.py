@@ -418,7 +418,7 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.0")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.1")
 
     @app.get("/health")
     @app.get("/status")

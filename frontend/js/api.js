@@ -52,6 +52,7 @@
         sonnet: models.sonnet || '',
         haiku: models.haiku || '',
         opus: models.opus || '',
+        default: models.default || models.sonnet || models.haiku || models.opus || '',
       },
       ...computeIcon(provider),
     };
@@ -116,12 +117,45 @@
       return data.provider || data;
     },
 
+    async updateProvider(id, payload) {
+      const data = await api('PUT', `/api/providers/${encodeURIComponent(id)}`, {
+        name: payload.name,
+        baseUrl: payload.baseUrl,
+        apiKey: payload.apiKey,
+        authScheme: payload.authScheme || 'bearer',
+        apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
+        models: {
+          sonnet: payload.models?.sonnet || '',
+          haiku: payload.models?.haiku || '',
+          opus: payload.models?.opus || '',
+          default: payload.models?.default || '',
+        },
+        extraHeaders: payload.extraHeaders || {},
+      });
+      return data.provider || data;
+    },
+
     async deleteProvider(id) {
       return api('DELETE', `/api/providers/${encodeURIComponent(id)}`);
     },
 
     async setDefaultProvider(id) {
       return api('PUT', `/api/providers/${encodeURIComponent(id)}/default`);
+    },
+
+    async testProvider(id) {
+      return api('POST', `/api/providers/${encodeURIComponent(id)}/test`);
+    },
+
+    async testProviderPayload(payload) {
+      return api('POST', '/api/providers/test', {
+        name: payload.name,
+        baseUrl: payload.baseUrl,
+        apiKey: payload.apiKey,
+        authScheme: payload.authScheme || 'bearer',
+        apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
+        extraHeaders: payload.extraHeaders || {},
+      });
     },
 
     async saveModelMappings(id, mappings) {

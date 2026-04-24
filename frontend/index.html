@@ -15,6 +15,15 @@
         <span class="brand-mark"><img src="assets/app-icon.png" alt=""></span>
         <span class="brand-title">CC Desktop Switch</span>
       </a>
+      <nav class="route-tabs" aria-label="Primary navigation">
+        <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Providers"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
+        <a href="#providers" class="route-tab" data-nav="providers" title="Providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
+        <a href="#models" class="route-tab" data-nav="models" title="Models"><i class="bi bi-arrow-left-right"></i><span data-i18n="nav.models">模型映射</span></a>
+        <a href="#desktop" class="route-tab" data-nav="desktop" title="Desktop"><i class="bi bi-pc-display"></i><span data-i18n="nav.desktop">Desktop</span></a>
+        <a href="#proxy" class="route-tab" data-nav="proxy" title="Proxy"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">代理</span></a>
+        <a href="#settings" class="route-tab" data-nav="settings" title="Settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
+        <a href="#guide" class="route-tab" data-nav="guide" title="Guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
+      </nav>
       <div class="header-actions">
         <div class="lang-switch" aria-label="language switch">
           <button class="text-button active" type="button" data-lang="zh">中</button>
@@ -22,24 +31,31 @@
           <button class="text-button" type="button" data-lang="en">EN</button>
         </div>
         <span class="header-divider"></span>
+        <a class="theme-btn" href="#settings" aria-label="Settings">
+          <i class="bi bi-gear"></i>
+        </a>
         <button class="theme-btn" type="button" data-theme-action="toggle" aria-label="Toggle theme">
           <i class="bi bi-moon-stars-fill"></i>
         </button>
+        <a class="round-add" href="#providers/add" aria-label="Add provider">
+          <i class="bi bi-plus-lg"></i>
+        </a>
       </div>
     </header>
 
     <main class="app-main">
-      <nav class="route-tabs" aria-label="Primary navigation">
-        <a href="#dashboard" class="route-tab" data-nav="dashboard"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
-        <a href="#providers" class="route-tab" data-nav="providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
-        <a href="#models" class="route-tab" data-nav="models"><i class="bi bi-arrow-left-right"></i><span data-i18n="nav.models">模型映射</span></a>
-        <a href="#desktop" class="route-tab" data-nav="desktop"><i class="bi bi-pc-display"></i><span data-i18n="nav.desktop">Desktop</span></a>
-        <a href="#proxy" class="route-tab" data-nav="proxy"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">代理</span></a>
-        <a href="#settings" class="route-tab" data-nav="settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
-        <a href="#guide" class="route-tab" data-nav="guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
-      </nav>
-
       <section class="page active" id="page-dashboard" data-page="dashboard">
+        <div class="switch-board">
+          <div class="switch-board-head">
+            <div>
+              <h1>Providers</h1>
+              <p>选择一个提供商，启动代理后给 Claude Desktop 使用。</p>
+            </div>
+            <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
+          </div>
+          <div class="provider-card-list" id="dashboardProviderCards"></div>
+        </div>
+
         <div class="status-grid">
           <article class="status-card">
             <h2 data-i18n="dashboard.desktopStatus">Desktop 状态</h2>
@@ -90,8 +106,12 @@
                 <input class="form-control form-control-lg" id="providerName" name="name" value="My DeepSeek" autocomplete="organization" required>
               </div>
               <div class="mb-4">
-                <label class="form-label required" for="providerBaseUrl">API Base URL</label>
+                <div class="label-line">
+                  <label class="form-label required" for="providerBaseUrl">API Base URL</label>
+                  <button class="link-action" type="button" data-action="test-provider-form"><i class="bi bi-lightning-charge"></i><span>管理与测速</span></button>
+                </div>
                 <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/anthropic" autocomplete="url" required>
+                <div class="speed-result" id="formSpeedResult"></div>
               </div>
               <div class="mb-4">
                 <label class="form-label required" for="providerApiKey">API Key</label>
@@ -301,7 +321,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.0</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.1</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div><span data-i18n="settings.checkUpdate">检查更新</span><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button></div>
           <p class="update-status" id="updateStatus"></p>

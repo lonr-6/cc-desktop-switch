@@ -1,4 +1,5 @@
 fastapi>=0.110.0
 uvicorn>=0.27.0
 httpx>=0.27.0
+pywebview>=5.4,<6.0
 pyinstaller>=6.0.0

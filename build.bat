@@ -5,7 +5,7 @@ chcp 65001 >nul
 :MENU
 cls
 echo ========================================
-echo    CC Desktop Switch v1.0.0 - 构建工具
+echo    CC Desktop Switch v1.0.1 - 构建工具
 echo ========================================
 echo.
 echo  请选择打包方式：
@@ -147,7 +147,8 @@ if "%MODE%"=="onefile" echo    dist\CC-Desktop-Switch.exe
 if "%MODE%"=="zip" echo    CC-Desktop-Switch.zip
 if "%MODE%"=="installer" dir /b CC-Desktop-Switch-Setup-*.exe 2>nul
 echo.
-echo  启动后浏览器自动打开 http://127.0.0.1:18081
+echo  启动后会打开 CC Desktop Switch 桌面窗口
+echo  如需调试浏览器模式，可执行: python main.py --browser
 echo ========================================
 echo.
 

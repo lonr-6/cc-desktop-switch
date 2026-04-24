@@ -2,6 +2,7 @@
 .packaged-runtime-home/
 .onefile-runtime-home/
 .runtime-home/
+.tmp-*/
 .playwright-mcp/
 __pycache__/
 *.pyc

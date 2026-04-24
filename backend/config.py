@@ -10,7 +10,7 @@ CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],

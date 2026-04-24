@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.0.1",
     [string]$OutputDir = "release",
     [switch]$Build,
     [switch]$TryInstaller,
@@ -172,6 +172,16 @@ $setupExe = Join-Path $root "CC-Desktop-Switch-Setup-$Version.exe"
 
 Set-Location $root
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+foreach ($pattern in @(
+    "CC-Desktop-Switch-v*-Windows-*",
+    "CC-Desktop-Switch-release-public.pem",
+    "latest.json",
+    "latest.json.sha256",
+    "latest.json.sig"
+)) {
+    Get-ChildItem -LiteralPath $releaseDir -File -Filter $pattern -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+}
 
 if ($Build) {
     $env:CCDS_ONEFILE = ""
