@@ -94,7 +94,7 @@ jobs:
             throw "No release assets found."
           }
 
-          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null | Out-Null
+          cmd /c "gh release view $tag --repo $env:GITHUB_REPOSITORY >NUL 2>NUL"
           $releaseExists = $LASTEXITCODE -eq 0
           if ($releaseExists) {
             gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
