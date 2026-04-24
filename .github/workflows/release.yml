@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix, for example 1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y --no-progress
+
+      - name: Build release assets
+        shell: powershell
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        run: |
+          $version = "${{ inputs.version }}"
+          if (-not $version) {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+
+          $args = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", "scripts\New-Release.ps1",
+            "-Version", $version,
+            "-Build",
+            "-TryInstaller",
+            "-Repository", $env:GITHUB_REPOSITORY
+          )
+
+          if ($env:WINDOWS_CODESIGN_PFX_BASE64) {
+            $args += "-CodeSign"
+          }
+
+          powershell @args
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify release signatures
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\latest.json"
+          $setup = "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
+          if (Test-Path -LiteralPath $setup) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $setup
+          }
+
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          $notes = "Windows release for CC Desktop Switch v$env:RELEASE_VERSION."
+          $assets = Get-ChildItem -LiteralPath "release" -File | ForEach-Object { $_.FullName }
+          if (-not $assets) {
+            throw "No release assets found."
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --title "CC Desktop Switch $tag" --notes $notes
+          }
