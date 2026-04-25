@@ -26,6 +26,24 @@ ICON = str(ICON_FILE) if ICON_FILE.exists() else None
 WEBVIEW_HIDDENIMPORTS = collect_submodules("webview")
 WEBVIEW_DATAS = collect_data_files("webview") + copy_metadata("pywebview")
 
+
+def safe_collect_submodules(package):
+    try:
+        return collect_submodules(package)
+    except Exception:
+        return []
+
+
+def safe_copy_metadata(package):
+    try:
+        return copy_metadata(package)
+    except Exception:
+        return []
+
+
+PYSTRAY_HIDDENIMPORTS = safe_collect_submodules("pystray")
+PYSTRAY_DATAS = safe_copy_metadata("pystray") + safe_copy_metadata("Pillow")
+
 block_cipher = None
 
 a = Analysis(
@@ -35,16 +53,16 @@ a = Analysis(
     datas=[
         (str(FRONTEND), "frontend"),
         (str(ROOT / "LICENSE.txt"), "."),
-    ] + WEBVIEW_DATAS,
+    ] + WEBVIEW_DATAS + PYSTRAY_DATAS,
     hiddenimports=[
         "backend", "backend.main", "backend.config",
         "backend.registry", "backend.proxy", "backend.update", "backend.i18n",
-    ] + WEBVIEW_HIDDENIMPORTS,
+    ] + WEBVIEW_HIDDENIMPORTS + PYSTRAY_HIDDENIMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        "tkinter", "matplotlib", "numpy", "pandas", "PIL",
+        "tkinter", "matplotlib", "numpy", "pandas",
         "scipy", "setuptools", "pip",
         "cryptography", "zmq", "notebook", "IPython",
         "PyQt5", "PySide2", "PySide6",

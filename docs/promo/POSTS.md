@@ -43,7 +43,7 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 不是破解，也不是绕过官方机制。它只是把官方支持的配置方式做成了一个本地界面。
 
-目前 v1.0.1 已经发到 GitHub：
+目前 v1.0.2 已经发到 GitHub：
 
 https://github.com/lonr-6/cc-desktop-switch
 
@@ -66,15 +66,15 @@ https://github.com/lonr-6/cc-desktop-switch
 
 ### Single post
 
-I released CC Desktop Switch v1.0.1.
+I released CC Desktop Switch v1.0.2.
 
-It is a small local tool for configuring Claude Desktop with third-party API providers.
+It is a small local desktop app for configuring Claude Desktop with third-party API providers.
 
 What it does:
-- provider presets for DeepSeek, Kimi, Qiniu, Zhipu
+- provider presets for DeepSeek, Kimi, Qiniu, Zhipu, SiliconFlow, and Bailian
 - local proxy on 127.0.0.1
 - model name mapping
-- Anthropic/OpenAI-style upstream support
+- Anthropic-compatible upstream presets
 - Windows build + portable ZIP
 
 It is not an official Anthropic tool, and it does not include a Windows Authenticode signature yet.
@@ -101,13 +101,14 @@ The app manages providers, API keys, model mapping, and the local proxy.
 
 So this is not a bypass or a patch. It is a UI around the supported configuration path.
 
-4/ v1.0.1 includes:
+4/ v1.0.2 includes:
 
 - Windows installer
 - portable ZIP
 - latest.json
 - sha256 files
 - detached .sig files
+- simplified one-step provider setup
 
 No Authenticode certificate yet, so Windows may still show an unknown publisher warning.
 
@@ -120,7 +121,7 @@ Use a test API key first. Do not paste real keys into issues, screenshots, or co
 ### 标题备选
 
 1. 开源了一个 Claude Desktop 3P 配置小工具：CC Desktop Switch
-2. CC Desktop Switch v1.0.1：本地代理方式接 DeepSeek / Kimi / 七牛云 / 智谱
+2. CC Desktop Switch v1.0.2：桌面应用方式接 DeepSeek / Kimi / 七牛云 / 智谱
 3. 把 Claude Desktop 的第三方推理配置做成了一个 Windows 本地工具
 
 ### 正文
@@ -139,7 +140,7 @@ Release：
 https://github.com/lonr-6/cc-desktop-switch/releases/latest
 ```
 
-它解决的问题比较具体：Claude Desktop 的第三方推理配置能用，但手动流程对普通用户不太顺。这个工具把 provider 管理、本地代理、模型映射和 Desktop 配置写入放到一个本地桌面界面里。
+它解决的问题比较具体：Claude Desktop 的第三方推理配置能用，但手动流程对普通用户不太顺。这个工具把 provider 管理、本机转发、模型映射和 Claude 桌面版配置写入放到一个本地桌面界面里。
 
 基本链路：
 
@@ -153,9 +154,9 @@ Claude Desktop
 
 - FastAPI 管理后台。
 - Vanilla JS + Bootstrap 前端。
-- Provider 预设：DeepSeek、Kimi、七牛云、智谱。
-- 支持 Anthropic 和 OpenAI 两类上游格式。
-- Claude 模型名到上游模型名的映射。
+- Provider 预设：DeepSeek、Kimi、七牛云、智谱、SiliconFlow、阿里云百炼。
+- 主流程使用 Anthropic 兼容接口，避免用户手动判断 API 格式。
+- Claude 模型名到上游模型名的映射已整合到添加/编辑页面。
 - SSE 流式转发。
 - Windows 注册表和 macOS plist 写入入口。
 - GitHub Actions 自动构建 Windows 安装包和便携包。

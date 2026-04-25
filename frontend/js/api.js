@@ -28,6 +28,9 @@
     bigmodel: { logo: 'assets/providers/zhipu.png' },
     glm: { logo: 'assets/providers/zhipu.png' },
     siliconflow: { icon: 'bi-diagram-3-fill' },
+    bailian: { icon: 'bi-boxes' },
+    dashscope: { icon: 'bi-boxes' },
+    aliyun: { icon: 'bi-cloud-fill' },
   };
 
   function computeIcon(provider) {
@@ -46,6 +49,8 @@
       baseUrl: provider.baseUrl,
       apiFormat: provider.apiFormat || 'anthropic',
       authScheme: provider.authScheme || 'bearer',
+      hasApiKey: !!provider.hasApiKey,
+      extraHeaders: provider.extraHeaders || {},
       default: provider.id === activeId,
       isBuiltin: !!provider.isBuiltin,
       mappings: {
@@ -56,6 +61,28 @@
       },
       ...computeIcon(provider),
     };
+  }
+
+  function providerBody(payload, includeModels = true) {
+    const body = {
+      name: payload.name,
+      baseUrl: payload.baseUrl,
+      authScheme: payload.authScheme || 'bearer',
+      apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
+      extraHeaders: payload.extraHeaders || {},
+    };
+    if (payload.apiKey) {
+      body.apiKey = payload.apiKey;
+    }
+    if (includeModels) {
+      body.models = {
+        sonnet: payload.models?.sonnet || '',
+        haiku: payload.models?.haiku || '',
+        opus: payload.models?.opus || '',
+        default: payload.models?.default || '',
+      };
+    }
+    return body;
   }
 
   function mapLog(log) {
@@ -94,44 +121,19 @@
         apiFormat: p.apiFormat === 'openai' ? 'OpenAI' : 'Anthropic',
         authScheme: p.authScheme || 'bearer',
         models: p.models || {},
+        modelOptions: p.modelOptions || {},
         extraHeaders: p.extraHeaders || {},
         ...computeIcon(p),
       }));
     },
 
     async addProvider(payload) {
-      const data = await api('POST', '/api/providers', {
-        name: payload.name,
-        baseUrl: payload.baseUrl,
-        apiKey: payload.apiKey,
-        authScheme: payload.authScheme || 'bearer',
-        apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
-        models: {
-          sonnet: payload.models?.sonnet || '',
-          haiku: payload.models?.haiku || '',
-          opus: payload.models?.opus || '',
-          default: payload.models?.default || '',
-        },
-        extraHeaders: payload.extraHeaders || {},
-      });
+      const data = await api('POST', '/api/providers', providerBody(payload));
       return data.provider || data;
     },
 
     async updateProvider(id, payload) {
-      const data = await api('PUT', `/api/providers/${encodeURIComponent(id)}`, {
-        name: payload.name,
-        baseUrl: payload.baseUrl,
-        apiKey: payload.apiKey,
-        authScheme: payload.authScheme || 'bearer',
-        apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
-        models: {
-          sonnet: payload.models?.sonnet || '',
-          haiku: payload.models?.haiku || '',
-          opus: payload.models?.opus || '',
-          default: payload.models?.default || '',
-        },
-        extraHeaders: payload.extraHeaders || {},
-      });
+      const data = await api('PUT', `/api/providers/${encodeURIComponent(id)}`, providerBody(payload));
       return data.provider || data;
     },
 
@@ -147,19 +149,28 @@
       return api('POST', `/api/providers/${encodeURIComponent(id)}/test`);
     },
 
+    async queryProviderUsage(id) {
+      return api('POST', `/api/providers/${encodeURIComponent(id)}/usage`);
+    },
+
     async testProviderPayload(payload) {
-      return api('POST', '/api/providers/test', {
-        name: payload.name,
-        baseUrl: payload.baseUrl,
-        apiKey: payload.apiKey,
-        authScheme: payload.authScheme || 'bearer',
-        apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
-        extraHeaders: payload.extraHeaders || {},
-      });
+      return api('POST', '/api/providers/test', providerBody(payload, false));
     },
 
     async saveModelMappings(id, mappings) {
       return api('PUT', `/api/providers/${encodeURIComponent(id)}/models`, { models: mappings });
+    },
+
+    async fetchProviderModels(id) {
+      return api('GET', `/api/providers/${encodeURIComponent(id)}/models/available`);
+    },
+
+    async fetchProviderModelsPayload(payload) {
+      return api('POST', '/api/providers/models/available', providerBody(payload, false));
+    },
+
+    async autofillProviderModels(id) {
+      return api('POST', `/api/providers/${encodeURIComponent(id)}/models/autofill`);
     },
 
     async getDesktopStatus() {
@@ -237,6 +248,23 @@
       const params = new URLSearchParams();
       if (updateUrl) params.set('url', updateUrl);
       return api('GET', `/api/update/check?${params.toString()}`);
+    },
+
+    async createBackup() {
+      return api('POST', '/api/config/backup');
+    },
+
+    async listBackups() {
+      const data = await api('GET', '/api/config/backups');
+      return data.backups || [];
+    },
+
+    async exportConfig() {
+      return api('GET', '/api/config/export');
+    },
+
+    async importConfig(configData) {
+      return api('POST', '/api/config/import', configData);
     },
 
     async getActivities() {

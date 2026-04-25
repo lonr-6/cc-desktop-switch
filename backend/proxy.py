@@ -117,6 +117,84 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     return models_config.get("default") or original_model
 
 
+def build_upstream_url(base_url: str, api_format: str) -> str:
+    """根据用户填写的 Base URL 生成最终请求地址。
+
+    用户可能填写基础地址，也可能直接粘贴完整 endpoint；这里统一处理，
+    避免重复拼接 /v1/messages 或 /chat/completions。
+    """
+    clean = str(base_url or "").strip().rstrip("/")
+    api_format = str(api_format or "anthropic").lower()
+    lower = clean.lower()
+    if api_format == "openai":
+        if lower.endswith("/chat/completions"):
+            return clean
+        return f"{clean}/chat/completions"
+    if lower.endswith("/v1/messages"):
+        return clean
+    if lower.endswith("/v1"):
+        return f"{clean}/messages"
+    return f"{clean}/v1/messages"
+
+
+def _content_to_text(content) -> str:
+    """把 Anthropic 文本块转换为 OpenAI 兼容接口常见的字符串 content。"""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                elif isinstance(item.get("content"), str):
+                    parts.append(item["content"])
+                elif isinstance(item.get("content"), list):
+                    text = _content_to_text(item["content"])
+                    if text:
+                        parts.append(text)
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def _anthropic_to_openai_body(body: dict, stream: bool) -> dict:
+    """将 Claude Desktop 发来的 Anthropic Messages 请求转换为 OpenAI Chat。"""
+    messages = [dict(message) for message in body.get("messages", [])]
+    system_msg = body.get("system")
+    if not system_msg and messages and messages[0].get("role") == "system":
+        system_msg = messages.pop(0).get("content")
+
+    openai_messages = []
+    system_text = _content_to_text(system_msg)
+    if system_text:
+        openai_messages.append({"role": "system", "content": system_text})
+
+    for message in messages:
+        role = message.get("role", "user")
+        if role not in {"system", "user", "assistant", "tool"}:
+            role = "user"
+        content = _content_to_text(message.get("content"))
+        openai_messages.append({"role": role, "content": content})
+
+    openai_body = {
+        "model": body.get("model", ""),
+        "messages": openai_messages,
+        "max_tokens": body.get("max_tokens", 4096),
+        "stream": stream,
+    }
+    if "temperature" in body and body["temperature"] is not None:
+        openai_body["temperature"] = body["temperature"]
+    if "top_p" in body and body["top_p"] is not None:
+        openai_body["top_p"] = body["top_p"]
+    if body.get("stop_sequences"):
+        openai_body["stop"] = body["stop_sequences"]
+    return openai_body
+
+
 def get_upstream_headers(provider: dict) -> dict:
     """获取上游请求的认证头"""
     auth_scheme = provider.get("authScheme", "bearer")
@@ -127,7 +205,7 @@ def get_upstream_headers(provider: dict) -> dict:
         "Accept": "application/json",
     }
 
-    if provider.get("apiFormat", "anthropic") == "anthropic":
+    if str(provider.get("apiFormat", "anthropic")).lower() == "anthropic":
         headers["anthropic-version"] = "2023-06-01"
 
     if api_key:
@@ -152,37 +230,14 @@ async def forward_request(
     request_id: str,
 ) -> dict:
     """转发请求到上游 API（非流式）"""
-    base_url = provider.get("baseUrl", "").rstrip("/")
-    api_format = provider.get("apiFormat", "anthropic")
+    api_format = str(provider.get("apiFormat", "anthropic")).lower()
 
     if api_format == "openai":
-        # OpenAI 格式转换
-        messages = body.get("messages", [])
-        system_msg = None
-        if body.get("system"):
-            system_msg = body["system"]
-        elif messages and messages[0].get("role") == "system":
-            system_msg = messages.pop(0)["content"]
-
-        openai_body = {
-            "model": body.get("model", ""),
-            "messages": messages,
-            "max_tokens": body.get("max_tokens", 4096),
-            "stream": False,
-        }
-        if system_msg:
-            openai_body["messages"].insert(0, {
-                "role": "system",
-                "content": system_msg,
-            })
-        if body.get("temperature"):
-            openai_body["temperature"] = body["temperature"]
-
-        upstream_url = f"{base_url}/chat/completions"
-        upstream_body = openai_body
+        upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
+        upstream_body = _anthropic_to_openai_body(body, stream=False)
     else:
         # Anthropic 格式透传
-        upstream_url = f"{base_url}/v1/messages"
+        upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
 
         # 移除流式标记（我们单独处理流式）
         upstream_body = dict(body)
@@ -243,8 +298,9 @@ async def forward_request(
         return {"error": {"type": "timeout", "message": "上游 API 请求超时"}}
     except Exception as e:
         stats.record(False)
-        log_buffer.add("ERROR", f"请求失败: {str(e)}")
-        return {"error": {"type": "connection_error", "message": str(e)}}
+        message = f"{e.__class__.__name__}: {str(e)}".rstrip()
+        log_buffer.add("ERROR", f"请求失败: {message}")
+        return {"error": {"type": "connection_error", "message": message}}
 
 
 async def forward_request_stream(
@@ -253,35 +309,13 @@ async def forward_request_stream(
     request_id: str,
 ):
     """转发流式请求到上游 API（SSE）"""
-    base_url = provider.get("baseUrl", "").rstrip("/")
-    api_format = provider.get("apiFormat", "anthropic")
+    api_format = str(provider.get("apiFormat", "anthropic")).lower()
 
     if api_format == "openai":
-        messages = body.get("messages", [])
-        system_msg = None
-        if body.get("system"):
-            system_msg = body["system"]
-        elif messages and messages[0].get("role") == "system":
-            system_msg = messages.pop(0)["content"]
-
-        openai_body = {
-            "model": body.get("model", ""),
-            "messages": messages,
-            "max_tokens": body.get("max_tokens", 4096),
-            "stream": True,
-        }
-        if system_msg:
-            openai_body["messages"].insert(0, {
-                "role": "system",
-                "content": system_msg,
-            })
-        if body.get("temperature"):
-            openai_body["temperature"] = body["temperature"]
-
-        upstream_url = f"{base_url}/chat/completions"
-        upstream_body = openai_body
+        upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
+        upstream_body = _anthropic_to_openai_body(body, stream=True)
     else:
-        upstream_url = f"{base_url}/v1/messages"
+        upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
         upstream_body = dict(body)
         upstream_body.pop("thinking", None)
         # 确保流式开启
@@ -344,10 +378,11 @@ async def forward_request_stream(
 
     except Exception as e:
         stats.record(False)
-        log_buffer.add("ERROR", f"流式请求失败: {str(e)}")
+        message = f"{e.__class__.__name__}: {str(e)}".rstrip()
+        log_buffer.add("ERROR", f"流式请求失败: {message}")
         error_event = {
             "type": "error",
-            "error": {"message": str(e)},
+            "error": {"message": message},
         }
         yield f"data: {json.dumps(error_event)}\n\n"
 
@@ -418,7 +453,7 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.1")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.2")
 
     @app.get("/health")
     @app.get("/status")

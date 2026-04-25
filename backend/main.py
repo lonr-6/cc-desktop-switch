@@ -14,9 +14,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import config as cfg
+from backend import provider_tools
 from backend import registry
 from backend import update as updater
 from backend.proxy import (
+    build_upstream_url,
     create_proxy_app,
     get_upstream_headers,
     stats as proxy_stats,
@@ -36,12 +38,21 @@ def _public_provider(provider: Optional[dict]) -> Optional[dict]:
     if "apiKey" in public:
         public["hasApiKey"] = bool(public.get("apiKey"))
         public.pop("apiKey", None)
+    public.pop("extraHeaders", None)
     return public
+
+
+def _provider_not_found():
+    return JSONResponse(
+        status_code=404,
+        content={"success": False, "message": "提供商不存在"},
+    )
 
 
 async def _test_provider_connection(provider: dict) -> dict:
     """测试 provider 基础地址的网络可达性，不发送模型推理请求。"""
-    base_url = str(provider.get("baseUrl", "")).strip()
+    api_format = str(provider.get("apiFormat", "anthropic")).lower()
+    base_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return {
@@ -89,14 +100,18 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.1")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.2")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
         """阻止普通网页表单跨站触发本地写操作。"""
+        sensitive_reads = {"/api/config/export"}
         if (
             request.url.path.startswith("/api/")
-            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and (
+                request.method not in {"GET", "HEAD", "OPTIONS"}
+                or request.url.path in sensitive_reads
+            )
             and request.headers.get("x-ccds-request") != "1"
         ):
             return JSONResponse(
@@ -178,6 +193,15 @@ def create_admin_app() -> FastAPI:
         data = await request.json()
         return await _test_provider_connection(data)
 
+    @app.post("/api/providers/models/available")
+    async def get_available_models_from_payload(request: Request):
+        """自动获取表单中尚未保存的 provider 模型列表。"""
+        data = await request.json()
+        result = await provider_tools.fetch_provider_models(data)
+        if result.get("success"):
+            return result
+        return JSONResponse(status_code=400, content=result)
+
     @app.post("/api/providers/{provider_id}/test")
     async def test_saved_provider(provider_id: str):
         """测试已保存 provider 的连接延迟。"""
@@ -188,6 +212,14 @@ def create_admin_app() -> FastAPI:
             status_code=404,
             content={"success": False, "message": "提供商不存在"},
         )
+
+    @app.post("/api/providers/{provider_id}/usage")
+    async def query_provider_usage(provider_id: str):
+        """查询提供商余额/用量。"""
+        provider = cfg.get_provider(provider_id)
+        if not provider:
+            return _provider_not_found()
+        return await provider_tools.query_provider_usage(provider)
 
     # ── 模型映射 API ──
     @app.get("/api/providers/{provider_id}/models")
@@ -202,6 +234,36 @@ def create_admin_app() -> FastAPI:
             content={"success": False, "message": "提供商不存在"},
         )
 
+    @app.get("/api/providers/{provider_id}/models/available")
+    async def get_available_models(provider_id: str):
+        """自动获取 provider 支持的模型列表。"""
+        provider = cfg.get_provider(provider_id)
+        if not provider:
+            return _provider_not_found()
+        result = await provider_tools.fetch_provider_models(provider)
+        if result.get("success"):
+            return result
+        return JSONResponse(status_code=400, content=result)
+
+    @app.post("/api/providers/{provider_id}/models/autofill")
+    async def autofill_models(provider_id: str):
+        """自动获取模型列表并写入推荐模型映射。"""
+        provider = cfg.get_provider(provider_id)
+        if not provider:
+            return _provider_not_found()
+        result = await provider_tools.fetch_provider_models(provider)
+        if not result.get("success"):
+            return JSONResponse(status_code=400, content=result)
+        if cfg.update_models(provider_id, result.get("suggested", {})):
+            return {
+                "success": True,
+                "models": result.get("models", []),
+                "suggested": result.get("suggested", {}),
+                "endpoint": result.get("endpoint"),
+                "message": "模型映射已自动填充",
+            }
+        return _provider_not_found()
+
     @app.put("/api/providers/{provider_id}/models")
     async def save_models(provider_id: str, request: Request):
         """保存模型映射"""
@@ -212,6 +274,39 @@ def create_admin_app() -> FastAPI:
             status_code=404,
             content={"success": False, "message": "提供商不存在"},
         )
+
+    # ── 配置备份 / 导入导出 API ──
+    @app.post("/api/config/backup")
+    async def create_config_backup():
+        """手动创建配置备份。"""
+        return {"success": True, "backup": cfg.create_backup("manual")}
+
+    @app.get("/api/config/backups")
+    async def list_config_backups():
+        """列出配置备份。"""
+        return {"backups": cfg.list_backups()}
+
+    @app.get("/api/config/export")
+    async def export_config():
+        """导出完整配置。会包含 API Key，仅供用户本机下载保存。"""
+        return cfg.export_config()
+
+    @app.post("/api/config/import")
+    async def import_config(request: Request):
+        """导入完整配置。导入前自动备份当前配置。"""
+        try:
+            data = await request.json()
+            result = cfg.import_config(data)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc)},
+            )
+        return {
+            "success": True,
+            "message": "配置已导入",
+            "backup": result["backup"],
+        }
 
     # ── Desktop 集成 API ──
     @app.get("/api/desktop/status")

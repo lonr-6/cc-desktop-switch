@@ -18,8 +18,6 @@
       <nav class="route-tabs" aria-label="Primary navigation">
         <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Providers"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
         <a href="#providers" class="route-tab" data-nav="providers" title="Providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
-        <a href="#models" class="route-tab" data-nav="models" title="Models"><i class="bi bi-arrow-left-right"></i><span data-i18n="nav.models">模型映射</span></a>
-        <a href="#desktop" class="route-tab" data-nav="desktop" title="Desktop"><i class="bi bi-pc-display"></i><span data-i18n="nav.desktop">Desktop</span></a>
         <a href="#proxy" class="route-tab" data-nav="proxy" title="Proxy"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">代理</span></a>
         <a href="#settings" class="route-tab" data-nav="settings" title="Settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
         <a href="#guide" class="route-tab" data-nav="guide" title="Guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
@@ -47,9 +45,9 @@
       <section class="page active" id="page-dashboard" data-page="dashboard">
         <div class="switch-board">
           <div class="switch-board-head">
-            <div>
+          <div>
               <h1>Providers</h1>
-              <p>选择一个提供商，启动代理后给 Claude Desktop 使用。</p>
+              <p>选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
             </div>
             <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
           </div>
@@ -58,7 +56,7 @@
 
         <div class="status-grid">
           <article class="status-card">
-            <h2 data-i18n="dashboard.desktopStatus">Desktop 状态</h2>
+            <h2 data-i18n="dashboard.desktopStatus">桌面版状态</h2>
             <div class="hero-status muted" id="dashboardDesktopIcon"><i class="bi bi-exclamation-lg"></i></div>
             <strong class="muted-text" id="dashboardDesktopStatus" data-i18n="status.notConfigured">未配置</strong>
           </article>
@@ -75,8 +73,8 @@
         </div>
 
         <div class="quick-actions">
-          <a href="#desktop" class="btn btn-primary action-button"><i class="bi bi-gear"></i><span data-i18n="dashboard.configureDesktop">配置 Desktop</span></a>
-          <button class="btn btn-success action-button" type="button" data-action="proxy-start"><i class="bi bi-play-circle"></i><span data-i18n="proxy.start">启动代理</span></button>
+          <a href="#providers/add" class="btn btn-primary action-button"><i class="bi bi-magic"></i><span data-i18n="dashboard.configureDesktop">添加并应用</span></a>
+          <button class="btn btn-success action-button" type="button" data-action="proxy-start"><i class="bi bi-play-circle"></i><span data-i18n="proxy.start">启动转发</span></button>
           <a href="#providers" class="btn btn-outline-primary action-button"><i class="bi bi-arrow-left-right"></i><span data-i18n="dashboard.switchProvider">切换提供商</span></a>
         </div>
 
@@ -98,7 +96,7 @@
           <p data-i18n="providersAdd.subtitle">添加新的 API 提供商或选择预设</p>
         </div>
 
-        <div class="two-column">
+        <div class="two-column provider-add-layout">
           <article class="panel form-panel">
             <form id="providerForm" autocomplete="off">
               <div class="mb-4">
@@ -128,17 +126,33 @@
                   <option value="none">none</option>
                 </select>
               </div>
-              <div class="mb-4">
-                <label class="form-label required" data-i18n="providers.format">API 格式</label>
-                <div class="segmented">
-                  <input type="radio" class="btn-check" name="apiFormat" id="formatAnthropic" value="Anthropic" checked>
-                  <label class="btn" for="formatAnthropic">Anthropic</label>
-                  <input type="radio" class="btn-check" name="apiFormat" id="formatOpenai" value="OpenAI">
-                  <label class="btn" for="formatOpenai">OpenAI</label>
+              <section class="provider-mapping-section">
+                <div class="section-title-row">
+                  <div>
+                    <h2 data-i18n="providersAdd.mappingTitle">模型映射</h2>
+                    <p data-i18n="providersAdd.mappingSubtitle">把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。</p>
+                  </div>
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="fetch-form-models"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="models.fetch">自动获取模型</span></button>
                 </div>
-              </div>
-              <div class="button-row">
-                <button class="btn btn-primary btn-lg" type="submit" data-i18n="common.save">保存</button>
+                <div class="form-mapping-grid" id="providerMappingStack"></div>
+                <div class="preset-options" id="providerPresetOptions" hidden></div>
+                <div class="default-model-row">
+                  <label class="form-label" for="providerDefaultModel" data-i18n="models.defaultModel">默认模型</label>
+                  <select class="form-select" id="providerDefaultModel">
+                    <option value="sonnet">Sonnet</option>
+                    <option value="haiku">Haiku</option>
+                    <option value="opus">Opus</option>
+                  </select>
+                </div>
+                <p class="inline-status" id="providerModelFetchResult"></p>
+                <div class="apply-explain">
+                  <i class="bi bi-info-circle"></i>
+                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Claude 桌面版连接到本工具。之后你在 Claude 桌面版里发消息，本工具会自动转发到你填写的 API 地址。</p>
+                </div>
+              </section>
+              <div class="button-row provider-form-actions">
+                <button class="btn btn-primary btn-lg" type="button" data-action="apply-provider-desktop"><i class="bi bi-magic"></i><span data-i18n="providersAdd.applyToDesktop">一键应用到 Claude 桌面版</span></button>
+                <button class="btn btn-outline-primary btn-lg" id="providerSaveOnly" type="submit" data-i18n="common.saveOnly">仅保存</button>
                 <a class="btn btn-outline-primary btn-lg" href="#providers" data-i18n="common.cancel">取消</a>
               </div>
             </form>
@@ -146,6 +160,7 @@
 
           <article class="panel preset-panel">
             <h2 data-i18n="providersAdd.presets">快捷预设</h2>
+            <p class="preset-help" data-i18n="providersAdd.presetsHint">选择后会自动填入 API 地址和推荐模型，API Key 仍由你自己填写。</p>
             <div id="presetList" class="preset-list"></div>
           </article>
         </div>
@@ -173,57 +188,29 @@
         </article>
       </section>
 
-      <section class="page" id="page-models" data-page="models">
-        <div class="page-title">
-          <h1 data-i18n="models.title">模型映射</h1>
-          <p data-i18n="models.subtitle">为每个提供商配置模型别名</p>
-        </div>
-
-        <div class="narrow-field">
-          <label class="form-label" for="modelProvider" data-i18n="models.provider">提供商</label>
-          <select class="form-select form-select-lg" id="modelProvider"></select>
-        </div>
-
-        <div class="mapping-stack" id="mappingStack"></div>
-
-        <div class="narrow-field mt-4">
-          <label class="form-label" for="defaultModel" data-i18n="models.defaultModel">默认模型</label>
-          <select class="form-select form-select-lg" id="defaultModel">
-            <option>Sonnet</option>
-            <option>Haiku</option>
-            <option>Opus</option>
-          </select>
-        </div>
-
-        <div class="info-box">
-          <i class="bi bi-info-circle"></i>
-          <p data-i18n="models.hint">Desktop 发送 claude-sonnet-4-6 等模型别名，本地代理会映射到你选择的提供商模型。</p>
-        </div>
-        <div class="button-row">
-          <button class="btn btn-primary btn-lg" type="button" data-action="save-models"><i class="bi bi-floppy"></i><span data-i18n="common.save">保存</span></button>
-          <button class="btn btn-outline-primary btn-lg" type="button" data-action="reset-models"><i class="bi bi-arrow-clockwise"></i><span data-i18n="common.reset">重置</span></button>
-        </div>
-      </section>
-
       <section class="page" id="page-desktop" data-page="desktop">
         <div class="page-title title-with-back">
           <a class="square-button" href="#dashboard" aria-label="back"><i class="bi bi-arrow-left"></i></a>
           <div>
-            <h1 data-i18n="desktop.title">Desktop 集成</h1>
-            <p data-i18n="desktop.subtitle">一键配置 Claude Desktop 3P 模式</p>
+            <h1 data-i18n="desktop.title">Claude 桌面版</h1>
+            <p data-i18n="desktop.subtitle">一键让 Claude 桌面版使用当前供应商</p>
           </div>
         </div>
 
         <div class="two-column desktop-layout">
           <div>
             <article class="panel desktop-card">
-              <h2 data-i18n="desktop.configTitle">Desktop 3P 配置</h2>
+              <h2 data-i18n="desktop.configTitle">Claude 桌面版配置</h2>
               <div class="configured-row">
                 <span class="circle-check"><i class="bi bi-check-lg"></i></span>
                 <strong id="desktopConfiguredText" data-i18n="status.configured">已配置</strong>
               </div>
               <div class="config-list" id="desktopConfigList"></div>
-              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用 Desktop 配置</span></button>
+              <div class="apply-explain desktop-explain">
+                <i class="bi bi-diagram-3"></i>
+                <p data-i18n="desktop.explainText">原理很简单：Claude 桌面版先连接到本工具；本工具再把 Claude 的模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Claude 桌面版。</p>
+              </div>
+              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用到 Claude 桌面版</span></button>
             </article>
             <article class="panel details-panel">
               <div class="panel-header">
@@ -238,9 +225,9 @@
           <article class="panel guide-panel">
             <h2 data-i18n="desktop.quickGuide">快速引导</h2>
             <div class="mini-steps">
-              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">点击应用</strong><p data-i18n="desktop.step1Text">将配置写入 Claude Desktop</p></div>
-              <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">重启 Claude Desktop</strong><p data-i18n="desktop.step2Text">关闭并重新打开 Claude Desktop</p></div>
-              <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">选择 3P 模式</strong><p data-i18n="desktop.step3Text">在设置中选择 Cowork on 3P</p></div>
+              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">点击应用</strong><p data-i18n="desktop.step1Text">把 Claude 桌面版连接到本工具</p></div>
+              <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">重启 Claude 桌面版</strong><p data-i18n="desktop.step2Text">关闭并重新打开 Claude 桌面版</p></div>
+              <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">开始使用</strong><p data-i18n="desktop.step3Text">之后在 Claude 桌面版里正常提问即可</p></div>
             </div>
           </article>
         </div>
@@ -249,7 +236,7 @@
       <section class="page" id="page-proxy" data-page="proxy">
         <div class="page-title">
           <h1 data-i18n="proxy.title">代理控制台</h1>
-          <p data-i18n="proxy.subtitle">监控并控制本地代理</p>
+          <p data-i18n="proxy.subtitle">监控并控制本机转发服务</p>
         </div>
 
         <article class="panel proxy-control">
@@ -264,8 +251,8 @@
             <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">代理端口</label>
             <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
           </div>
-          <button class="btn btn-outline-secondary btn-lg" type="button" data-action="proxy-start"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动</span></button>
-          <button class="btn btn-danger btn-lg" type="button" data-action="proxy-stop"><i class="bi bi-stop-fill"></i><span data-i18n="proxy.stop">停止</span></button>
+          <button class="btn btn-outline-secondary btn-lg" type="button" data-action="proxy-start"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
+          <button class="btn btn-danger btn-lg" type="button" data-action="proxy-stop"><i class="bi bi-stop-fill"></i><span data-i18n="proxy.stop">停止转发</span></button>
         </article>
 
         <article class="terminal-panel">
@@ -317,11 +304,24 @@
             <strong data-i18n="settings.updateUrl">更新地址</strong>
             <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
           </div>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.configBackup">配置备份</strong>
+            <div>
+              <div class="settings-actions">
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="backup-config"><i class="bi bi-shield-check"></i><span data-i18n="settings.backupNow">立即备份</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="export-config"><i class="bi bi-box-arrow-down"></i><span data-i18n="settings.exportConfig">导出配置</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="choose-import-config"><i class="bi bi-box-arrow-in-up"></i><span data-i18n="settings.importConfig">导入配置</span></button>
+                <input class="visually-hidden" type="file" id="configImportFile" accept="application/json,.json">
+              </div>
+              <div class="backup-list" id="backupList"></div>
+              <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
+            </div>
+          </div>
         </article>
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.1</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.2</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div><span data-i18n="settings.checkUpdate">检查更新</span><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button></div>
           <p class="update-status" id="updateStatus"></p>
@@ -334,14 +334,13 @@
           <img src="assets/app-icon.png" alt="CC Desktop Switch icon">
           <div>
             <h1 data-i18n="guide.title">使用引导</h1>
-            <p data-i18n="guide.subtitle">按下面 4 步完成 Desktop 3P 接入。</p>
+            <p data-i18n="guide.subtitle">添加供应商后，按下面 3 步完成接入。</p>
           </div>
         </div>
         <div class="timeline">
-          <article class="timeline-card"><span>1</span><i class="bi bi-plug"></i><div><h2 data-i18n="guide.step1">添加提供商</h2><p data-i18n="guide.step1Text">选择预设或手动填写 API Base URL 和 API Key。</p></div></article>
-          <article class="timeline-card"><span>2</span><i class="bi bi-pc-display"></i><div><h2 data-i18n="guide.step2">配置 Desktop</h2><p data-i18n="guide.step2Text">写入 inferenceProvider、gateway 地址和模型列表。</p></div></article>
-          <article class="timeline-card"><span>3</span><i class="bi bi-broadcast-pin"></i><div><h2 data-i18n="guide.step3">启动代理</h2><p data-i18n="guide.step3Text">确认本地端口可用，并观察请求日志。</p></div></article>
-          <article class="timeline-card"><span>4</span><i class="bi bi-arrow-repeat"></i><div><h2 data-i18n="guide.step4">重启 Claude Desktop</h2><p data-i18n="guide.step4Text">重启后选择 3P 模式开始使用。</p></div></article>
+          <article class="timeline-card"><span>1</span><i class="bi bi-plug"></i><div><h2 data-i18n="guide.step1">添加提供商</h2><p data-i18n="guide.step1Text">选择预设，填入 API Key，必要时调整模型映射。</p></div></article>
+          <article class="timeline-card"><span>2</span><i class="bi bi-magic"></i><div><h2 data-i18n="guide.step2">一键应用</h2><p data-i18n="guide.step2Text">点击“一键应用到 Claude 桌面版”，本工具会自动写入桌面版需要的连接信息。</p></div></article>
+          <article class="timeline-card"><span>3</span><i class="bi bi-arrow-repeat"></i><div><h2 data-i18n="guide.step3">重启 Claude 桌面版</h2><p data-i18n="guide.step3Text">重启后正常提问，消息会通过本工具转发到当前供应商。</p></div></article>
         </div>
         <a class="btn btn-primary btn-lg guide-start" href="#providers/add"><i class="bi bi-arrow-right-circle"></i><span data-i18n="guide.start">开始使用</span></a>
       </section>

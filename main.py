@@ -18,7 +18,9 @@ from backend import config as cfg
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
+TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
+TRAY_QUIT_LABEL = "退出"
 
 
 def safe_print(message: str):
@@ -106,6 +108,153 @@ def open_browser_when_ready(url: str):
         webbrowser.open(url)
 
 
+class DesktopTrayController:
+    """系统托盘控制器：关闭窗口时隐藏，托盘菜单里显式退出。"""
+
+    def __init__(self, window, icon_path: Path):
+        self.window = window
+        self.icon_path = Path(icon_path)
+        self.icon = None
+        self.thread = None
+        self.pystray = None
+        self.exit_requested = False
+        self._notified = False
+
+    def start(self) -> bool:
+        """启动系统托盘图标。依赖缺失时返回 False，不影响主窗口打开。"""
+        try:
+            import pystray
+            from PIL import Image
+        except Exception as exc:
+            safe_print(f"system tray unavailable: {exc}")
+            return False
+
+        try:
+            self.pystray = pystray
+            image = Image.open(self.icon_path)
+            self.icon = pystray.Icon(APP_NAME, image, APP_NAME, self.build_menu())
+            self.thread = threading.Thread(target=self.icon.run, daemon=True)
+            self.thread.start()
+            return True
+        except Exception as exc:
+            safe_print(f"system tray failed: {exc}")
+            return False
+
+    def build_menu(self):
+        """构建托盘菜单，包含 provider 快速切换项。"""
+        if not self.pystray:
+            return None
+        items = [
+            self.pystray.MenuItem(TRAY_OPEN_LABEL, self.show_window, default=True),
+            self.pystray.Menu.SEPARATOR,
+        ]
+        items.extend(self.provider_menu_items())
+        items.extend([
+            self.pystray.Menu.SEPARATOR,
+            self.pystray.MenuItem(TRAY_QUIT_LABEL, self.quit_app),
+        ])
+        return self.pystray.Menu(*items)
+
+    def provider_menu_items(self):
+        """返回 provider 切换菜单项。"""
+        if not self.pystray:
+            return []
+        config = cfg.load_config()
+        active_id = config.get("activeProvider")
+        providers = config.get("providers", [])
+        if not providers:
+            return [self.pystray.MenuItem("暂无提供商", None, enabled=False)]
+
+        items = [self.pystray.MenuItem("切换提供商", None, enabled=False)]
+        for provider in providers:
+            provider_id = provider.get("id")
+            name = provider.get("name", "Unnamed Provider")
+            label = f"✓ {name}" if provider_id == active_id else name
+            items.append(self.pystray.MenuItem(
+                label,
+                self._make_provider_switcher(provider_id),
+                checked=lambda item, pid=provider_id: cfg.load_config().get("activeProvider") == pid,
+            ))
+        return items
+
+    def _make_provider_switcher(self, provider_id: str):
+        def switch(icon=None, item=None):
+            self.switch_provider(provider_id)
+        return switch
+
+    def switch_provider(self, provider_id: str) -> bool:
+        """从托盘菜单切换默认 provider。"""
+        if not provider_id:
+            return False
+        if not cfg.set_active_provider(provider_id):
+            return False
+        self.refresh_menu()
+        try:
+            provider = cfg.get_provider(provider_id)
+            if self.icon and provider:
+                self.icon.notify(f"已切换到 {provider.get('name', provider_id)}", APP_NAME)
+        except Exception:
+            pass
+        return True
+
+    def refresh_menu(self):
+        """provider 变化后刷新托盘菜单。"""
+        if not self.icon or not self.pystray:
+            return
+        try:
+            self.icon.menu = self.build_menu()
+            if hasattr(self.icon, "update_menu"):
+                self.icon.update_menu()
+        except Exception as exc:
+            safe_print(f"refresh tray menu failed: {exc}")
+
+    def handle_window_closing(self):
+        """pywebview closing 事件：返回 False 表示取消关闭。"""
+        if self.exit_requested:
+            return None
+
+        self.hide_window()
+        self.notify_hidden()
+        return False
+
+    def hide_window(self):
+        self.window.hide()
+
+    def show_window(self, icon=None, item=None):
+        try:
+            self.window.show()
+            self.window.restore()
+        except Exception as exc:
+            safe_print(f"show window failed: {exc}")
+
+    def notify_hidden(self):
+        if self._notified or not self.icon:
+            return
+        self._notified = True
+        try:
+            self.icon.notify(
+                "程序仍在后台运行。右键托盘图标可打开或退出。",
+                APP_NAME,
+            )
+        except Exception:
+            return
+
+    def quit_app(self, icon=None, item=None):
+        self.exit_requested = True
+        try:
+            self.window.destroy()
+        except Exception as exc:
+            safe_print(f"quit failed: {exc}")
+
+    def stop(self):
+        if not self.icon:
+            return
+        try:
+            self.icon.stop()
+        except Exception:
+            return
+
+
 def open_desktop_window(url: str) -> bool:
     """打开原生桌面窗口。失败时返回 False，让调用方退回浏览器模式。"""
     try:
@@ -115,7 +264,7 @@ def open_desktop_window(url: str) -> bool:
         return False
 
     try:
-        webview.create_window(
+        window = webview.create_window(
             APP_NAME,
             url,
             width=1240,
@@ -123,6 +272,13 @@ def open_desktop_window(url: str) -> bool:
             min_size=(980, 680),
             text_select=True,
         )
+        tray = DesktopTrayController(
+            window,
+            Path(__file__).resolve().parent / "frontend" / "assets" / "app-icon.png",
+        )
+        if tray.start():
+            window.events.closing += tray.handle_window_closing
+            window.events.closed += tray.stop
         webview.start(debug=False)
         return True
     except Exception as exc:

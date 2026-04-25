@@ -4,13 +4,15 @@ import json
 import os
 import secrets
 import shutil
+from datetime import datetime
 from typing import Optional
 
 CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 
 DEFAULT_CONFIG = {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -37,15 +39,27 @@ BUILTIN_PRESETS = [
             "opus": "deepseek-v4-pro",
             "default": "deepseek-v4-pro",
         },
+        "modelOptions": {
+            "deepseek_1m": {
+                "label": "解锁 1M 上下文",
+                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]。",
+                "models": {
+                    "sonnet": "deepseek-v4-pro[1m]",
+                    "haiku": "deepseek-v4-flash",
+                    "opus": "deepseek-v4-pro[1m]",
+                    "default": "deepseek-v4-pro[1m]",
+                },
+            }
+        },
         "extraHeaders": {"x-api-key": "{apiKey}"},
         "isBuiltin": True,
     },
     {
         "id": "kimi",
         "name": "Kimi (月之暗面)",
-        "baseUrl": "https://api.moonshot.cn/v1",
+        "baseUrl": "https://api.moonshot.cn/anthropic",
         "authScheme": "bearer",
-        "apiFormat": "openai",
+        "apiFormat": "anthropic",
         "models": {
             "sonnet": "kimi-k2.6",
             "haiku": "kimi-k2.6",
@@ -57,28 +71,56 @@ BUILTIN_PRESETS = [
     {
         "id": "qiniu",
         "name": "七牛云 AI",
-        "baseUrl": "https://api.qnaigc.com/v1",
+        "baseUrl": "https://api.qnaigc.com",
         "authScheme": "bearer",
-        "apiFormat": "openai",
+        "apiFormat": "anthropic",
         "models": {
-            "sonnet": "qwen3-max-2026-01-23",
-            "haiku": "deepseek/deepseek-v3.2-251201",
-            "opus": "qwen3-max-2026-01-23",
-            "default": "qwen3-max-2026-01-23",
+            "sonnet": "moonshotai/kimi-k2-thinking",
+            "haiku": "moonshotai/kimi-k2-thinking",
+            "opus": "moonshotai/kimi-k2-thinking",
+            "default": "moonshotai/kimi-k2-thinking",
         },
         "isBuiltin": True,
     },
     {
         "id": "zhipu",
         "name": "智谱 GLM",
-        "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
-        "authScheme": "bearer",
-        "apiFormat": "openai",
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+        "authScheme": "x-api-key",
+        "apiFormat": "anthropic",
         "models": {
             "sonnet": "glm-5.1",
-            "haiku": "glm-5-turbo",
+            "haiku": "glm-4.7",
             "opus": "glm-5.1",
             "default": "glm-5.1",
+        },
+        "isBuiltin": True,
+    },
+    {
+        "id": "siliconflow",
+        "name": "SiliconFlow (硅基流动)",
+        "baseUrl": "https://api.siliconflow.cn",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "Pro/moonshotai/Kimi-K2.5",
+            "haiku": "Pro/moonshotai/Kimi-K2.5",
+            "opus": "Pro/moonshotai/Kimi-K2.5",
+            "default": "Pro/moonshotai/Kimi-K2.5",
+        },
+        "isBuiltin": True,
+    },
+    {
+        "id": "bailian",
+        "name": "阿里云百炼",
+        "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+        "authScheme": "x-api-key",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "qwen3.6-plus",
+            "haiku": "qwen3.6-flash",
+            "opus": "qwen3.6-max-preview",
+            "default": "qwen3.6-plus",
         },
         "isBuiltin": True,
     },
@@ -88,6 +130,12 @@ BUILTIN_PRESETS = [
 def ensure_config_dir():
     """确保配置目录存在"""
     os.makedirs(CONFIG_DIR, exist_ok=True)
+
+
+def ensure_backup_dir():
+    """确保配置备份目录存在"""
+    ensure_config_dir()
+    os.makedirs(BACKUP_DIR, exist_ok=True)
 
 
 def load_config() -> dict:
@@ -110,6 +158,127 @@ def save_config(config: dict):
     with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
     shutil.move(tmp_file, CONFIG_FILE)
+
+
+def _normalize_provider(provider: dict) -> dict:
+    """补齐 provider 必要字段，导入旧配置时保持兼容。"""
+    normalized = dict(provider)
+    provider_id = str(normalized.get("id") or "")
+    safe_id = "".join(ch for ch in provider_id if ch.isalnum() or ch in {"-", "_"})[:64]
+    normalized["id"] = safe_id or secrets.token_hex(4)
+    normalized.setdefault("name", "Unnamed Provider")
+    normalized.setdefault("baseUrl", "")
+    normalized.setdefault("authScheme", "bearer")
+    normalized.setdefault("apiFormat", "anthropic")
+    normalized.setdefault("apiKey", "")
+    normalized.setdefault("extraHeaders", {})
+    normalized.setdefault("isBuiltin", False)
+    normalized.setdefault("models", {
+        "sonnet": "",
+        "haiku": "",
+        "opus": "",
+        "default": "",
+    })
+    return normalized
+
+
+def normalize_config(config: dict) -> dict:
+    """把外部导入的配置整理成当前版本可读取的结构。"""
+    if not isinstance(config, dict):
+        raise ValueError("配置文件必须是 JSON 对象")
+
+    source = config.get("config") if isinstance(config.get("config"), dict) else config
+    normalized = dict(DEFAULT_CONFIG)
+    normalized.update({k: v for k, v in source.items() if k in normalized})
+    normalized["version"] = source.get("version", DEFAULT_CONFIG["version"])
+
+    settings = dict(DEFAULT_CONFIG["settings"])
+    imported_settings = source.get("settings", {})
+    if isinstance(imported_settings, dict):
+        settings.update(imported_settings)
+    normalized["settings"] = settings
+
+    providers = source.get("providers", [])
+    if not isinstance(providers, list):
+        raise ValueError("providers 必须是数组")
+    normalized_providers = []
+    seen_ids = set()
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        normalized_provider = _normalize_provider(provider)
+        if normalized_provider["id"] in seen_ids:
+            normalized_provider["id"] = f"{normalized_provider['id']}-{secrets.token_hex(2)}"
+        seen_ids.add(normalized_provider["id"])
+        normalized_providers.append(normalized_provider)
+    normalized["providers"] = normalized_providers
+
+    provider_ids = {p["id"] for p in normalized["providers"]}
+    active_provider = source.get("activeProvider")
+    if active_provider in provider_ids:
+        normalized["activeProvider"] = active_provider
+    else:
+        normalized["activeProvider"] = normalized["providers"][0]["id"] if normalized["providers"] else None
+
+    if source.get("gatewayApiKey"):
+        normalized["gatewayApiKey"] = source["gatewayApiKey"]
+
+    return normalized
+
+
+def create_backup(reason: str = "manual") -> dict:
+    """备份当前配置文件，返回备份文件元数据。"""
+    ensure_backup_dir()
+    if not os.path.exists(CONFIG_FILE):
+        save_config(load_config())
+
+    safe_reason = "".join(ch for ch in str(reason or "manual").lower() if ch.isalnum() or ch in {"-", "_"})[:32]
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    filename = f"config-{timestamp}-{safe_reason or 'manual'}-{secrets.token_hex(2)}.json"
+    target = os.path.join(BACKUP_DIR, filename)
+    shutil.copy2(CONFIG_FILE, target)
+    stat = os.stat(target)
+    return {
+        "name": filename,
+        "size": stat.st_size,
+        "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+    }
+
+
+def list_backups() -> list:
+    """列出配置备份。"""
+    ensure_backup_dir()
+    backups = []
+    for name in os.listdir(BACKUP_DIR):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(BACKUP_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        stat = os.stat(path)
+        backups.append({
+            "name": name,
+            "size": stat.st_size,
+            "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        })
+    return sorted(backups, key=lambda item: item["createdAt"], reverse=True)
+
+
+def export_config() -> dict:
+    """导出完整配置。包含 API Key，仅供用户本机保存。"""
+    return {
+        "format": "cc-desktop-switch.config",
+        "exportedAt": datetime.now().isoformat(timespec="seconds"),
+        "config": load_config(),
+    }
+
+
+def import_config(data: dict) -> dict:
+    """导入配置。导入前自动备份当前配置。"""
+    backup = create_backup("before-import")
+    normalized = normalize_config(data)
+    save_config(normalized)
+    return {"config": normalized, "backup": backup}
 
 
 def get_or_create_gateway_api_key() -> str:
@@ -138,6 +307,14 @@ def get_providers() -> list:
     return config.get("providers", [])
 
 
+def get_provider(provider_id: str) -> Optional[dict]:
+    """按 ID 获取提供商"""
+    for provider in get_providers():
+        if provider.get("id") == provider_id:
+            return provider
+    return None
+
+
 def get_active_provider() -> Optional[dict]:
     """获取当前激活的提供商"""
     config = load_config()
@@ -158,14 +335,8 @@ def add_provider(provider: dict) -> dict:
 
     # 生成唯一 ID
     import uuid
+    provider = _normalize_provider(provider)
     provider["id"] = provider.get("id", str(uuid.uuid4())[:8])
-    provider.setdefault("models", {
-        "sonnet": "",
-        "haiku": "",
-        "opus": "",
-        "default": "",
-    })
-    provider.setdefault("isBuiltin", False)
 
     providers.append(provider)
     config["providers"] = providers
@@ -183,12 +354,27 @@ def update_provider(provider_id: str, data: dict) -> Optional[dict]:
     config = load_config()
     for i, p in enumerate(config.get("providers", [])):
         if p["id"] == provider_id:
-            # 保留 id 和 isBuiltin
-            data["id"] = provider_id
-            data.setdefault("isBuiltin", p.get("isBuiltin", False))
-            config["providers"][i] = data
+            updated = dict(p)
+            updated.update(data)
+            updated["id"] = provider_id
+            updated["isBuiltin"] = p.get("isBuiltin", False)
+
+            # 编辑表单中 API Key 留空表示“不修改”，避免误清空已保存密钥。
+            if not data.get("apiKey"):
+                updated["apiKey"] = p.get("apiKey", "")
+
+            # preset 的额外认证头也要保留，例如 DeepSeek 的 x-api-key。
+            if "extraHeaders" not in data or data.get("extraHeaders") in (None, {}):
+                updated["extraHeaders"] = p.get("extraHeaders", {})
+
+            if "models" in data and isinstance(data["models"], dict):
+                merged_models = dict(p.get("models", {}))
+                merged_models.update(data["models"])
+                updated["models"] = merged_models
+
+            config["providers"][i] = updated
             save_config(config)
-            return data
+            return updated
     return None
 
 

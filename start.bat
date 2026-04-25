@@ -1,7 +1,7 @@
 @echo off
 title CC Desktop Switch
 echo ========================================
-echo    CC Desktop Switch v1.0.1
+echo    CC Desktop Switch v1.0.2
 echo    正在启动管理后台...
 echo ========================================
 
