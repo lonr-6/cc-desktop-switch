@@ -6,6 +6,83 @@ Windows 版点击窗口关闭按钮时，应用会缩小到系统托盘继续运
 
 项目当前支持 Windows 和 macOS。Windows 版写入 Claude Desktop 的本机策略配置；macOS 版会写入 Claude Desktop 的本机 3P 配置，并自动定位当前生效的 `configLibrary` 配置条目。Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
 
+## 界面预览
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-provider-list.png" alt="Provider 管理页面">
+    </td>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-deepseek-config.png" alt="添加 DeepSeek Provider">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Provider 管理和快速切换</td>
+    <td align="center">选择预设后自动填入 API 地址和推荐模型</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-deepseek-options.png" alt="DeepSeek 1M 和 Max 思维配置">
+    </td>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-qwen-1m-menu.png" alt="通义千问 1M 模型菜单">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">DeepSeek 1M 上下文和 Max 思维开关</td>
+    <td align="center">通义千问 1M 上下文模型写入 Claude 桌面版</td>
+  </tr>
+</table>
+
+## 使用效果
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-deepseek-1m-context.png" alt="DeepSeek 1M 上下文窗口">
+    </td>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-qwen-1m-context.png" alt="通义千问 1M 上下文窗口">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">DeepSeek 1M 上下文在 Claude 桌面版中生效</td>
+    <td align="center">通义千问 1M 上下文在 Claude 桌面版中生效</td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-kimi-menu.png" alt="Kimi 模型菜单">
+    </td>
+    <td width="50%">
+      <img src="docs/promo/screenshots/readme-glm-menu.png" alt="智谱 GLM 模型菜单">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Kimi 模型显示和切换</td>
+    <td align="center">智谱 GLM 模型显示和切换</td>
+  </tr>
+</table>
+
+<details>
+  <summary>更多模型菜单展示</summary>
+
+  <table>
+    <tr>
+      <td width="50%">
+        <img src="docs/promo/screenshots/readme-deepseek-menu.png" alt="DeepSeek 模型菜单">
+      </td>
+      <td width="50%">
+        <img src="docs/promo/screenshots/readme-qwen-menu.png" alt="通义千问模型菜单">
+      </td>
+    </tr>
+    <tr>
+      <td align="center">DeepSeek 模型菜单和思维深度选项</td>
+      <td align="center">通义千问模型菜单和思维深度选项</td>
+    </tr>
+  </table>
+</details>
+
 ## 下载
 
 最新版本在 GitHub Release：

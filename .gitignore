@@ -15,6 +15,7 @@ __pycache__/
 build/
 dist/
 release/
+CC-Desktop-Switch/
 *.zip
 *.exe
 *.dmg
@@ -30,7 +31,8 @@ macos-packaging-plan.md
 prompt-codex.md
 image/
 ccds-*.png
-docs/promo/screenshots/
+docs/promo/screenshots/*
+!docs/promo/screenshots/readme-*.png
 
 # Failed favicon download kept locally for reference; the app uses zhipu.png.
 frontend/assets/providers/zhipu.ico
