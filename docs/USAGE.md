@@ -15,13 +15,13 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.7-Windows-Setup.exe
+CC-Desktop-Switch-v1.0.8-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.7-Windows-Portable.zip
+CC-Desktop-Switch-v1.0.8-Windows-Portable.zip
 ```
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
@@ -43,6 +43,7 @@ http://127.0.0.1:18081
 
 - DeepSeek
 - Kimi（月之暗面）
+- Kimi Code
 - 智谱 GLM
 - 阿里云百炼
 
@@ -62,6 +63,7 @@ http://127.0.0.1:18081
 | --- | --- | --- |
 | DeepSeek | `deepseek-v4-pro` | `deepseek-v4-flash` |
 | Kimi | `kimi-k2.6` | `kimi-k2.6` |
+| Kimi Code | `kimi-for-coding` | `kimi-for-coding` |
 | 智谱 GLM | `glm-5.1` | `glm-4.7` |
 | 阿里云百炼 | `qwen3.6-plus` | `qwen3.6-flash` |
 

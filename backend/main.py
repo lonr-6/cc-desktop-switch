@@ -246,7 +246,7 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.7")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.8")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):

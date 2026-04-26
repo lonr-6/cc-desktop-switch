@@ -20,7 +20,7 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 MB_OK = 0x00000000

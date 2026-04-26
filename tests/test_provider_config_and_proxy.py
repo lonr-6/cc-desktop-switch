@@ -298,7 +298,7 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_fetch_latest_json_accepts_utf8_bom(self):
         class FakeResponse:
-            content = b'\xef\xbb\xbf{"version":"1.0.7","platforms":{"windows-x64":{"assets":[]}}}'
+            content = b'\xef\xbb\xbf{"version":"1.0.8","platforms":{"windows-x64":{"assets":[]}}}'
 
             def raise_for_status(self):
                 return None
@@ -322,7 +322,7 @@ class ProviderConfigTests(unittest.TestCase):
         with patch("backend.update.httpx.AsyncClient", FakeClient):
             data = asyncio.run(updater.fetch_latest_json("https://example.com/latest.json"))
 
-        self.assertEqual(data["version"], "1.0.7")
+        self.assertEqual(data["version"], "1.0.8")
 
     def test_update_installer_asset_prefers_setup_exe(self):
         asset = updater.pick_windows_installer([
