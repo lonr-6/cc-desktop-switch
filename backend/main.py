@@ -1,5 +1,6 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
+import json
 import threading
 import time
 from urllib.parse import urlparse
@@ -47,6 +48,79 @@ def _provider_not_found():
         status_code=404,
         content={"success": False, "message": "提供商不存在"},
     )
+
+
+def _parse_inference_models(raw_value: str) -> list:
+    """解析 Desktop managed policy 中的 inferenceModels。"""
+    try:
+        parsed = json.loads(raw_value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _desktop_health(desktop_status: dict, proxy_port: int, provider: Optional[dict]) -> dict:
+    """判断 Claude Desktop 配置是否仍指向本工具当前 provider。"""
+    keys = desktop_status.get("keys") or {}
+    expected_base_url = f"http://127.0.0.1:{proxy_port}"
+    actual_base_url = str(keys.get("inferenceGatewayBaseUrl") or "").rstrip("/")
+    issues = []
+
+    if actual_base_url and actual_base_url != expected_base_url:
+        issues.append({
+            "code": "gateway_base_url_mismatch",
+            "message": "Claude 桌面版仍指向旧地址，请重新一键应用到 Claude 桌面版。",
+        })
+
+    if desktop_status.get("configured") is False and keys:
+        issues.append({
+            "code": "not_managed_by_ccds",
+            "message": "当前桌面版配置不是由本工具最新版本写入。",
+        })
+
+    inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
+    provider_models = provider.get("models", {}) if provider else {}
+    model_capabilities = provider.get("modelCapabilities", {}) if provider else {}
+    if not isinstance(model_capabilities, dict):
+        model_capabilities = {}
+    one_million_models = [
+        str(model_id)
+        for model_id in provider_models.values()
+        if (
+            isinstance(model_id, str)
+            and (
+                "[1m]" in model_id.lower()
+                or (
+                    isinstance(model_capabilities.get(model_id), dict)
+                    and model_capabilities[model_id].get("supports1m") is True
+                )
+            )
+        )
+    ]
+    one_million_ready = True
+    if one_million_models:
+        one_million_ready = False
+        for item in inference_models:
+            if (
+                isinstance(item, dict)
+                and item.get("name") in one_million_models
+                and item.get("supports1m") is True
+            ):
+                one_million_ready = True
+                break
+        if not one_million_ready:
+            issues.append({
+                "code": "deepseek_1m_not_written",
+                "message": "DeepSeek 1M 模型尚未写入桌面版配置，请重新一键应用并重启 Claude 桌面版。",
+            })
+
+    return {
+        "needsApply": bool(issues),
+        "oneMillionReady": one_million_ready,
+        "expectedBaseUrl": expected_base_url,
+        "actualBaseUrl": actual_base_url,
+        "issues": issues,
+    }
 
 
 async def _test_provider_connection(provider: dict) -> dict:
@@ -100,7 +174,7 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.3")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.4")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -133,14 +207,16 @@ def create_admin_app() -> FastAPI:
         providers = cfg.get_providers()
         active = cfg.get_active_provider()
         desktop_status = registry.get_config_status()
+        proxy_port = cfg.get_settings().get("proxyPort", 18080)
 
         return {
             "desktopConfigured": desktop_status.get("configured", False),
             "proxyRunning": _proxy_running,
-            "proxyPort": cfg.get_settings().get("proxyPort", 18080),
+            "proxyPort": proxy_port,
             "activeProvider": _public_provider(active),
             "activeProviderId": active["id"] if active else None,
             "providerCount": len(providers),
+            "desktopHealth": _desktop_health(desktop_status, proxy_port, active),
         }
 
     # ── 提供商 API ──
@@ -153,6 +229,23 @@ def create_admin_app() -> FastAPI:
             "providers": providers,
             "activeId": active_id,
         }
+
+    @app.put("/api/providers/reorder")
+    async def reorder_providers(request: Request):
+        """保存拖动后的 provider 顺序。"""
+        data = await request.json()
+        provider_ids = data.get("providerIds", [])
+        if not isinstance(provider_ids, list) or not all(isinstance(item, str) for item in provider_ids):
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "providerIds 必须是字符串数组"},
+            )
+        if cfg.reorder_providers(provider_ids):
+            return {"success": True, "providers": [_public_provider(p) for p in cfg.get_providers()]}
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "provider 排序保存失败"},
+        )
 
     @app.get("/api/providers/{provider_id}/secret")
     async def get_provider_secret(provider_id: str):
@@ -326,7 +419,10 @@ def create_admin_app() -> FastAPI:
     @app.get("/api/desktop/status")
     async def get_desktop_status():
         """获取 Desktop 注册表配置状态"""
-        return registry.get_config_status()
+        status = registry.get_config_status()
+        proxy_port = cfg.get_settings().get("proxyPort", 18080)
+        status["health"] = _desktop_health(status, proxy_port, cfg.get_active_provider())
+        return status
 
     @app.post("/api/desktop/configure")
     async def apply_desktop_config(request: Request):
@@ -416,7 +512,7 @@ def create_admin_app() -> FastAPI:
     async def check_update(url: Optional[str] = None, current: Optional[str] = None):
         """检查最新版本，不自动下载或安装。"""
         settings = cfg.get_settings()
-        update_url = url or settings.get("updateUrl")
+        update_url = url or settings.get("updateUrl") or cfg.DEFAULT_UPDATE_URL
         if not update_url:
             return JSONResponse(
                 status_code=400,

@@ -15,10 +15,11 @@ import uvicorn
 
 from backend.main import create_admin_app, _start_proxy_server, _stop_proxy_server
 from backend import config as cfg
+from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 
@@ -188,11 +189,25 @@ class DesktopTrayController:
             return False
         if not cfg.set_active_provider(provider_id):
             return False
+        provider = cfg.get_provider(provider_id)
+        desktop_message = ""
+        try:
+            status = registry.get_config_status()
+            if status.get("configured") and provider:
+                proxy_port = cfg.get_settings().get("proxyPort", 18080)
+                result = registry.apply_config(
+                    f"http://127.0.0.1:{proxy_port}",
+                    gateway_api_key=cfg.get_or_create_gateway_api_key(),
+                    provider=provider,
+                )
+                desktop_message = "，桌面版模型已同步" if result.get("success") else "，请重新一键应用到 Claude 桌面版"
+        except Exception as exc:
+            safe_print(f"sync desktop config failed: {exc}")
+            desktop_message = "，请重新一键应用到 Claude 桌面版"
         self.refresh_menu()
         try:
-            provider = cfg.get_provider(provider_id)
             if self.icon and provider:
-                self.icon.notify(f"已切换到 {provider.get('name', provider_id)}", APP_NAME)
+                self.icon.notify(f"已切换到 {provider.get('name', provider_id)}{desktop_message}", APP_NAME)
         except Exception:
             pass
         return True

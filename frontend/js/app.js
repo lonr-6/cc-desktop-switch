@@ -9,9 +9,12 @@
   let selectedPreset = null;
   let presetCache = [];
   let formApiFormat = "Anthropic";
+  let formModelCapabilities = {};
+  let formRequestOptions = {};
   let editingProviderId = null;
   let deleteModal = null;
   let toast = null;
+  let updateCheckCache = null;
 
   function $(selector, root = document) {
     return root.querySelector(selector);
@@ -61,6 +64,71 @@
     return "#";
   }
 
+  function normalizePresetKey(value) {
+    return String(value || "").trim().toLowerCase().replace(/\/+$/, "");
+  }
+
+  function presetExists(preset, providers) {
+    const presetName = normalizePresetKey(preset.name);
+    const presetUrl = normalizePresetKey(preset.baseUrl);
+    return providers.some((provider) => (
+      normalizePresetKey(provider.name) === presetName
+      || normalizePresetKey(provider.baseUrl) === presetUrl
+    ));
+  }
+
+  function updatePresetSelection() {
+    const selectedId = selectedPreset?.id || "";
+    $all("#presetList [data-preset]").forEach((button) => {
+      const active = button.dataset.preset === selectedId;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      const icon = $("i:last-child", button);
+      if (icon) icon.className = `bi ${active ? "bi-check2" : "bi-chevron-right"}`;
+    });
+  }
+
+  function firstHealthMessage(health) {
+    return health?.issues?.[0]?.message || "";
+  }
+
+  function renderDesktopHealthWarning(selector, health) {
+    const warning = $(selector);
+    if (!warning) return;
+    const message = firstHealthMessage(health);
+    warning.hidden = !message;
+    const text = $("span", warning);
+    if (text) text.textContent = message;
+  }
+
+  function renderUpdateBadge(result) {
+    const badge = $("#dashboardUpdateBadge");
+    if (!badge) return;
+    const available = !!result?.updateAvailable;
+    badge.hidden = !available;
+    const text = $("span", badge);
+    if (text && available) {
+      text.textContent = result.latestVersion
+        ? `${t("dashboard.updateAvailable")} ${result.latestVersion}`
+        : t("dashboard.updateAvailable");
+    }
+  }
+
+  async function refreshUpdateBadge(force = false) {
+    if (!force && updateCheckCache) {
+      renderUpdateBadge(updateCheckCache);
+      return;
+    }
+    try {
+      updateCheckCache = await CCApi.checkUpdate("");
+      renderUpdateBadge(updateCheckCache);
+    } catch (error) {
+      console.warn(error);
+      updateCheckCache = null;
+      renderUpdateBadge(null);
+    }
+  }
+
   function emptyMappings() {
     return {
       sonnet: "",
@@ -74,6 +142,82 @@
     const normalized = { ...emptyMappings(), ...mappings };
     normalized.default = normalized.default || normalized.sonnet || normalized.haiku || normalized.opus || "";
     return normalized;
+  }
+
+  function normalizeCapabilities(capabilities = {}) {
+    if (!capabilities || typeof capabilities !== "object") return {};
+    return Object.fromEntries(Object.entries(capabilities).filter(([, value]) => (
+      value && typeof value === "object" && value.supports1m === true
+    )));
+  }
+
+  function normalizeRequestOptions(options = {}) {
+    if (!options || typeof options !== "object") return {};
+    const source = options.anthropic && typeof options.anthropic === "object"
+      ? options.anthropic
+      : options;
+    const normalized = {};
+    const thinkingType = source.thinking?.type;
+    if (["enabled", "disabled"].includes(thinkingType)) {
+      normalized.thinking = { type: thinkingType };
+    }
+    const effort = source.output_config?.effort;
+    if (["low", "medium", "high", "xhigh", "max"].includes(effort)) {
+      normalized.output_config = { effort };
+    }
+    return Object.keys(normalized).length ? { anthropic: normalized } : {};
+  }
+
+  function mergeRequestOptions(base = {}, extra = {}) {
+    const baseAnthropic = normalizeRequestOptions(base).anthropic || {};
+    const extraAnthropic = normalizeRequestOptions(extra).anthropic || {};
+    const merged = { ...baseAnthropic };
+    if (extraAnthropic.thinking) merged.thinking = { ...extraAnthropic.thinking };
+    if (extraAnthropic.output_config) merged.output_config = { ...extraAnthropic.output_config };
+    return normalizeRequestOptions({ anthropic: merged });
+  }
+
+  function clearRequestOptions(base = {}, option = {}) {
+    const baseAnthropic = normalizeRequestOptions(base).anthropic || {};
+    const optionAnthropic = normalizeRequestOptions(option).anthropic || {};
+    const current = { ...baseAnthropic };
+    if (optionAnthropic.thinking) delete current.thinking;
+    if (optionAnthropic.output_config) delete current.output_config;
+    return normalizeRequestOptions({ anthropic: current });
+  }
+
+  function requestOptionsMatch(left = {}, right = {}) {
+    return JSON.stringify(normalizeRequestOptions(left)) === JSON.stringify(normalizeRequestOptions(right));
+  }
+
+  function optionEnabled(option = {}, currentMappings = collectProviderMappings()) {
+    const hasModels = option.models && typeof option.models === "object";
+    const hasRequestOptions = option.requestOptions && typeof option.requestOptions === "object";
+    if (hasModels && hasRequestOptions) {
+      return modelsMatch(option.models, currentMappings) && requestOptionsMatch(option.requestOptions, formRequestOptions);
+    }
+    if (hasModels) return modelsMatch(option.models, currentMappings);
+    if (hasRequestOptions) return requestOptionsMatch(option.requestOptions, formRequestOptions);
+    return false;
+  }
+
+  function modelsMatch(left = {}, right = {}) {
+    const a = normalizeMappings(left);
+    const b = normalizeMappings(right);
+    return ["sonnet", "haiku", "opus", "default"].every((key) => (a[key] || "") === (b[key] || ""));
+  }
+
+  function presetMatchesProvider(preset, provider) {
+    if (!preset || !provider) return false;
+    return normalizePresetKey(preset.name) === normalizePresetKey(provider.name)
+      || normalizePresetKey(preset.baseUrl) === normalizePresetKey(provider.baseUrl);
+  }
+
+  function capabilitiesForCurrentMappings(mappings = collectProviderMappings()) {
+    const usedModelIds = new Set(Object.values(mappings).filter(Boolean));
+    return Object.fromEntries(Object.entries(normalizeCapabilities(formModelCapabilities)).filter(([modelId]) => (
+      usedModelIds.has(modelId)
+    )));
   }
 
   function defaultKeyFromMappings(mappings = {}) {
@@ -108,21 +252,26 @@
     if (result) result.textContent = "";
   }
 
-  function renderPresetOptions(preset = null) {
+  function renderPresetOptions(preset = null, mappings = null) {
     const container = $("#providerPresetOptions");
     if (!container) return;
-    const options = preset?.modelOptions && typeof preset.modelOptions === "object"
+    const modelOptions = preset?.modelOptions && typeof preset.modelOptions === "object"
       ? Object.entries(preset.modelOptions)
       : [];
+    const requestOptionPresets = preset?.requestOptionPresets && typeof preset.requestOptionPresets === "object"
+      ? Object.entries(preset.requestOptionPresets)
+      : [];
+    const options = [...modelOptions, ...requestOptionPresets];
     if (!options.length) {
       container.hidden = true;
       container.innerHTML = "";
       return;
     }
+    const currentMappings = normalizeMappings(mappings || collectProviderMappings());
     container.hidden = false;
     container.innerHTML = options.map(([id, option]) => `
       <label class="preset-option-item">
-        <input class="form-check-input" type="checkbox" data-preset-model-option="${escapeHtml(id)}">
+        <input class="form-check-input" type="checkbox" data-preset-model-option="${escapeHtml(id)}" ${optionEnabled(option, currentMappings) ? "checked" : ""}>
         <span>
           <strong>${escapeHtml(option.label || id)}</strong>
           <small>${escapeHtml(option.description || "")}</small>
@@ -132,9 +281,23 @@
   }
 
   function applyPresetModelOption(optionId, enabled) {
-    const option = selectedPreset?.modelOptions?.[optionId];
+    const option = selectedPreset?.modelOptions?.[optionId] || selectedPreset?.requestOptionPresets?.[optionId];
     if (!option) return;
-    setProviderMappings(enabled ? option.models : selectedPreset.models || emptyMappings());
+    const mappings = option.models
+      ? (enabled ? option.models : selectedPreset.models || emptyMappings())
+      : collectProviderMappings();
+    if (option.models) {
+      formModelCapabilities = normalizeCapabilities(enabled
+        ? option.modelCapabilities || selectedPreset.modelCapabilities || {}
+        : selectedPreset.modelCapabilities || {});
+      setProviderMappings(mappings);
+    }
+    if (option.requestOptions) {
+      formRequestOptions = enabled
+        ? mergeRequestOptions(selectedPreset.requestOptions || {}, option.requestOptions)
+        : clearRequestOptions(formRequestOptions, option.requestOptions);
+    }
+    renderPresetOptions(selectedPreset, mappings);
     showToast(`${option.label || optionId} ${t("providersAdd.optionApplied")}`);
   }
 
@@ -150,18 +313,21 @@
 
   function providerPayloadFromForm(includeModels = true) {
     const apiKey = $("#providerApiKey").value.trim();
+    const mappings = includeModels ? collectProviderMappings() : null;
     const payload = {
       name: $("#providerName").value.trim(),
       baseUrl: $("#providerBaseUrl").value.trim(),
       authScheme: $("#providerAuth").value,
       apiFormat: formApiFormat,
       extraHeaders: selectedPreset?.extraHeaders || {},
+      modelCapabilities: mappings ? capabilitiesForCurrentMappings(mappings) : normalizeCapabilities(formModelCapabilities),
+      requestOptions: normalizeRequestOptions(formRequestOptions),
     };
     if (apiKey) {
       payload.apiKey = apiKey;
     }
     if (includeModels) {
-      payload.models = collectProviderMappings();
+      payload.models = mappings;
     }
     return payload;
   }
@@ -177,7 +343,7 @@
     const providerHref = escapeHtml(safeHttpUrl(provider.baseUrl));
     const mappingText = escapeHtml(mapping || provider.apiFormat);
     return `
-      <article class="provider-switch-card ${provider.default ? "active" : ""}">
+      <article class="provider-switch-card ${provider.default ? "active" : ""}" draggable="true" data-provider-id="${providerId}">
         <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
         <span class="provider-logo">${iconMarkup(provider)}</span>
         <span class="provider-main">
@@ -204,52 +370,154 @@
     `;
   }
 
-  async function renderProviderCards(targetSelector) {
+  function providerPresetCardMarkup(preset, added = false) {
+    const presetId = escapeHtml(preset.id);
+    return `
+      <button class="provider-switch-card preset-card ${added ? "added" : ""}" type="button" data-action="new-from-preset" data-preset="${presetId}" ${added ? "disabled" : ""}>
+        <span class="drag-handle preset-plus"><i class="bi ${added ? "bi-check2" : "bi-plus-lg"}"></i></span>
+        <span class="provider-logo">${iconMarkup(preset)}</span>
+        <span class="provider-main"><strong>${escapeHtml(preset.name)}</strong><span class="truncate">${escapeHtml(preset.baseUrl)}</span></span>
+        <span class="provider-meta">${escapeHtml(preset.apiFormat)}</span>
+        <span class="provider-actions"><span class="compact-enable ghost"><i class="bi ${added ? "bi-check2" : "bi-plus-lg"}"></i><span>${added ? t("providers.added") : t("providers.add")}</span></span></span>
+      </button>
+    `;
+  }
+
+  function dashboardPresetSectionMarkup(providers, presets) {
+    const available = presets.filter((preset) => !presetExists(preset, providers));
+    if (!available.length) return "";
+    return `
+      <section class="dashboard-preset-section" aria-label="${escapeHtml(t("dashboard.availablePresets"))}">
+        <div class="section-title-row compact">
+          <div>
+            <h2>${escapeHtml(t("dashboard.availablePresets"))}</h2>
+            <p>${escapeHtml(t("dashboard.availablePresetsHint"))}</p>
+          </div>
+        </div>
+        <div class="provider-preset-grid">
+          ${available.map((preset) => providerPresetCardMarkup(preset)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function getDragAfterElement(container, y) {
+    const items = [...container.querySelectorAll("[data-provider-id]:not(.dragging)")];
+    return items.reduce((closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: child };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+  }
+
+  function enableProviderReorder(listEl) {
+    if (!listEl || listEl.dataset.reorderBound === "1") return;
+    listEl.dataset.reorderBound = "1";
+
+    listEl.addEventListener("dragstart", (event) => {
+      const card = event.target.closest("[data-provider-id]");
+      if (!card) return;
+      card.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", card.dataset.providerId);
+    });
+
+    listEl.addEventListener("dragover", (event) => {
+      const dragging = listEl.querySelector(".dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      const afterElement = getDragAfterElement(listEl, event.clientY);
+      if (afterElement) {
+        listEl.insertBefore(dragging, afterElement);
+      } else {
+        listEl.appendChild(dragging);
+      }
+    });
+
+    listEl.addEventListener("drop", async (event) => {
+      const dragging = listEl.querySelector(".dragging");
+      if (!dragging) return;
+      event.preventDefault();
+      dragging.classList.remove("dragging");
+      const providerIds = $all("[data-provider-id]", listEl).map((item) => item.dataset.providerId);
+      try {
+        await CCApi.reorderProviders(providerIds);
+        showToast(t("toast.providersReordered"));
+        await renderProviders();
+        if (routeFromHash() === "dashboard") await renderDashboard();
+      } catch (error) {
+        console.error(error);
+        if (routeFromHash() === "dashboard") {
+          await renderDashboard();
+        } else {
+          await renderProviders();
+        }
+        showToast(error.message || t("toast.requestFailed"));
+      }
+    });
+
+    listEl.addEventListener("dragend", (event) => {
+      event.target.closest("[data-provider-id]")?.classList.remove("dragging");
+    });
+  }
+
+  async function renderProviderCards(targetSelector, options = {}) {
     const target = $(targetSelector);
     if (!target) return;
     const providers = await CCApi.getProviders();
+    const providerList = providers.length
+      ? `<div class="provider-configured-list" data-provider-list>${providers.map(providerCardMarkup).join("")}</div>`
+      : "";
     if (!providers.length) {
       const presets = await CCApi.getPresets();
-      target.innerHTML = presets.map((preset) => `
-        <button class="provider-switch-card preset-card" type="button" data-action="new-from-preset" data-preset="${escapeHtml(preset.id)}">
-          <span class="drag-handle"><i class="bi bi-grip-vertical"></i></span>
-          <span class="provider-logo">${iconMarkup(preset)}</span>
-          <span class="provider-main"><strong>${escapeHtml(preset.name)}</strong><span class="truncate">${escapeHtml(preset.baseUrl)}</span></span>
-          <span class="provider-meta">${escapeHtml(preset.apiFormat)}</span>
-          <span class="provider-actions"><span class="compact-enable ghost"><i class="bi bi-plus-lg"></i><span>${t("providers.add")}</span></span></span>
-        </button>
-      `).join("");
+      target.innerHTML = `<div class="provider-preset-grid">${presets.map((preset) => providerPresetCardMarkup(preset)).join("")}</div>`;
       return;
     }
-    target.innerHTML = providers.map(providerCardMarkup).join("");
+    if (options.includePresets) {
+      const presets = await CCApi.getPresets();
+      target.innerHTML = `${providerList}${dashboardPresetSectionMarkup(providers, presets)}`;
+    } else {
+      target.innerHTML = providerList;
+    }
+    enableProviderReorder($("[data-provider-list]", target));
   }
 
   async function renderDashboard() {
     const status = await CCApi.getStatus();
     const activities = await CCApi.getActivities();
-    await renderProviderCards("#dashboardProviderCards");
+    const health = status.desktopHealth || {};
+    const desktopReady = status.desktopConfigured && !health.needsApply;
+    await renderProviderCards("#dashboardProviderCards", { includePresets: true });
     const desktopIcon = $("#dashboardDesktopIcon");
-    desktopIcon.classList.toggle("muted", !status.desktopConfigured);
-    desktopIcon.innerHTML = `<i class="bi ${status.desktopConfigured ? "bi-check-lg" : "bi-exclamation-lg"}"></i>`;
+    desktopIcon.classList.toggle("muted", !desktopReady);
+    desktopIcon.innerHTML = `<i class="bi ${desktopReady ? "bi-check-lg" : "bi-exclamation-lg"}"></i>`;
     const desktopStatus = $("#dashboardDesktopStatus");
-    desktopStatus.classList.toggle("muted-text", !status.desktopConfigured);
-    desktopStatus.textContent = status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
+    desktopStatus.classList.toggle("muted-text", !desktopReady);
+    desktopStatus.textContent = health.needsApply
+      ? t("status.needsApply")
+      : status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
+    renderDesktopHealthWarning("#dashboardDesktopWarning", health);
     $("#dashboardProxyStatus").textContent = status.proxyRunning ? `${t("status.running")} :${status.proxyPort}` : t("status.stopped");
     $("#dashboardProviderName").textContent = status.activeProvider.name;
     $("#activityList").innerHTML = activities.map((item) => (
       `<div class="activity-row"><time>${escapeHtml(item.time)}</time><span>${escapeHtml(item.text)}</span></div>`
     )).join("");
+    await refreshUpdateBadge();
   }
 
   async function renderPresets() {
     presetCache = await CCApi.getPresets();
-    $("#presetList").innerHTML = presetCache.map((preset) => `
-      <button class="preset-item" type="button" data-preset="${escapeHtml(preset.id)}">
+    $("#presetList").innerHTML = presetCache.map((preset) => {
+      const active = selectedPreset?.id === preset.id;
+      return `
+      <button class="preset-item ${active ? "active" : ""}" type="button" data-preset="${escapeHtml(preset.id)}" aria-pressed="${active ? "true" : "false"}">
         <span class="preset-logo">${iconMarkup(preset)}</span>
         <span><strong>${escapeHtml(preset.name)}</strong><span>${escapeHtml(preset.baseUrl)}</span></span>
-        <i class="bi bi-chevron-right"></i>
+        <i class="bi ${active ? "bi-check2" : "bi-chevron-right"}"></i>
       </button>
-    `).join("");
+    `;
+    }).join("");
   }
 
   function setProviderFormMode(titleKey) {
@@ -283,6 +551,9 @@
     editingProviderId = null;
     selectedPreset = null;
     renderPresetOptions(null);
+    updatePresetSelection();
+    formModelCapabilities = {};
+    formRequestOptions = {};
     setProviderFormMode("providersAdd.title");
     $("#providerName").value = "";
     $("#providerBaseUrl").value = "";
@@ -299,8 +570,11 @@
     setApiKeyInputState(false);
     selectedPreset = preset;
     formApiFormat = preset.apiFormat === "OpenAI" ? "OpenAI" : "Anthropic";
+    formModelCapabilities = normalizeCapabilities(preset.modelCapabilities || {});
+    formRequestOptions = normalizeRequestOptions(preset.requestOptions || {});
     setProviderMappings(preset.models || emptyMappings());
-    renderPresetOptions(preset);
+    renderPresetOptions(preset, preset.models || emptyMappings());
+    updatePresetSelection();
     if (notify) showToast(`${preset.name} ${t("toast.presetFilled")}`);
   }
 
@@ -309,8 +583,17 @@
     const provider = providers.find((item) => item.id === providerId);
     if (!provider) return;
     editingProviderId = provider.id;
-    selectedPreset = { models: provider.mappings, extraHeaders: provider.extraHeaders || {} };
-    renderPresetOptions(null);
+    const matchedPreset = presetCache.find((preset) => presetMatchesProvider(preset, provider));
+    selectedPreset = matchedPreset
+      ? { ...matchedPreset, extraHeaders: provider.extraHeaders || matchedPreset.extraHeaders || {} }
+      : {
+        models: provider.mappings,
+        extraHeaders: provider.extraHeaders || {},
+        modelCapabilities: provider.modelCapabilities || {},
+        requestOptions: provider.requestOptions || {},
+      };
+    formModelCapabilities = normalizeCapabilities(provider.modelCapabilities || selectedPreset.modelCapabilities || {});
+    formRequestOptions = normalizeRequestOptions(provider.requestOptions || selectedPreset.requestOptions || {});
     setProviderFormMode("providersAdd.editTitle");
     $("#providerName").value = provider.name;
     $("#providerBaseUrl").value = provider.baseUrl;
@@ -327,6 +610,8 @@
     $("#providerAuth").value = provider.authScheme;
     formApiFormat = provider.apiFormat === "openai" ? "OpenAI" : "Anthropic";
     setProviderMappings(provider.mappings || emptyMappings());
+    renderPresetOptions(selectedPreset, provider.mappings || emptyMappings());
+    updatePresetSelection();
   }
 
   async function renderProviderForm() {
@@ -384,7 +669,15 @@
   async function renderDesktop() {
     const desktop = await CCApi.getDesktopStatus();
     const entries = Object.entries(desktop.config);
-    $("#desktopConfiguredText").textContent = desktop.configured ? t("status.configured") : t("status.notConfigured");
+    const health = desktop.health || {};
+    const desktopReady = desktop.configured && !health.needsApply;
+    const statusText = $("#desktopConfiguredText");
+    statusText.textContent = health.needsApply
+      ? t("status.needsApply")
+      : desktop.configured ? t("status.configured") : t("status.notConfigured");
+    statusText.classList.toggle("muted-text", !desktopReady);
+    $(".desktop-card .circle-check")?.classList.toggle("warning", !desktopReady);
+    renderDesktopHealthWarning("#desktopPageWarning", health);
     $("#desktopConfigList").innerHTML = entries.map(([key, value]) => `
       <div class="config-row"><i class="bi bi-check-circle-fill"></i><span>${escapeHtml(key)}:</span><code>${escapeHtml(Array.isArray(value) ? JSON.stringify(value) : value)}</code></div>
     `).join("");
@@ -565,7 +858,7 @@
     try {
       if (action === "set-default") {
         await CCApi.setDefaultProvider(actionEl.dataset.id);
-        await renderProviderCards("#dashboardProviderCards");
+        await renderProviderCards("#dashboardProviderCards", { includePresets: true });
         await renderProviders();
         await renderDashboard();
         showToast(t("toast.defaultUpdated"));
@@ -741,6 +1034,8 @@
 
       if (action === "check-update") {
         const result = await CCApi.checkUpdate($("#settingsUpdateUrl").value.trim());
+        updateCheckCache = result;
+        renderUpdateBadge(result);
         const message = result.updateAvailable
           ? `${t("toast.updateAvailable")} ${result.latestVersion}`
           : `${t("toast.noUpdate")} ${result.currentVersion}`;
@@ -801,6 +1096,7 @@
       if (addLink) {
         editingProviderId = null;
         selectedPreset = null;
+        updatePresetSelection();
       }
       const themeButton = event.target.closest("[data-theme-action]");
       if (themeButton) applyTheme(themeButton.dataset.themeAction);
@@ -852,7 +1148,11 @@
         await CCApi.deleteProvider(pendingDeleteId);
         pendingDeleteId = null;
         deleteModal.hide();
-        await renderProviders();
+        if (routeFromHash() === "dashboard") {
+          await renderDashboard();
+        } else {
+          await renderProviders();
+        }
         showToast(t("toast.providerDeleted"));
       } catch (error) {
         console.error(error);

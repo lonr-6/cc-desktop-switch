@@ -264,6 +264,63 @@ def get_upstream_headers(provider: dict) -> dict:
     return headers
 
 
+def _provider_kind(provider: dict) -> str:
+    """用名称和 URL 粗略判断提供商，用于处理厂商私有参数。"""
+    probe = f"{provider.get('name', '')} {provider.get('baseUrl', '')}".lower()
+    if "deepseek" in probe:
+        return "deepseek"
+    if "moonshot" in probe or "kimi" in probe:
+        return "kimi"
+    if "bigmodel" in probe or "zhipu" in probe or "glm" in probe:
+        return "zhipu"
+    if "dashscope" in probe or "bailian" in probe or "aliyun" in probe:
+        return "bailian"
+    if "siliconflow" in probe:
+        return "siliconflow"
+    if "qnaigc" in probe or "qiniu" in probe:
+        return "qiniu"
+    return "unknown"
+
+
+def _deep_merge(target: dict, source: dict) -> dict:
+    """递归合并少量请求选项，保留已有请求体字段。"""
+    merged = dict(target)
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _anthropic_request_options(provider: dict) -> dict:
+    options = provider.get("requestOptions") or {}
+    if not isinstance(options, dict):
+        return {}
+    anthropic_options = options.get("anthropic", options)
+    return anthropic_options if isinstance(anthropic_options, dict) else {}
+
+
+def apply_anthropic_request_options(upstream_body: dict, provider: dict) -> dict:
+    """按 provider 差异处理 Anthropic 请求里的思考参数。
+
+    DeepSeek 的 Anthropic 兼容接口支持 thinking 和 output_config.effort=max。
+    其它提供商的 Anthropic 兼容层对这些字段支持不一致，因此默认延续旧行为：
+    不主动透传 request-level thinking，避免上游 400。
+    """
+    kind = _provider_kind(provider)
+    options = _anthropic_request_options(provider)
+
+    if kind != "deepseek":
+        upstream_body.pop("thinking", None)
+        return upstream_body
+
+    if options:
+        upstream_body = _deep_merge(upstream_body, options)
+
+    return upstream_body
+
+
 def _normalize_usage(usage) -> dict:
     """保证 Anthropic usage 至少包含 input_tokens / output_tokens。"""
     def token_int(value) -> int:
@@ -356,9 +413,7 @@ async def forward_request(
         # 移除流式标记（我们单独处理流式）
         upstream_body = dict(body)
         upstream_body.pop("stream", None)
-
-        # 移除 thinking 相关字段（某些提供商不支持）
-        upstream_body.pop("thinking", None)
+        upstream_body = apply_anthropic_request_options(upstream_body, provider)
 
     headers = get_upstream_headers(provider)
 
@@ -431,7 +486,7 @@ async def forward_request_stream(
     else:
         upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
         upstream_body = dict(body)
-        upstream_body.pop("thinking", None)
+        upstream_body = apply_anthropic_request_options(upstream_body, provider)
         # 确保流式开启
         upstream_body["stream"] = True
 
@@ -581,12 +636,12 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.3")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.4")
 
     def gateway_auth_failed(request: Request) -> bool:
         gateway_api_key = get_gateway_api_key()
         if not gateway_api_key:
-            return False
+            return True
         auth_header = request.headers.get("authorization", "")
         bearer_token = auth_header.removeprefix("Bearer ").strip()
         x_api_key = request.headers.get("x-api-key", "").strip()

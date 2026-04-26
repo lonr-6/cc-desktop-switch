@@ -5,7 +5,7 @@ chcp 65001 >nul
 :MENU
 cls
 echo ========================================
-echo    CC Desktop Switch v1.0.3 - 构建工具
+echo    CC Desktop Switch v1.0.4 - 构建工具
 echo ========================================
 echo.
 echo  请选择打包方式：

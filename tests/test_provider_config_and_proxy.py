@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.main import create_admin_app
+from backend.main import _desktop_health, create_admin_app
 from main import DesktopTrayController
 from backend import config as cfg
 from backend import provider_tools
@@ -17,6 +17,7 @@ from backend.proxy import (
     _normalize_anthropic_response,
     _normalize_anthropic_sse_event,
     _openai_chunk_to_anthropic,
+    apply_anthropic_request_options,
     build_upstream_url,
     create_proxy_app,
     gateway_models_response,
@@ -127,6 +128,14 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(len(set(ids)), 2)
         self.assertTrue(all("<" not in provider_id and '"' not in provider_id for provider_id in ids))
 
+    def test_add_provider_avoids_duplicate_ids(self):
+        first = cfg.add_provider({"id": "same", "name": "A"})
+        second = cfg.add_provider({"id": "same", "name": "B"})
+
+        self.assertEqual(first["id"], "same")
+        self.assertNotEqual(second["id"], "same")
+        self.assertEqual(len({p["id"] for p in cfg.get_providers()}), 2)
+
     def test_builtin_presets_include_expected_provider_urls(self):
         presets = {preset["id"]: preset for preset in cfg.get_presets()}
 
@@ -149,11 +158,19 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(presets["qiniu"]["models"]["default"], "moonshotai/kimi-k2-thinking")
         self.assertEqual(presets["zhipu"]["models"]["haiku"], "glm-4.7")
         self.assertEqual(presets["siliconflow"]["models"]["default"], "Pro/moonshotai/Kimi-K2.5")
+        self.assertTrue(presets["bailian"]["modelCapabilities"]["qwen3.6-plus"]["supports1m"])
+        self.assertTrue(presets["bailian"]["modelCapabilities"]["qwen3.6-flash"]["supports1m"])
 
         deepseek_1m = presets["deepseek"]["modelOptions"]["deepseek_1m"]
         self.assertEqual(deepseek_1m["models"]["sonnet"], "deepseek-v4-pro[1m]")
         self.assertEqual(deepseek_1m["models"]["opus"], "deepseek-v4-pro[1m]")
         self.assertEqual(deepseek_1m["models"]["default"], "deepseek-v4-pro[1m]")
+        self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-pro[1m]"]["supports1m"])
+        deepseek_max = presets["deepseek"]["requestOptionPresets"]["deepseek_max_effort"]
+        self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["output_config"]["effort"], "max")
+        self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["thinking"]["type"], "enabled")
+        self.assertIn("Low：更快更省", deepseek_max["description"])
+        self.assertIn("未勾选则使用 Claude 当前默认配置", deepseek_max["description"])
 
     def test_registry_inference_models_mark_deepseek_1m(self):
         provider = {
@@ -171,6 +188,50 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(models[0]["name"], "deepseek-v4-pro[1m]")
         self.assertTrue(models[0]["supports1m"])
         self.assertIn('"supports1m":true', serialized)
+
+    def test_registry_inference_models_mark_capability_based_1m_models(self):
+        provider = {
+            "models": {
+                "sonnet": "qwen3.6-plus",
+                "haiku": "qwen3.6-flash",
+                "opus": "qwen3.6-max-preview",
+                "default": "qwen3.6-plus",
+            },
+            "modelCapabilities": {
+                "qwen3.6-plus": {"supports1m": True},
+                "qwen3.6-flash": {"supports1m": True},
+            },
+        }
+
+        models = registry.provider_inference_models(provider)
+        by_name = {item["name"]: item for item in models}
+
+        self.assertTrue(by_name["qwen3.6-plus"]["supports1m"])
+        self.assertTrue(by_name["qwen3.6-flash"]["supports1m"])
+        self.assertNotIn("supports1m", by_name["qwen3.6-max-preview"])
+
+    def test_update_provider_preserves_or_clears_request_options_explicitly(self):
+        provider = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "requestOptions": {
+                "anthropic": {
+                    "thinking": {"type": "enabled"},
+                    "output_config": {"effort": "max"},
+                }
+            },
+        })
+
+        preserved = cfg.update_provider(provider["id"], {"name": "DeepSeek"})
+        self.assertEqual(
+            preserved["requestOptions"]["anthropic"]["output_config"]["effort"],
+            "max",
+        )
+
+        cleared = cfg.update_provider(provider["id"], {"requestOptions": {}})
+        self.assertEqual(cleared["requestOptions"], {})
 
     def test_all_builtin_presets_expose_and_map_provider_models(self):
         """所有内置预设都应能被 Claude Desktop 读取，并被代理实际使用。"""
@@ -213,6 +274,109 @@ class ProviderConfigTests(unittest.TestCase):
             map_model("claude-sonnet-4-6", deepseek_1m_provider),
             "deepseek-v4-pro[1m]",
         )
+
+    def test_settings_fall_back_to_default_update_url(self):
+        config = copy.deepcopy(cfg.DEFAULT_CONFIG)
+        config["settings"]["updateUrl"] = ""
+        cfg.save_config(config)
+
+        settings = cfg.get_settings()
+        updated = cfg.update_settings({"updateUrl": ""})
+
+        self.assertEqual(settings["updateUrl"], cfg.DEFAULT_UPDATE_URL)
+        self.assertEqual(updated["updateUrl"], cfg.DEFAULT_UPDATE_URL)
+
+    def test_reorder_providers_persists_order_and_sort_index(self):
+        first = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        second = cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+
+        self.assertTrue(cfg.reorder_providers([second["id"], first["id"]]))
+        providers = cfg.get_providers()
+
+        self.assertEqual([provider["id"] for provider in providers], [second["id"], first["id"]])
+        self.assertEqual([provider["sortIndex"] for provider in providers], [0, 1])
+
+    def test_desktop_health_detects_stale_gateway_and_missing_1m(self):
+        provider = {
+            "models": {
+                "sonnet": "deepseek-v4-pro[1m]",
+                "haiku": "deepseek-v4-flash",
+                "opus": "deepseek-v4-pro[1m]",
+                "default": "deepseek-v4-pro[1m]",
+            }
+        }
+        old_status = {
+            "configured": False,
+            "keys": {
+                "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
+                "inferenceModels": '["sonnet","haiku","opus"]',
+            },
+        }
+
+        health = _desktop_health(old_status, 18080, provider)
+        codes = {issue["code"] for issue in health["issues"]}
+
+        self.assertTrue(health["needsApply"])
+        self.assertIn("gateway_base_url_mismatch", codes)
+        self.assertIn("deepseek_1m_not_written", codes)
+
+        current_status = {
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash"}]',
+            },
+        }
+
+        current_health = _desktop_health(current_status, 18080, provider)
+
+        self.assertFalse(current_health["needsApply"])
+        self.assertTrue(current_health["oneMillionReady"])
+
+    def test_desktop_health_detects_capability_based_1m_models(self):
+        provider = {
+            "models": {
+                "sonnet": "qwen3.6-plus",
+                "haiku": "qwen3.6-flash",
+                "opus": "qwen3.6-max-preview",
+                "default": "qwen3.6-plus",
+            },
+            "modelCapabilities": {
+                "qwen3.6-plus": {"supports1m": True},
+                "qwen3.6-flash": {"supports1m": True},
+            },
+        }
+
+        missing = _desktop_health({
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"qwen3.6-plus"},{"name":"qwen3.6-flash"}]',
+            },
+        }, 18080, provider)
+
+        ready = _desktop_health({
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"qwen3.6-plus","supports1m":true},{"name":"qwen3.6-flash","supports1m":true}]',
+            },
+        }, 18080, provider)
+
+        self.assertTrue(missing["needsApply"])
+        self.assertFalse(missing["oneMillionReady"])
+        self.assertFalse(ready["needsApply"])
+        self.assertTrue(ready["oneMillionReady"])
 
 
 class ProviderToolsTests(unittest.TestCase):
@@ -413,6 +577,55 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"][0]["remaining"], 10.0)
 
+    def test_reorder_providers_route_saves_drag_order(self):
+        first = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        second = cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+
+        response = self.client.put(
+            "/api/providers/reorder",
+            headers={"x-ccds-request": "1"},
+            json={"providerIds": [second["id"], first["id"]]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(cfg.get_providers()[0]["id"], second["id"])
+
+    def test_update_check_uses_default_url_when_settings_are_blank(self):
+        config = cfg.load_config()
+        config["settings"]["updateUrl"] = ""
+        cfg.save_config(config)
+        observed = {}
+
+        async def fake_check_update(url, current_version, platform="windows-x64"):
+            observed["url"] = url
+            observed["current_version"] = current_version
+            observed["platform"] = platform
+            return {
+                "success": True,
+                "updateAvailable": False,
+                "currentVersion": current_version,
+                "latestVersion": current_version,
+                "platform": platform,
+                "assets": [],
+                "updateProtocol": 1,
+            }
+
+        with patch("backend.main.updater.check_update", fake_check_update):
+            response = self.client.get("/api/update/check")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed["url"], cfg.DEFAULT_UPDATE_URL)
+
 
 class ProxyConversionTests(unittest.TestCase):
     def test_build_upstream_url_accepts_base_url_or_full_endpoint(self):
@@ -486,6 +699,60 @@ class ProxyConversionTests(unittest.TestCase):
 
         self.assertEqual(response["data"][0]["id"], "deepseek-v4-pro[1m]")
         self.assertEqual(response["data"][1]["id"], "deepseek-v4-flash")
+
+    def test_deepseek_request_options_force_max_effort_and_keep_thinking(self):
+        provider = {
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "requestOptions": {
+                "anthropic": {
+                    "thinking": {"type": "enabled"},
+                    "output_config": {"effort": "max"},
+                }
+            },
+        }
+        body = {
+            "model": "deepseek-v4-pro",
+            "thinking": {"type": "enabled"},
+            "output_config": {"effort": "high"},
+        }
+
+        result = apply_anthropic_request_options(body, provider)
+
+        self.assertEqual(result["thinking"], {"type": "enabled"})
+        self.assertEqual(result["output_config"]["effort"], "max")
+
+    def test_deepseek_without_max_preserves_current_effort(self):
+        provider = {
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+        }
+        body = {
+            "model": "deepseek-v4-pro",
+            "thinking": {"type": "enabled"},
+            "output_config": {"effort": "low"},
+        }
+
+        result = apply_anthropic_request_options(body, provider)
+
+        self.assertEqual(result["thinking"], {"type": "enabled"})
+        self.assertEqual(result["output_config"]["effort"], "low")
+
+    def test_non_deepseek_request_options_keep_legacy_thinking_strip(self):
+        provider = {
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+        }
+        body = {
+            "model": "kimi-k2.6",
+            "thinking": {"type": "enabled"},
+            "output_config": {"effort": "high"},
+        }
+
+        result = apply_anthropic_request_options(body, provider)
+
+        self.assertNotIn("thinking", result)
+        self.assertEqual(result["output_config"]["effort"], "high")
 
     def test_anthropic_response_normalization_adds_usage_fields(self):
         response = _normalize_anthropic_response({
@@ -562,6 +829,24 @@ class ProxyAppTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["data"][0]["id"], "deepseek-v4-pro[1m]")
+
+    def test_messages_endpoint_rejects_when_gateway_key_has_not_been_created(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+
+        response = self.client.post("/v1/messages", json={
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        })
+
+        self.assertEqual(response.status_code, 401)
 
 
 class FakeTrayWindow:
@@ -688,6 +973,37 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertEqual(tray.icon.updated, 1)
         self.assertIn("Kimi", tray.icon.notifications[0][1])
 
+    def test_switch_provider_syncs_desktop_models_when_managed(self):
+        first = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        second = cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+        tray.pystray = FakePystray
+        tray.icon = FakeTrayIcon()
+        observed = {}
+
+        with patch("main.registry.get_config_status", return_value={"configured": True}):
+            with patch("main.registry.apply_config", return_value={"success": True}) as apply_config:
+                self.assertTrue(tray.switch_provider(second["id"]))
+                observed["provider"] = apply_config.call_args.kwargs["provider"]
+                observed["base_url"] = apply_config.call_args.args[0]
+
+        self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
+        self.assertEqual(observed["provider"]["models"]["sonnet"], "kimi-k2.6")
+        self.assertEqual(observed["base_url"], "http://127.0.0.1:18080")
+        self.assertIn("桌面版模型已同步", tray.icon.notifications[0][1])
+
 
 class StaticFrontendTests(unittest.TestCase):
     def setUp(self):
@@ -731,6 +1047,29 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertNotIn("本地代理", html + i18n)
         self.assertNotIn("本机代理", html + i18n)
         self.assertNotIn("确认本地端口可用", html + i18n)
+
+    def test_dashboard_presets_selection_update_and_desktop_health_ui_exist(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        css = (self.root / "frontend" / "css" / "style.css").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="dashboardUpdateBadge"', html)
+        self.assertIn('id="dashboardDesktopWarning"', html)
+        self.assertIn('id="desktopPageWarning"', html)
+        self.assertIn("provider-preset-grid", app_js + css)
+        self.assertIn("includePresets: true", app_js)
+        self.assertIn("updatePresetSelection", app_js)
+        self.assertIn("aria-pressed", app_js)
+        self.assertIn("formModelCapabilities", app_js)
+        self.assertIn("formRequestOptions", app_js)
+        self.assertIn("requestOptionPresets", app_js + api_js)
+        self.assertIn("modelsMatch(option.models", app_js)
+        self.assertIn("reorderProviders", api_js)
+        self.assertIn("desktopHealth", app_js + api_js)
+        self.assertIn("modelCapabilities", app_js + api_js)
+        self.assertIn("requestOptions", app_js + api_js)
+        self.assertIn("white-space: pre-line", css)
 
 
 if __name__ == "__main__":

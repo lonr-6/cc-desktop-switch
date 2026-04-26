@@ -28,6 +28,8 @@ CC-Desktop-Switch.exe
 
 如果你选 DeepSeek，可以按需勾选“解锁 1M 上下文”。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`。
 
+如果需要更深的推理，可以勾选“DeepSeek Max 思维”。Claude 界面可能仍显示 `High`，但本工具会按 DeepSeek Max 转发；不勾选则按默认配置运行。
+
 ![DeepSeek 1M 上下文](tutorial/assets/03-deepseek-1m-redbox.png)
 
 ## 4. 一键应用到 Claude 桌面版

@@ -46,7 +46,7 @@
         <div class="switch-board">
           <div class="switch-board-head">
           <div>
-              <h1>Providers</h1>
+              <h1>Providers <span class="update-badge" id="dashboardUpdateBadge" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></span></h1>
               <p>选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
             </div>
             <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
@@ -70,6 +70,10 @@
             <span class="large-dot"></span>
             <strong id="dashboardProviderName">DeepSeek</strong>
           </article>
+        </div>
+        <div class="desktop-warning" id="dashboardDesktopWarning" hidden>
+          <i class="bi bi-exclamation-triangle"></i>
+          <span></span>
         </div>
 
         <div class="quick-actions">
@@ -205,6 +209,10 @@
                 <span class="circle-check"><i class="bi bi-check-lg"></i></span>
                 <strong id="desktopConfiguredText" data-i18n="status.configured">已配置</strong>
               </div>
+              <div class="desktop-warning compact" id="desktopPageWarning" hidden>
+                <i class="bi bi-exclamation-triangle"></i>
+                <span></span>
+              </div>
               <div class="config-list" id="desktopConfigList"></div>
               <div class="apply-explain desktop-explain">
                 <i class="bi bi-diagram-3"></i>
@@ -321,7 +329,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.3</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.4</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div><span data-i18n="settings.checkUpdate">检查更新</span><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button></div>
           <p class="update-status" id="updateStatus"></p>

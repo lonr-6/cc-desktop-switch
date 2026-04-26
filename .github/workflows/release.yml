@@ -82,13 +82,31 @@ jobs:
             powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $setup
           }
 
+      - name: Ensure release tag for manual run
+        if: github.event_name == 'workflow_dispatch'
+        shell: powershell
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags
+          cmd /c "git rev-parse -q --verify refs/tags/$tag >NUL 2>NUL"
+          if ($LASTEXITCODE -ne 0) {
+            git tag $tag
+            git push origin $tag
+          }
+
       - name: Publish GitHub Release
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:RELEASE_VERSION"
+          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
           $notes = "Windows release for CC Desktop Switch v$env:RELEASE_VERSION."
+          if (Test-Path -LiteralPath $notesPath) {
+            $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
+          }
           $assets = Get-ChildItem -LiteralPath "release" -File | ForEach-Object { $_.FullName }
           if (-not $assets) {
             throw "No release assets found."

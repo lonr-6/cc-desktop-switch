@@ -4,15 +4,17 @@ import json
 import os
 import secrets
 import shutil
+import copy
 from datetime import datetime
 from typing import Optional
 
 CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
+DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.3",
+    "version": "1.0.4",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -22,7 +24,7 @@ DEFAULT_CONFIG = {
         "proxyPort": 18080,
         "adminPort": 18081,
         "autoStart": False,
-        "updateUrl": "",
+        "updateUrl": DEFAULT_UPDATE_URL,
     },
 }
 
@@ -48,6 +50,22 @@ BUILTIN_PRESETS = [
                     "haiku": "deepseek-v4-flash",
                     "opus": "deepseek-v4-pro[1m]",
                     "default": "deepseek-v4-pro[1m]",
+                },
+                "modelCapabilities": {
+                    "deepseek-v4-pro[1m]": {"supports1m": True},
+                },
+            }
+        },
+        "requestOptions": {},
+        "requestOptionPresets": {
+            "deepseek_max_effort": {
+                "label": "DeepSeek Max 思维",
+                "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 DeepSeek Max 转发；未勾选则使用 Claude 当前默认配置。",
+                "requestOptions": {
+                    "anthropic": {
+                        "thinking": {"type": "enabled"},
+                        "output_config": {"effort": "max"},
+                    }
                 },
             }
         },
@@ -122,6 +140,11 @@ BUILTIN_PRESETS = [
             "opus": "qwen3.6-max-preview",
             "default": "qwen3.6-plus",
         },
+        "modelCapabilities": {
+            "qwen3.6-plus": {"supports1m": True},
+            "qwen3.6-flash": {"supports1m": True},
+        },
+        "requestOptions": {},
         "isBuiltin": True,
     },
 ]
@@ -142,12 +165,12 @@ def load_config() -> dict:
     """加载配置文件"""
     ensure_config_dir()
     if not os.path.exists(CONFIG_FILE):
-        return dict(DEFAULT_CONFIG)
+        return copy.deepcopy(DEFAULT_CONFIG)
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
-        return dict(DEFAULT_CONFIG)
+        return copy.deepcopy(DEFAULT_CONFIG)
 
 
 def save_config(config: dict):
@@ -172,7 +195,10 @@ def _normalize_provider(provider: dict) -> dict:
     normalized.setdefault("apiFormat", "anthropic")
     normalized.setdefault("apiKey", "")
     normalized.setdefault("extraHeaders", {})
+    normalized.setdefault("modelCapabilities", {})
+    normalized.setdefault("requestOptions", {})
     normalized.setdefault("isBuiltin", False)
+    normalized.setdefault("sortIndex", 0)
     normalized.setdefault("models", {
         "sonnet": "",
         "haiku": "",
@@ -188,7 +214,7 @@ def normalize_config(config: dict) -> dict:
         raise ValueError("配置文件必须是 JSON 对象")
 
     source = config.get("config") if isinstance(config.get("config"), dict) else config
-    normalized = dict(DEFAULT_CONFIG)
+    normalized = copy.deepcopy(DEFAULT_CONFIG)
     normalized.update({k: v for k, v in source.items() if k in normalized})
     normalized["version"] = source.get("version", DEFAULT_CONFIG["version"])
 
@@ -336,7 +362,12 @@ def add_provider(provider: dict) -> dict:
     # 生成唯一 ID
     import uuid
     provider = _normalize_provider(provider)
-    provider["id"] = provider.get("id", str(uuid.uuid4())[:8])
+    existing_ids = {p.get("id") for p in providers}
+    candidate_id = provider.get("id") or str(uuid.uuid4())[:8]
+    while candidate_id in existing_ids:
+        candidate_id = f"{provider.get('id') or 'provider'}-{secrets.token_hex(2)}"
+    provider["id"] = candidate_id
+    provider["sortIndex"] = len(providers)
 
     providers.append(provider)
     config["providers"] = providers
@@ -367,6 +398,12 @@ def update_provider(provider_id: str, data: dict) -> Optional[dict]:
             if "extraHeaders" not in data or data.get("extraHeaders") in (None, {}):
                 updated["extraHeaders"] = p.get("extraHeaders", {})
 
+            if "modelCapabilities" not in data:
+                updated["modelCapabilities"] = p.get("modelCapabilities", {})
+
+            if "requestOptions" not in data:
+                updated["requestOptions"] = p.get("requestOptions", {})
+
             if "models" in data and isinstance(data["models"], dict):
                 merged_models = dict(p.get("models", {}))
                 merged_models.update(data["models"])
@@ -390,6 +427,9 @@ def delete_provider(provider_id: str) -> bool:
     # 如果删除的是当前激活的，切换到第一个可用的
     if config.get("activeProvider") == provider_id:
         config["activeProvider"] = config["providers"][0]["id"] if config["providers"] else None
+
+    for index, provider in enumerate(config["providers"]):
+        provider["sortIndex"] = index
 
     save_config(config)
     return True
@@ -417,19 +457,46 @@ def update_models(provider_id: str, models: dict) -> bool:
     return False
 
 
+def reorder_providers(provider_ids: list[str]) -> bool:
+    """按照前端拖动后的 ID 顺序保存 providers。"""
+    config = load_config()
+    providers = config.get("providers", [])
+    by_id = {provider.get("id"): provider for provider in providers}
+    ordered = []
+    seen = set()
+    for provider_id in provider_ids:
+        provider = by_id.get(provider_id)
+        if provider and provider_id not in seen:
+            ordered.append(provider)
+            seen.add(provider_id)
+    ordered.extend(provider for provider in providers if provider.get("id") not in seen)
+    if len(ordered) != len(providers):
+        return False
+    for index, provider in enumerate(ordered):
+        provider["sortIndex"] = index
+    config["providers"] = ordered
+    save_config(config)
+    return True
+
+
 def get_settings() -> dict:
     """获取设置"""
     config = load_config()
     settings = dict(DEFAULT_CONFIG["settings"])
     settings.update(config.get("settings", {}))
+    if not settings.get("updateUrl"):
+        settings["updateUrl"] = DEFAULT_UPDATE_URL
     return settings
 
 
 def update_settings(settings: dict) -> dict:
     """更新设置"""
     config = load_config()
-    current = config.get("settings", {})
+    current = dict(DEFAULT_CONFIG["settings"])
+    current.update(config.get("settings", {}))
     current.update(settings)
+    if not current.get("updateUrl"):
+        current["updateUrl"] = DEFAULT_UPDATE_URL
     config["settings"] = current
     save_config(config)
     return current

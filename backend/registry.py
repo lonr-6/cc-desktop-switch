@@ -55,6 +55,9 @@ def provider_inference_models(provider: Optional[dict]) -> list:
     models = provider.get("models") or {}
     if not isinstance(models, dict):
         return fallback
+    model_capabilities = provider.get("modelCapabilities") or {}
+    if not isinstance(model_capabilities, dict):
+        model_capabilities = {}
 
     ordered = []
     for key in ("default", "sonnet", "opus", "haiku"):
@@ -68,7 +71,9 @@ def provider_inference_models(provider: Optional[dict]) -> list:
     result = []
     for model_id in ordered:
         item = {"name": model_id, "displayName": model_id}
-        if "[1m]" in model_id.lower():
+        capabilities = model_capabilities.get(model_id)
+        supports_1m = isinstance(capabilities, dict) and capabilities.get("supports1m") is True
+        if "[1m]" in model_id.lower() or supports_1m:
             item["supports1m"] = True
         result.append(item)
     return result

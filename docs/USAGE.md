@@ -15,13 +15,13 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.3-Windows-Setup.exe
+CC-Desktop-Switch-v1.0.4-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.3-Windows-Portable.zip
+CC-Desktop-Switch-v1.0.4-Windows-Portable.zip
 ```
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
@@ -72,6 +72,8 @@ http://127.0.0.1:18081
 如果厂商更新了模型名，可以点“自动获取模型”，或手动改成厂商控制台里显示的模型 ID。
 
 DeepSeek 额外提供“解锁 1M 上下文”选项。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`。
+
+DeepSeek 还提供“DeepSeek Max 思维”选项。Claude 界面可能仍显示 `High`，但勾选后本工具会在转发时使用 DeepSeek 的 `max` 思维深度；不勾选则按 Claude 当前默认配置处理。
 
 ### 4. 一键应用到 Claude 桌面版
 

@@ -51,6 +51,8 @@
       authScheme: provider.authScheme || 'bearer',
       hasApiKey: !!provider.hasApiKey,
       extraHeaders: provider.extraHeaders || {},
+      modelCapabilities: provider.modelCapabilities || {},
+      requestOptions: provider.requestOptions || {},
       default: provider.id === activeId,
       isBuiltin: !!provider.isBuiltin,
       mappings: {
@@ -70,6 +72,8 @@
       authScheme: payload.authScheme || 'bearer',
       apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
       extraHeaders: payload.extraHeaders || {},
+      modelCapabilities: payload.modelCapabilities || {},
+      requestOptions: payload.requestOptions || {},
     };
     if (payload.apiKey) {
       body.apiKey = payload.apiKey;
@@ -104,6 +108,7 @@
         proxyPort: data.proxyPort || 18080,
         activeProvider: active ? { name: active.name, id: active.id } : { name: '-', id: null },
         activeProviderId: data.activeProviderId,
+        desktopHealth: data.desktopHealth || { needsApply: false, issues: [] },
       };
     },
 
@@ -126,7 +131,10 @@
         authScheme: p.authScheme || 'bearer',
         models: p.models || {},
         modelOptions: p.modelOptions || {},
+        requestOptionPresets: p.requestOptionPresets || {},
         extraHeaders: p.extraHeaders || {},
+        modelCapabilities: p.modelCapabilities || {},
+        requestOptions: p.requestOptions || {},
         ...computeIcon(p),
       }));
     },
@@ -147,6 +155,10 @@
 
     async setDefaultProvider(id) {
       return api('PUT', `/api/providers/${encodeURIComponent(id)}/default`);
+    },
+
+    async reorderProviders(providerIds) {
+      return api('PUT', '/api/providers/reorder', { providerIds });
     },
 
     async testProvider(id) {
@@ -184,10 +196,11 @@
       const registryConfig = data.keys || {};
       return {
         configured: !!data.configured,
+        health: data.health || { needsApply: false, issues: [] },
         config: {
           inferenceProvider: registryConfig.inferenceProvider || 'gateway',
           inferenceGatewayBaseUrl: registryConfig.inferenceGatewayBaseUrl || `http://127.0.0.1:${proxyPort}`,
-          inferenceGatewayApiKey: registryConfig.inferenceGatewayApiKey || '******',
+          inferenceGatewayApiKey: registryConfig.inferenceGatewayApiKey ? '******' : '',
           inferenceGatewayAuthScheme: registryConfig.inferenceGatewayAuthScheme || 'bearer',
           inferenceModels: registryConfig.inferenceModels || '["sonnet","haiku","opus"]',
         },
