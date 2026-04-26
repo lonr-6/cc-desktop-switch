@@ -25,6 +25,41 @@ CLAUDE_MODEL_NAMES = {
 }
 
 
+def provider_model_ids(provider: Optional[dict]) -> list:
+    """返回当前 provider 暴露给 Claude Desktop 的真实模型 ID。"""
+    if not provider:
+        return []
+    models = provider.get("models") or {}
+    if not isinstance(models, dict):
+        return []
+    ordered = []
+    for key in ("default", "sonnet", "opus", "haiku"):
+        model_id = str(models.get(key) or "").strip()
+        if model_id and model_id not in ordered:
+            ordered.append(model_id)
+    return ordered
+
+
+def gateway_models_response(provider: Optional[dict]) -> dict:
+    """生成 Anthropic /v1/models 风格的模型列表响应。"""
+    model_ids = provider_model_ids(provider)
+    data = [
+        {
+            "type": "model",
+            "id": model_id,
+            "display_name": model_id,
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+        for model_id in model_ids
+    ]
+    return {
+        "data": data,
+        "has_more": False,
+        "first_id": data[0]["id"] if data else None,
+        "last_id": data[-1]["id"] if data else None,
+    }
+
+
 class ProxyStats:
     """代理统计"""
 
@@ -91,6 +126,11 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
 
     models_config = provider.get("models", {})
     if not models_config:
+        return original_model
+
+    # Claude Desktop 在 gateway 模式可能直接发送 /v1/models 返回的真实模型 ID。
+    # 这种情况下必须透传，避免 deepseek-v4-pro[1m] 被 default 覆盖回普通模型。
+    if original_model in provider_model_ids(provider):
         return original_model
 
     model_lower = original_model.lower()
@@ -224,6 +264,80 @@ def get_upstream_headers(provider: dict) -> dict:
     return headers
 
 
+def _normalize_usage(usage) -> dict:
+    """保证 Anthropic usage 至少包含 input_tokens / output_tokens。"""
+    def token_int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    normalized = dict(usage) if isinstance(usage, dict) else {}
+    input_tokens = (
+        normalized.get("input_tokens")
+        if normalized.get("input_tokens") is not None
+        else normalized.get("prompt_tokens")
+    )
+    output_tokens = (
+        normalized.get("output_tokens")
+        if normalized.get("output_tokens") is not None
+        else normalized.get("completion_tokens")
+    )
+    normalized["input_tokens"] = token_int(input_tokens)
+    normalized["output_tokens"] = token_int(output_tokens)
+    return normalized
+
+
+def _normalize_content(content) -> list:
+    """把常见上游 content 变体整理成 Anthropic content block。"""
+    if isinstance(content, list):
+        return content
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    if content is None:
+        return []
+    return [{"type": "text", "text": str(content)}]
+
+
+def _normalize_anthropic_message(message: dict, model: str) -> dict:
+    """补齐 Claude Desktop 对 Anthropic message 响应常用字段的期望。"""
+    normalized = dict(message) if isinstance(message, dict) else {}
+    normalized.setdefault("id", f"msg_{uuid.uuid4().hex[:12]}")
+    normalized.setdefault("type", "message")
+    normalized.setdefault("role", "assistant")
+    normalized["model"] = normalized.get("model") or model
+    normalized["content"] = _normalize_content(normalized.get("content"))
+    normalized["usage"] = _normalize_usage(normalized.get("usage"))
+    return normalized
+
+
+def _normalize_anthropic_response(upstream_data: dict, model: str) -> dict:
+    """规范 Anthropic 兼容响应，避免桌面端访问 usage.input_tokens 报错。"""
+    if not isinstance(upstream_data, dict) or upstream_data.get("error"):
+        return upstream_data
+    if upstream_data.get("type") == "message" or "content" in upstream_data:
+        return _normalize_anthropic_message(upstream_data, model)
+    return upstream_data
+
+
+def _normalize_anthropic_sse_event(event: dict, model: str) -> dict:
+    """规范 Anthropic 兼容 SSE 事件中的 usage 字段。"""
+    if not isinstance(event, dict):
+        return event
+    normalized = dict(event)
+    event_type = normalized.get("type")
+    if event_type == "message_start":
+        normalized["message"] = _normalize_anthropic_message(
+            normalized.get("message") or {},
+            model,
+        )
+    elif event_type == "message_delta":
+        normalized["usage"] = _normalize_usage(normalized.get("usage"))
+    elif "usage" in normalized:
+        normalized["usage"] = _normalize_usage(normalized.get("usage"))
+    return normalized
+
+
 async def forward_request(
     body: dict,
     provider: dict,
@@ -290,7 +404,7 @@ async def forward_request(
         if api_format == "openai":
             # OpenAI → Anthropic 格式转换
             return _openai_to_anthropic(upstream_data, body.get("model", ""))
-        return upstream_data
+        return _normalize_anthropic_response(upstream_data, body.get("model", ""))
 
     except httpx.TimeoutException:
         stats.record(False)
@@ -371,6 +485,16 @@ async def forward_request_stream(
                                 continue
                 else:
                     async for line in resp.aiter_lines():
+                        if line.startswith("data:"):
+                            data_str = line[len("data:"):].strip()
+                            if data_str and data_str != "[DONE]":
+                                try:
+                                    event = json.loads(data_str)
+                                    event = _normalize_anthropic_sse_event(event, body.get("model", ""))
+                                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n"
+                                    continue
+                                except json.JSONDecodeError:
+                                    pass
                         yield line + "\n"
 
                 stats.record(True)
@@ -432,6 +556,10 @@ def _openai_chunk_to_anthropic(chunk: dict, model: str) -> dict:
                     "role": "assistant",
                     "model": model,
                     "content": [],
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
                 },
             }
         return {"type": "ping"}
@@ -453,12 +581,45 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.2")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.3")
+
+    def gateway_auth_failed(request: Request) -> bool:
+        gateway_api_key = get_gateway_api_key()
+        if not gateway_api_key:
+            return False
+        auth_header = request.headers.get("authorization", "")
+        bearer_token = auth_header.removeprefix("Bearer ").strip()
+        x_api_key = request.headers.get("x-api-key", "").strip()
+        return gateway_api_key not in {bearer_token, x_api_key}
+
+    def gateway_auth_error() -> JSONResponse:
+        log_buffer.add("ERROR", "本地 gateway 认证失败")
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"message": "Invalid gateway API key"}},
+        )
 
     @app.get("/health")
     @app.get("/status")
     async def health():
         return {"status": "ok", "stats": stats.to_dict()}
+
+    @app.api_route("/v1/models", methods=["GET", "OPTIONS"])
+    @app.api_route("/claude/v1/models", methods=["GET", "OPTIONS"])
+    async def handle_models(request: Request):
+        if request.method == "OPTIONS":
+            return JSONResponse(
+                content={},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                },
+            )
+        if gateway_auth_failed(request):
+            return gateway_auth_error()
+        provider = get_active_provider()
+        return gateway_models_response(provider)
 
     @app.api_route("/v1/messages", methods=["POST", "OPTIONS"])
     @app.api_route("/claude/v1/messages", methods=["POST", "OPTIONS"])
@@ -476,17 +637,8 @@ def create_proxy_app() -> FastAPI:
         request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:12])
         body = await request.json()
 
-        gateway_api_key = get_gateway_api_key()
-        if gateway_api_key:
-            auth_header = request.headers.get("authorization", "")
-            bearer_token = auth_header.removeprefix("Bearer ").strip()
-            x_api_key = request.headers.get("x-api-key", "").strip()
-            if gateway_api_key not in {bearer_token, x_api_key}:
-                log_buffer.add("ERROR", "本地 gateway 认证失败")
-                return JSONResponse(
-                    status_code=401,
-                    content={"error": {"message": "Invalid gateway API key"}},
-                )
+        if gateway_auth_failed(request):
+            return gateway_auth_error()
 
         # 获取当前激活的提供商
         provider = get_active_provider()

@@ -266,14 +266,17 @@
     if (modelResult) modelResult.textContent = "";
   }
 
-  function setApiKeyInputState(hasSavedKey = false) {
+  function setApiKeyInputState(hasSavedKey = false, savedKey = "") {
     const input = $("#providerApiKey");
     const label = $("label[for='providerApiKey']");
     if (!input) return;
-    input.value = "";
-    input.required = !hasSavedKey;
-    input.placeholder = hasSavedKey ? t("providers.keySavedPlaceholder") : t("providers.keyPlaceholder");
-    if (label) label.classList.toggle("required", !hasSavedKey);
+    input.type = "password";
+    input.value = savedKey || "";
+    input.required = !hasSavedKey && !savedKey;
+    input.placeholder = (hasSavedKey || savedKey) ? t("providers.keySavedPlaceholder") : t("providers.keyPlaceholder");
+    const toggle = $("[data-action='toggle-key']");
+    if (toggle) toggle.innerHTML = '<i class="bi bi-eye"></i>';
+    if (label) label.classList.toggle("required", input.required);
   }
 
   function resetProviderForm() {
@@ -312,6 +315,15 @@
     $("#providerName").value = provider.name;
     $("#providerBaseUrl").value = provider.baseUrl;
     setApiKeyInputState(provider.hasApiKey);
+    if (provider.hasApiKey) {
+      try {
+        const secret = await CCApi.getProviderSecret(provider.id);
+        setApiKeyInputState(true, secret.apiKey || "");
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || t("toast.requestFailed"));
+      }
+    }
     $("#providerAuth").value = provider.authScheme;
     formApiFormat = provider.apiFormat === "openai" ? "OpenAI" : "Anthropic";
     setProviderMappings(provider.mappings || emptyMappings());

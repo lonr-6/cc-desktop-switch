@@ -100,17 +100,23 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.2")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.3")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
         """阻止普通网页表单跨站触发本地写操作。"""
-        sensitive_reads = {"/api/config/export"}
+        sensitive_read = (
+            request.url.path == "/api/config/export"
+            or (
+                request.url.path.startswith("/api/providers/")
+                and request.url.path.endswith("/secret")
+            )
+        )
         if (
             request.url.path.startswith("/api/")
             and (
                 request.method not in {"GET", "HEAD", "OPTIONS"}
-                or request.url.path in sensitive_reads
+                or sensitive_read
             )
             and request.headers.get("x-ccds-request") != "1"
         ):
@@ -147,6 +153,14 @@ def create_admin_app() -> FastAPI:
             "providers": providers,
             "activeId": active_id,
         }
+
+    @app.get("/api/providers/{provider_id}/secret")
+    async def get_provider_secret(provider_id: str):
+        """读取已保存的 Provider API Key，仅允许本机前端调用。"""
+        provider = cfg.get_provider(provider_id)
+        if not provider:
+            return _provider_not_found()
+        return {"apiKey": provider.get("apiKey", "")}
 
     @app.post("/api/providers")
     async def create_provider(request: Request):
@@ -321,7 +335,12 @@ def create_admin_app() -> FastAPI:
         proxy_port = data.get("port", cfg.get_settings().get("proxyPort", 18080))
         base_url = f"http://127.0.0.1:{proxy_port}"
         gateway_api_key = cfg.get_or_create_gateway_api_key()
-        return registry.apply_config(base_url, gateway_api_key=gateway_api_key)
+        active_provider = cfg.get_active_provider()
+        return registry.apply_config(
+            base_url,
+            gateway_api_key=gateway_api_key,
+            provider=active_provider,
+        )
 
     @app.post("/api/desktop/clear")
     async def clear_desktop_config():

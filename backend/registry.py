@@ -1,7 +1,9 @@
 """Windows / macOS 注册表 / plist 操作 - 配置 Claude Desktop 3P 模式"""
 
+import json
 import subprocess
 import sys
+from typing import Optional
 
 REGISTRY_PATH = r"SOFTWARE\Policies\Claude"
 CCDS_MARKER = "ccds_managed"
@@ -37,6 +39,48 @@ def _os_name() -> str:
 def _not_supported() -> dict:
     """非 Windows 且非 macOS 时的提示"""
     return {"success": False, "message": "Claude Desktop 没有 Linux GUI 版本，无需配置"}
+
+
+def provider_inference_models(provider: Optional[dict]) -> list:
+    """生成 Claude Desktop gateway 需要的模型列表。
+
+    Claude Desktop 的 1M 上下文不是只看请求里的 model 字段，还会读取
+    managed policy 的 inferenceModels。DeepSeek 的 1M 模型需要显式标注
+    supports1m，且 name 要和 gateway /v1/models 返回的 ID 完全一致。
+    """
+    fallback = ["sonnet", "haiku", "opus"]
+    if not provider:
+        return fallback
+
+    models = provider.get("models") or {}
+    if not isinstance(models, dict):
+        return fallback
+
+    ordered = []
+    for key in ("default", "sonnet", "opus", "haiku"):
+        model_id = str(models.get(key) or "").strip()
+        if model_id and model_id not in ordered:
+            ordered.append(model_id)
+
+    if not ordered:
+        return fallback
+
+    result = []
+    for model_id in ordered:
+        item = {"name": model_id, "displayName": model_id}
+        if "[1m]" in model_id.lower():
+            item["supports1m"] = True
+        result.append(item)
+    return result
+
+
+def serialize_inference_models(provider: Optional[dict]) -> str:
+    """序列化 inferenceModels，供注册表 / plist 写入。"""
+    return json.dumps(
+        provider_inference_models(provider),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 # ── Windows ──
@@ -75,18 +119,19 @@ def _win_get_config_status() -> dict:
     return result
 
 
-def _win_apply_config(base_url: str, gateway_api_key: str = "") -> dict:
+def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
     import winreg
     key = _win_get_key(read_only=False)
     if key is None:
         return {"success": False, "message": "无法打开注册表，请以管理员身份运行"}
     try:
+        inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
         values = {
             "inferenceProvider": ("gateway", winreg.REG_SZ),
             "inferenceGatewayBaseUrl": (base_url, winreg.REG_SZ),
             "inferenceGatewayApiKey": (gateway_api_key, winreg.REG_SZ),
             "inferenceGatewayAuthScheme": ("bearer", winreg.REG_SZ),
-            "inferenceModels": ('["sonnet","haiku","opus"]', winreg.REG_SZ),
+            "inferenceModels": (inference_models, winreg.REG_SZ),
             "isClaudeCodeForDesktopEnabled": (1, winreg.REG_DWORD),
             CCDS_MARKER: ("true", winreg.REG_SZ),
         }
@@ -164,14 +209,17 @@ def _mac_get_config_status() -> dict:
     return {"configured": configured, "keys": keys, "message": ""}
 
 
-def _mac_apply_config(base_url: str, gateway_api_key: str = "") -> dict:
+def _mac_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
     try:
+        inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
         for name in DESKTOP_CONFIG:
             val, typ = DESKTOP_CONFIG[name]
             if name == "inferenceGatewayBaseUrl":
                 val = base_url
             if name == "inferenceGatewayApiKey":
                 val = gateway_api_key
+            if name == "inferenceModels":
+                val = inference_models
             # 根据 Python 类型选择 defaults 的 -type 参数
             if typ == int:
                 _mac_run(["defaults", "write", MAC_BUNDLE, name, "-int", str(val)])
@@ -213,13 +261,18 @@ def get_config_status() -> dict:
     return {"configured": False, "keys": {}, "message": "仅 Windows / macOS 需要配置"}
 
 
-def apply_config(base_url: str = "http://127.0.0.1:18080", gateway_api_key: str = "") -> dict:
+def apply_config(
+    base_url: str = "http://127.0.0.1:18080",
+    gateway_api_key: str = "",
+    provider: Optional[dict] = None,
+) -> dict:
     """应用 Desktop 3P 配置"""
+    inference_models = serialize_inference_models(provider)
     os_name = _os_name()
     if os_name == "win":
-        return _win_apply_config(base_url, gateway_api_key)
+        return _win_apply_config(base_url, gateway_api_key, inference_models)
     elif os_name == "mac":
-        return _mac_apply_config(base_url, gateway_api_key)
+        return _mac_apply_config(base_url, gateway_api_key, inference_models)
     return _not_supported()
 
 

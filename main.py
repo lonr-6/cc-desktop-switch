@@ -18,7 +18,7 @@ from backend import config as cfg
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 

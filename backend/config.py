@@ -12,7 +12,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 
 DEFAULT_CONFIG = {
-    "version": "1.0.2",
+    "version": "1.0.3",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],

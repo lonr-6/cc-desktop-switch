@@ -112,6 +112,10 @@
       return (data.providers || []).map(p => mapProvider(p, data.activeId));
     },
 
+    async getProviderSecret(id) {
+      return api('GET', `/api/providers/${encodeURIComponent(id)}/secret`);
+    },
+
     async getPresets() {
       const data = await api('GET', '/api/presets');
       return (data.presets || []).map(p => ({
