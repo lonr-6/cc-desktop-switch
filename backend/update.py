@@ -79,11 +79,17 @@ async def fetch_latest_json(url: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             response = await client.get(safe_url)
             response.raise_for_status()
+            # 兼容少数发布工具写出的 UTF-8 BOM，同时保持正常 JSON 路径。
             data = response.json()
     except httpx.HTTPError as exc:
         raise UpdateCheckError(f"更新地址请求失败: {exc}") from exc
     except ValueError as exc:
-        raise UpdateCheckError("更新地址返回的不是有效 JSON") from exc
+        try:
+            import json
+
+            data = json.loads(response.content.decode("utf-8-sig"))
+        except Exception as sig_exc:
+            raise UpdateCheckError("更新地址返回的不是有效 JSON") from sig_exc
 
     if not isinstance(data, dict):
         raise UpdateCheckError("latest.json 格式错误")

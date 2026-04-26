@@ -43,7 +43,7 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 不是破解，也不是绕过官方机制。它只是把官方支持的配置方式做成了一个本地界面。
 
-目前 v1.0.6 已经发到 GitHub：
+目前 v1.0.7 已经发到 GitHub：
 
 https://github.com/lonr-6/cc-desktop-switch
 
@@ -66,7 +66,7 @@ https://github.com/lonr-6/cc-desktop-switch
 
 ### Single post
 
-I released CC Desktop Switch v1.0.6.
+I released CC Desktop Switch v1.0.7.
 
 It is a small local desktop app for configuring Claude Desktop with third-party API providers.
 
@@ -101,7 +101,7 @@ The app manages providers, API keys, model mapping, and the local proxy.
 
 So this is not a bypass or a patch. It is a UI around the supported configuration path.
 
-4/ v1.0.6 includes:
+4/ v1.0.7 includes:
 
 - Windows installer
 - portable ZIP
@@ -124,7 +124,7 @@ Use a test API key first. Do not paste real keys into issues, screenshots, or co
 ### 标题备选
 
 1. 开源了一个 Claude Desktop 3P 配置小工具：CC Desktop Switch
-2. CC Desktop Switch v1.0.6：桌面应用方式接 DeepSeek / Kimi / 智谱 / 阿里云百炼
+2. CC Desktop Switch v1.0.7：桌面应用方式接 DeepSeek / Kimi / 智谱 / 阿里云百炼
 3. 把 Claude Desktop 的第三方推理配置做成了一个 Windows 本地工具
 
 ### 正文

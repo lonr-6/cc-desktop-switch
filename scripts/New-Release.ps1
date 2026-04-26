@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.6",
+    [string]$Version = "1.0.7",
     [string]$OutputDir = "release",
     [switch]$Build,
     [switch]$TryInstaller,
@@ -265,7 +265,9 @@ $latest = [ordered]@{
 }
 
 $latestPath = Join-Path $releaseDir "latest.json"
-$latest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $latestPath -Encoding utf8
+$latestJson = $latest | ConvertTo-Json -Depth 8
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($latestPath, $latestJson, $utf8NoBom)
 Add-Asset -Assets ([System.Collections.Generic.List[object]]::new()) -Path $latestPath -PrivateKeyPath $privateKey | Out-Null
 
 Get-ChildItem -LiteralPath $releaseDir -File | Sort-Object Name | Select-Object Name, Length

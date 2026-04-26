@@ -294,6 +294,34 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertFalse(updater.is_newer_version("v1.0.4", "1.0.4"))
         self.assertTrue(updater.is_newer_version("1.0.10", "1.0.9"))
 
+    def test_fetch_latest_json_accepts_utf8_bom(self):
+        class FakeResponse:
+            content = b'\xef\xbb\xbf{"version":"1.0.7","platforms":{"windows-x64":{"assets":[]}}}'
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                raise ValueError("BOM")
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
+
+        with patch("backend.update.httpx.AsyncClient", FakeClient):
+            data = asyncio.run(updater.fetch_latest_json("https://example.com/latest.json"))
+
+        self.assertEqual(data["version"], "1.0.7")
+
     def test_update_installer_asset_prefers_setup_exe(self):
         asset = updater.pick_windows_installer([
             {"name": "CC-Desktop-Switch-v1.0.5-Windows-Portable.zip"},
@@ -784,11 +812,11 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "updateAvailable": True,
                 "currentVersion": current_version,
-                "latestVersion": "1.0.7",
+                "latestVersion": "1.0.8",
                 "platform": platform,
                 "assets": [],
                 "downloaded": True,
-                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.7-Windows-Setup.exe",
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.8-Windows-Setup.exe",
             }
 
         with patch("backend.main.updater.download_update", fake_download_update):
@@ -802,7 +830,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         popen.assert_called_once_with(
-            [r"C:\Temp\CC-Desktop-Switch-v1.0.7-Windows-Setup.exe"],
+            [r"C:\Temp\CC-Desktop-Switch-v1.0.8-Windows-Setup.exe"],
             close_fds=True,
         )
 

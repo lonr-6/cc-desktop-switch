@@ -636,7 +636,7 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.6")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.7")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
