@@ -46,7 +46,7 @@
         <div class="switch-board">
           <div class="switch-board-head">
           <div>
-              <h1>Providers <span class="update-badge" id="dashboardUpdateBadge" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></span></h1>
+              <h1>Providers <button class="update-badge" id="dashboardUpdateBadge" type="button" data-action="install-update" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></button></h1>
               <p>选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
             </div>
             <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
@@ -329,9 +329,9 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.4</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.5</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
-          <div><span data-i18n="settings.checkUpdate">检查更新</span><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button></div>
+          <div><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
           <div><span>GitHub</span><a href="https://github.com/" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
         </article>

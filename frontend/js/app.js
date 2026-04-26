@@ -103,10 +103,17 @@
 
   function renderUpdateBadge(result) {
     const badge = $("#dashboardUpdateBadge");
-    if (!badge) return;
     const available = !!result?.updateAvailable;
-    badge.hidden = !available;
-    const text = $("span", badge);
+    const installButton = $("#settingsInstallUpdate");
+    if (badge) {
+      badge.hidden = !available;
+      badge.title = available ? t("settings.installUpdate") : "";
+      badge.setAttribute("aria-label", available ? t("settings.installUpdate") : t("dashboard.updateAvailable"));
+    }
+    if (installButton) {
+      installButton.hidden = !available;
+    }
+    const text = badge ? $("span", badge) : null;
     if (text && available) {
       text.textContent = result.latestVersion
         ? `${t("dashboard.updateAvailable")} ${result.latestVersion}`
@@ -115,10 +122,6 @@
   }
 
   async function refreshUpdateBadge(force = false) {
-    if (!force && updateCheckCache) {
-      renderUpdateBadge(updateCheckCache);
-      return;
-    }
     try {
       updateCheckCache = await CCApi.checkUpdate("");
       renderUpdateBadge(updateCheckCache);
@@ -857,11 +860,19 @@
 
     try {
       if (action === "set-default") {
-        await CCApi.setDefaultProvider(actionEl.dataset.id);
+        const result = await CCApi.setDefaultProvider(actionEl.dataset.id);
+        await CCApi.startProxy();
         await renderProviderCards("#dashboardProviderCards", { includePresets: true });
         await renderProviders();
         await renderDashboard();
-        showToast(t("toast.defaultUpdated"));
+        const desktopSync = result.desktopSync || {};
+        if (desktopSync.attempted && desktopSync.success) {
+          showToast(t("toast.defaultUpdatedDesktop"));
+        } else if (desktopSync.attempted && desktopSync.success === false) {
+          showToast(t("toast.defaultUpdatedDesktopFailed"));
+        } else {
+          showToast(t("toast.defaultUpdated"));
+        }
       }
 
       if (action === "new-from-preset") {
@@ -1045,6 +1056,39 @@
           status.classList.toggle("available", !!result.updateAvailable);
         }
         showToast(message);
+      }
+
+      if (action === "install-update") {
+        if (!updateCheckCache?.updateAvailable) {
+          updateCheckCache = await CCApi.checkUpdate($("#settingsUpdateUrl")?.value.trim() || "");
+          renderUpdateBadge(updateCheckCache);
+        }
+        if (!updateCheckCache?.updateAvailable) {
+          const message = `${t("toast.noUpdate")} ${updateCheckCache?.currentVersion || ""}`.trim();
+          const status = $("#updateStatus");
+          if (status) {
+            status.textContent = message;
+            status.classList.remove("available");
+          }
+          showToast(message);
+          return;
+        }
+        if (!window.confirm(t("confirm.installUpdate"))) return;
+        actionEl.disabled = true;
+        try {
+          const result = await CCApi.installUpdate($("#settingsUpdateUrl")?.value.trim() || "");
+          updateCheckCache = result;
+          renderUpdateBadge(result);
+          const message = result.message || t("toast.updateInstallerStarted");
+          const status = $("#updateStatus");
+          if (status) {
+            status.textContent = message;
+            status.classList.toggle("available", !!result.updateAvailable);
+          }
+          showToast(message);
+        } finally {
+          actionEl.disabled = false;
+        }
       }
 
       if (action === "backup-config") {

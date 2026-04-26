@@ -267,6 +267,10 @@
       return api('GET', `/api/update/check?${params.toString()}`);
     },
 
+    async installUpdate(updateUrl) {
+      return api('POST', '/api/update/install', updateUrl ? { url: updateUrl } : {});
+    },
+
     async createBackup() {
       return api('POST', '/api/config/backup');
     },

@@ -1,6 +1,7 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
 import json
+import subprocess
 import threading
 import time
 from urllib.parse import urlparse
@@ -123,6 +124,28 @@ def _desktop_health(desktop_status: dict, proxy_port: int, provider: Optional[di
     }
 
 
+def _sync_desktop_for_active_provider() -> dict:
+    """默认 provider 切换后，同步本工具管理的 Claude 桌面版模型列表。"""
+    provider = cfg.get_active_provider()
+    if not provider:
+        return {"attempted": False, "success": False, "message": "没有默认提供商"}
+
+    status = registry.get_config_status()
+    if not status.get("configured"):
+        return {"attempted": False, "success": True, "message": "Claude 桌面版尚未由本工具配置"}
+
+    proxy_port = cfg.get_settings().get("proxyPort", 18080)
+    result = registry.apply_config(
+        f"http://127.0.0.1:{proxy_port}",
+        gateway_api_key=cfg.get_or_create_gateway_api_key(),
+        provider=provider,
+    )
+    return {
+        "attempted": True,
+        **result,
+    }
+
+
 async def _test_provider_connection(provider: dict) -> dict:
     """测试 provider 基础地址的网络可达性，不发送模型推理请求。"""
     api_format = str(provider.get("apiFormat", "anthropic")).lower()
@@ -174,7 +197,7 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.4")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.5")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -288,7 +311,19 @@ def create_admin_app() -> FastAPI:
     async def set_default_provider(provider_id: str):
         """设为默认"""
         if cfg.set_active_provider(provider_id):
-            return {"success": True, "message": "默认提供商已更新"}
+            try:
+                desktop_sync = _sync_desktop_for_active_provider()
+            except Exception as exc:
+                desktop_sync = {
+                    "attempted": True,
+                    "success": False,
+                    "message": f"桌面版模型同步失败: {exc}",
+                }
+            return {
+                "success": True,
+                "message": "默认提供商已更新",
+                "desktopSync": desktop_sync,
+            }
         return JSONResponse(
             status_code=404,
             content={"success": False, "message": "提供商不存在"},
@@ -527,6 +562,40 @@ def create_admin_app() -> FastAPI:
             return JSONResponse(
                 status_code=400,
                 content={"success": False, "message": str(exc)},
+            )
+
+    @app.post("/api/update/install")
+    async def download_and_install_update(request: Request):
+        """下载最新安装包并启动安装器。"""
+        data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        settings = cfg.get_settings()
+        update_url = data.get("url") or settings.get("updateUrl") or cfg.DEFAULT_UPDATE_URL
+        try:
+            result = await updater.download_update(
+                url=update_url,
+                current_version=data.get("current") or cfg.DEFAULT_CONFIG.get("version", "1.0.0"),
+            )
+            if not result.get("updateAvailable"):
+                return result
+            installer_path = result.get("installerPath")
+            if not installer_path:
+                raise updater.UpdateCheckError("下载安装包失败")
+            subprocess.Popen([installer_path], close_fds=True)
+            return {
+                **result,
+                "success": True,
+                "installerStarted": True,
+                "message": "安装包已下载并启动。按安装器提示完成更新；如提示文件占用，请先退出当前应用。",
+            }
+        except updater.UpdateCheckError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc)},
+            )
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "message": f"启动安装器失败: {exc}"},
             )
 
     # ── 预设 API ──

@@ -16,8 +16,8 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 推荐普通用户下载：
 
-- `CC-Desktop-Switch-v1.0.4-Windows-Setup.exe`：安装版
-- `CC-Desktop-Switch-v1.0.4-Windows-Portable.zip`：便携版
+- `CC-Desktop-Switch-v1.0.5-Windows-Setup.exe`：安装版
+- `CC-Desktop-Switch-v1.0.5-Windows-Portable.zip`：便携版
 
 Windows 版目前还没有 Authenticode 代码签名证书，系统可能提示未知发布者。Release 页面提供了 `.sha256` 和 `.sig` 文件用于校验下载完整性。
 

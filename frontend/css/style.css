@@ -1595,7 +1595,15 @@ body {
   border: 1px solid #fed7aa;
   font-size: 12px;
   font-weight: 650;
+  font-family: inherit;
+  line-height: 1.25;
   vertical-align: middle;
+  cursor: pointer;
+}
+
+.update-badge:hover {
+  border-color: #fb923c;
+  background: #ffedd5;
 }
 
 .update-badge[hidden] {
@@ -1606,6 +1614,10 @@ body {
   color: #fdba74;
   background: rgba(251, 146, 60, .13);
   border-color: rgba(251, 146, 60, .34);
+}
+
+[data-bs-theme="dark"] .update-badge:hover {
+  background: rgba(251, 146, 60, .2);
 }
 
 .provider-card-list,
@@ -2159,6 +2171,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.inline-actions {
+  justify-content: flex-end;
 }
 
 .backup-list {

@@ -4,11 +4,11 @@
 ;  Prerequisites:
 ;     1. Install NSIS 3.0+
 ;     2. Run: makensis installer.nsi
-;     3. Output: CC-Desktop-Switch-Setup-1.0.4.exe
+;     3. Output: CC-Desktop-Switch-Setup-1.0.5.exe
 ;============================================
 
 !define PRODUCT_NAME "CC Desktop Switch"
-!define PRODUCT_VERSION "1.0.4"
+!define PRODUCT_VERSION "1.0.5"
 !define PRODUCT_PUBLISHER "CC Desktop Switch"
 !define PRODUCT_DIR "$PROGRAMFILES64\CC-Desktop-Switch"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
@@ -20,6 +20,7 @@ RequestExecutionLevel admin
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ABORTWARNING
 
@@ -41,6 +42,14 @@ RequestExecutionLevel admin
 
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
+
+Function .onInit
+    ReadRegStr $R0 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
+    ${If} $R0 != ""
+        MessageBox MB_ICONINFORMATION|MB_OK "Existing version detected. The installer will uninstall it first. Please close ${PRODUCT_NAME} before continuing."
+        ExecWait '"$R0" /S'
+    ${EndIf}
+FunctionEnd
 
 Section "Main" SEC01
     SetOutPath "$INSTDIR"

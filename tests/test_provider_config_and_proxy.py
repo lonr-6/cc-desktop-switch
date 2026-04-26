@@ -12,6 +12,7 @@ from main import DesktopTrayController
 from backend import config as cfg
 from backend import provider_tools
 from backend import registry
+from backend import update as updater
 from backend.proxy import (
     _anthropic_to_openai_body,
     _normalize_anthropic_response,
@@ -285,6 +286,20 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(settings["updateUrl"], cfg.DEFAULT_UPDATE_URL)
         self.assertEqual(updated["updateUrl"], cfg.DEFAULT_UPDATE_URL)
+
+    def test_update_version_compare_does_not_flag_same_version(self):
+        self.assertFalse(updater.is_newer_version("1.0.4", "1.0.4"))
+        self.assertFalse(updater.is_newer_version("v1.0.4", "1.0.4"))
+        self.assertTrue(updater.is_newer_version("1.0.10", "1.0.9"))
+
+    def test_update_installer_asset_prefers_setup_exe(self):
+        asset = updater.pick_windows_installer([
+            {"name": "CC-Desktop-Switch-v1.0.5-Windows-Portable.zip"},
+            {"name": "CC-Desktop-Switch-v1.0.5-Windows-x64.exe"},
+            {"name": "CC-Desktop-Switch-v1.0.5-Windows-Setup.exe"},
+        ])
+
+        self.assertEqual(asset["name"], "CC-Desktop-Switch-v1.0.5-Windows-Setup.exe")
 
     def test_reorder_providers_persists_order_and_sort_index(self):
         first = cfg.add_provider({
@@ -625,6 +640,90 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["url"], cfg.DEFAULT_UPDATE_URL)
+
+    def test_set_default_provider_syncs_desktop_models_when_managed(self):
+        first = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        second = cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        self.assertEqual(cfg.load_config()["activeProvider"], first["id"])
+
+        with patch("backend.main.registry.get_config_status", return_value={"configured": True}):
+            with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
+                response = self.client.put(
+                    f"/api/providers/{second['id']}/default",
+                    headers={"x-ccds-request": "1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["desktopSync"]["attempted"])
+        self.assertTrue(data["desktopSync"]["success"])
+        self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
+        self.assertEqual(apply_config.call_args.kwargs["provider"]["models"]["sonnet"], "kimi-k2.6")
+        self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
+
+    def test_update_install_does_not_launch_when_current_version_is_latest(self):
+        async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
+            return {
+                "success": True,
+                "updateAvailable": False,
+                "currentVersion": current_version,
+                "latestVersion": current_version,
+                "platform": platform,
+                "assets": [],
+                "downloaded": False,
+                "message": "当前已是最新版本",
+            }
+
+        with patch("backend.main.updater.download_update", fake_download_update):
+            with patch("backend.main.subprocess.Popen") as popen:
+                response = self.client.post(
+                    "/api/update/install",
+                    headers={"x-ccds-request": "1"},
+                    json={},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["updateAvailable"])
+        popen.assert_not_called()
+
+    def test_update_install_launches_downloaded_installer(self):
+        async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
+            return {
+                "success": True,
+                "updateAvailable": True,
+                "currentVersion": current_version,
+                "latestVersion": "1.0.5",
+                "platform": platform,
+                "assets": [],
+                "downloaded": True,
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.5-Windows-Setup.exe",
+            }
+
+        with patch("backend.main.updater.download_update", fake_download_update):
+            with patch("backend.main.subprocess.Popen") as popen:
+                response = self.client.post(
+                    "/api/update/install",
+                    headers={"x-ccds-request": "1"},
+                    json={},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["installerStarted"])
+        popen.assert_called_once_with(
+            [r"C:\Temp\CC-Desktop-Switch-v1.0.5-Windows-Setup.exe"],
+            close_fds=True,
+        )
 
 
 class ProxyConversionTests(unittest.TestCase):
@@ -1053,6 +1152,7 @@ class StaticFrontendTests(unittest.TestCase):
         css = (self.root / "frontend" / "css" / "style.css").read_text(encoding="utf-8")
         app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
         api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
 
         self.assertIn('id="dashboardUpdateBadge"', html)
         self.assertIn('id="dashboardDesktopWarning"', html)
@@ -1070,6 +1170,11 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("modelCapabilities", app_js + api_js)
         self.assertIn("requestOptions", app_js + api_js)
         self.assertIn("white-space: pre-line", css)
+        self.assertIn('data-action="install-update"', html)
+        self.assertIn('id="settingsInstallUpdate"', html)
+        self.assertIn("installUpdate(updateUrl)", api_js)
+        self.assertIn("toast.defaultUpdatedDesktop", app_js + i18n)
+        self.assertIn("confirm.installUpdate", app_js + i18n)
 
 
 if __name__ == "__main__":
