@@ -143,7 +143,8 @@ class ProviderConfigTests(unittest.TestCase):
 
         expected_urls = {
             "deepseek": "https://api.deepseek.com/anthropic",
-            "kimi": "https://api.moonshot.ai/anthropic",
+            "kimi": "https://api.moonshot.cn/anthropic",
+            "kimi-code": "https://api.kimi.com/coding",
             "zhipu": "https://open.bigmodel.cn/api/anthropic",
             "bailian": "https://dashscope.aliyuncs.com/apps/anthropic",
         }
@@ -155,6 +156,7 @@ class ProviderConfigTests(unittest.TestCase):
             self.assertTrue(presets[preset_id]["models"]["default"])
 
         self.assertEqual(presets["kimi"]["models"]["default"], "kimi-k2.6")
+        self.assertEqual(presets["kimi-code"]["models"]["default"], "kimi-for-coding")
         self.assertEqual(presets["zhipu"]["models"]["haiku"], "glm-4.7")
         self.assertNotIn("qiniu", presets)
         self.assertNotIn("siliconflow", presets)
@@ -629,7 +631,9 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertFalse(result["ok"])
         self.assertEqual(result["statusCode"], 401)
-        self.assertIn("认证失败", result["message"])
+        self.assertIn("Kimi 认证失败", result["message"])
+        self.assertIn("https://api.moonshot.cn/anthropic", result["message"])
+        self.assertIn("https://api.kimi.com/coding", result["message"])
 
     def test_provider_connection_probes_post_when_head_and_get_are_not_supported(self):
         calls = []
@@ -674,6 +678,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(calls[-1][2]["json"]["model"], "kimi-k2.6")
         self.assertFalse(result["ok"])
         self.assertEqual(result["statusCode"], 401)
+        self.assertIn("Kimi 认证失败", result["message"])
 
     def test_usage_route_returns_normalized_provider_tools_result(self):
         provider = cfg.add_provider({
@@ -1242,11 +1247,14 @@ class DesktopTrayControllerTests(unittest.TestCase):
         tray.icon = FakeTrayIcon()
 
         self.assertEqual(cfg.load_config()["activeProvider"], first["id"])
-        self.assertTrue(tray.switch_provider(second["id"]))
+        with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
+            self.assertTrue(tray.switch_provider(second["id"]))
 
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
         self.assertEqual(tray.icon.updated, 1)
         self.assertIn("Kimi", tray.icon.notifications[0][1])
+        restart_dialog.assert_called_once()
+        self.assertEqual(restart_dialog.call_args.args[0]["id"], second["id"])
 
     def test_switch_provider_syncs_desktop_models_when_managed(self):
         first = cfg.add_provider({
@@ -1270,7 +1278,8 @@ class DesktopTrayControllerTests(unittest.TestCase):
 
         with patch("main.registry.get_config_status", return_value={"configured": True}):
             with patch("main.registry.apply_config", return_value={"success": True}) as apply_config:
-                self.assertTrue(tray.switch_provider(second["id"]))
+                with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
+                    self.assertTrue(tray.switch_provider(second["id"]))
                 observed["provider"] = apply_config.call_args.kwargs["provider"]
                 observed["base_url"] = apply_config.call_args.args[0]
 
@@ -1278,6 +1287,37 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertEqual(observed["provider"]["models"]["sonnet"], "kimi-k2.6")
         self.assertEqual(observed["base_url"], "http://127.0.0.1:18080")
         self.assertIn("桌面版模型已同步", tray.icon.notifications[0][1])
+        restart_dialog.assert_called_once()
+        self.assertIs(restart_dialog.call_args.args[1], True)
+
+    def test_switch_provider_does_not_show_restart_dialog_when_provider_is_unchanged(self):
+        provider = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+        tray.pystray = FakePystray
+        tray.icon = FakeTrayIcon()
+
+        with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
+            self.assertTrue(tray.switch_provider(provider["id"]))
+
+        restart_dialog.assert_not_called()
+
+    def test_tray_restart_dialog_uses_windows_message_box(self):
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+
+        with patch("main.show_message_box", return_value=True) as message_box:
+            tray.show_desktop_restart_dialog({"name": "Kimi"}, desktop_synced=True)
+
+        message_box.assert_called_once()
+        self.assertEqual(message_box.call_args.args[0], "需要重启 Claude 桌面版")
+        self.assertIn("Kimi", message_box.call_args.args[1])
+        self.assertIn("重新打开 Claude 桌面版", message_box.call_args.args[1])
 
 
 class StaticFrontendTests(unittest.TestCase):

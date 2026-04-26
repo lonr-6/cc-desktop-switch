@@ -172,6 +172,12 @@ def _provider_test_body(provider: dict, api_format: str) -> dict:
     }
 
 
+def _is_kimi_provider(provider: dict) -> bool:
+    """粗略识别 Kimi provider，用于给出更具体的排错提示。"""
+    probe = f"{provider.get('name', '')} {provider.get('baseUrl', '')}".lower()
+    return "kimi" in probe or "moonshot" in probe
+
+
 async def _test_provider_connection(provider: dict) -> dict:
     """测试 provider 是否能真实访问上游接口。"""
     api_format = str(provider.get("apiFormat", "anthropic")).lower()
@@ -215,7 +221,14 @@ async def _test_provider_connection(provider: dict) -> dict:
         message = f"连接正常，{latency_ms} ms"
     elif status_code in {401, 403}:
         reachable = False
-        message = f"认证失败，HTTP {status_code}，请检查 API Key 和 API 地址是否匹配，{latency_ms} ms"
+        if _is_kimi_provider(provider):
+            message = (
+                f"Kimi 认证失败，HTTP {status_code}。Kimi Platform Key 请使用 "
+                f"https://api.moonshot.cn/anthropic；Kimi Code 会员 Key 请使用 "
+                f"https://api.kimi.com/coding，{latency_ms} ms"
+            )
+        else:
+            message = f"认证失败，HTTP {status_code}，请检查 API Key 和 API 地址是否匹配，{latency_ms} ms"
     elif status_code in {404, 405}:
         reachable = False
         message = f"接口不可用，HTTP {status_code}，请检查 API 地址是否填到了兼容 Claude 的接口，{latency_ms} ms"

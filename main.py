@@ -2,6 +2,7 @@
 """CC Desktop Switch - 启动入口"""
 
 import argparse
+import ctypes
 import sys
 import threading
 import time
@@ -22,6 +23,8 @@ APP_NAME = "CC Desktop Switch"
 APP_VERSION = "1.0.7"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
+MB_OK = 0x00000000
+MB_ICONINFORMATION = 0x00000040
 
 
 def safe_print(message: str):
@@ -33,6 +36,21 @@ def safe_print(message: str):
         print(message)
     except OSError:
         return
+
+
+def show_message_box(title: str, message: str) -> bool:
+    """显示原生提示框；不可用时返回 False。"""
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            message,
+            title,
+            MB_OK | MB_ICONINFORMATION,
+        )
+        return True
+    except Exception as exc:
+        safe_print(f"message box failed: {exc}")
+        return False
 
 
 def write_crash_log():
@@ -187,10 +205,12 @@ class DesktopTrayController:
         """从托盘菜单切换默认 provider。"""
         if not provider_id:
             return False
+        previous_id = cfg.load_config().get("activeProvider")
         if not cfg.set_active_provider(provider_id):
             return False
         provider = cfg.get_provider(provider_id)
         desktop_message = ""
+        desktop_synced = False
         try:
             status = registry.get_config_status()
             if status.get("configured") and provider:
@@ -200,6 +220,7 @@ class DesktopTrayController:
                     gateway_api_key=cfg.get_or_create_gateway_api_key(),
                     provider=provider,
                 )
+                desktop_synced = bool(result.get("success"))
                 desktop_message = "，桌面版模型已同步" if result.get("success") else "，请重新一键应用到 Claude 桌面版"
         except Exception as exc:
             safe_print(f"sync desktop config failed: {exc}")
@@ -210,7 +231,24 @@ class DesktopTrayController:
                 self.icon.notify(f"已切换到 {provider.get('name', provider_id)}{desktop_message}", APP_NAME)
         except Exception:
             pass
+        if provider and provider_id != previous_id:
+            self.show_desktop_restart_dialog(provider, desktop_synced)
         return True
+
+    def show_desktop_restart_dialog(self, provider: dict, desktop_synced: bool = False):
+        """托盘切换 provider 后给出明确重启提醒。"""
+        provider_name = provider.get("name") or "当前提供商"
+        sync_line = (
+            "本工具已同步 Claude 桌面版模型配置。"
+            if desktop_synced
+            else "如果 Claude 桌面版已经配置过本工具，模型会在下次启动后生效。"
+        )
+        message = (
+            f"已切换到：{provider_name}\n\n"
+            f"{sync_line}\n"
+            "请完全退出并重新打开 Claude 桌面版，然后再使用新模型。"
+        )
+        show_message_box("需要重启 Claude 桌面版", message)
 
     def refresh_menu(self):
         """provider 变化后刷新托盘菜单。"""

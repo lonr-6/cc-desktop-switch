@@ -75,7 +75,7 @@ BUILTIN_PRESETS = [
     {
         "id": "kimi",
         "name": "Kimi (月之暗面)",
-        "baseUrl": "https://api.moonshot.ai/anthropic",
+        "baseUrl": "https://api.moonshot.cn/anthropic",
         "authScheme": "bearer",
         "apiFormat": "anthropic",
         "models": {
@@ -83,6 +83,20 @@ BUILTIN_PRESETS = [
             "haiku": "kimi-k2.6",
             "opus": "kimi-k2.6",
             "default": "kimi-k2.6",
+        },
+        "isBuiltin": True,
+    },
+    {
+        "id": "kimi-code",
+        "name": "Kimi Code",
+        "baseUrl": "https://api.kimi.com/coding",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "kimi-for-coding",
+            "haiku": "kimi-for-coding",
+            "opus": "kimi-for-coding",
+            "default": "kimi-for-coding",
         },
         "isBuiltin": True,
     },
