@@ -20,11 +20,12 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 MB_OK = 0x00000000
 MB_ICONINFORMATION = 0x00000040
+MB_SETFOREGROUND = 0x00010000
 
 
 def safe_print(message: str):
@@ -45,12 +46,21 @@ def show_message_box(title: str, message: str) -> bool:
             None,
             message,
             title,
-            MB_OK | MB_ICONINFORMATION,
+            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND,
         )
         return True
     except Exception as exc:
         safe_print(f"message box failed: {exc}")
         return False
+
+
+def show_message_box_async(title: str, message: str):
+    """在独立线程弹提示框，避免阻塞托盘菜单回调。"""
+    threading.Thread(
+        target=show_message_box,
+        args=(title, message),
+        daemon=True,
+    ).start()
 
 
 def write_crash_log():
@@ -248,7 +258,7 @@ class DesktopTrayController:
             f"{sync_line}\n"
             "请完全退出并重新打开 Claude 桌面版，然后再使用新模型。"
         )
-        show_message_box("需要重启 Claude 桌面版", message)
+        show_message_box_async("需要重启 Claude 桌面版", message)
 
     def refresh_menu(self):
         """provider 变化后刷新托盘菜单。"""

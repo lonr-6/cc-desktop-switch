@@ -246,7 +246,7 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.8")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.9")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -634,7 +634,7 @@ def create_admin_app() -> FastAPI:
                 **result,
                 "success": True,
                 "installerStarted": True,
-                "message": "安装包已下载并启动。按安装器提示完成更新；如提示文件占用，请先退出当前应用。",
+                "message": "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。",
             }
         except updater.UpdateCheckError as exc:
             return JSONResponse(

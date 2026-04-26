@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.8",
+    [string]$Version = "1.0.9",
     [string]$OutputDir = "release",
     [switch]$Build,
     [switch]$TryInstaller,

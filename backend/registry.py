@@ -1,8 +1,11 @@
 """Windows / macOS 注册表 / plist 操作 - 配置 Claude Desktop 3P 模式"""
 
+import base64
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from typing import Optional
 
 REGISTRY_PATH = r"SOFTWARE\Policies\Claude"
@@ -101,6 +104,100 @@ def _win_get_key(read_only=False):
         return None
 
 
+def _b64_utf8(value: str) -> str:
+    """把字符串编码成 Base64，避免 PowerShell 参数转义问题。"""
+    return base64.b64encode(str(value or "").encode("utf-8")).decode("ascii")
+
+
+def _ps_single_quote(value: str) -> str:
+    """PowerShell 单引号字符串转义。"""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _current_user_sid() -> str:
+    """读取当前登录用户 SID，确保提权后仍写回原用户配置。"""
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _run_elevated_powershell(script_text: str) -> tuple[bool, str]:
+    """通过 UAC 提权运行临时 PowerShell 脚本。"""
+    fd, script_path = tempfile.mkstemp(prefix="ccds-desktop-config-", suffix=".ps1")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(script_text)
+
+        command = (
+            "$p = Start-Process -FilePath 'powershell.exe' "
+            "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
+            f"{_ps_single_quote(script_path)}) "
+            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+        )
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        return result.returncode == 0, output
+    except subprocess.TimeoutExpired as exc:
+        return False, f"管理员写入超时: {exc}"
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        try:
+            os.remove(script_path)
+        except OSError:
+            pass
+
+
+def _win_apply_config_elevated(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+    """权限不足时通过 UAC 写入当前用户的 Claude Desktop policy。"""
+    sid = _current_user_sid()
+    target_path = f"Registry::HKEY_USERS\\{sid}\\{REGISTRY_PATH}" if sid else r"HKCU:\SOFTWARE\Policies\Claude"
+    script = f"""
+$ErrorActionPreference = 'Stop'
+function DecodeUtf8([string]$Value) {{
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}}
+$path = DecodeUtf8 '{_b64_utf8(target_path)}'
+if (-not (Test-Path -LiteralPath $path)) {{
+    New-Item -Path $path -Force | Out-Null
+}}
+$baseUrl = DecodeUtf8 '{_b64_utf8(base_url)}'
+$gatewayApiKey = DecodeUtf8 '{_b64_utf8(gateway_api_key)}'
+$inferenceModels = DecodeUtf8 '{_b64_utf8(inference_models or DESKTOP_CONFIG["inferenceModels"][0])}'
+New-ItemProperty -LiteralPath $path -Name 'inferenceProvider' -Value 'gateway' -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayBaseUrl' -Value $baseUrl -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayApiKey' -Value $gatewayApiKey -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayAuthScheme' -Value 'bearer' -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceModels' -Value $inferenceModels -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'isClaudeCodeForDesktopEnabled' -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name '{CCDS_MARKER}' -Value 'true' -PropertyType String -Force | Out-Null
+"""
+    ok, output = _run_elevated_powershell(script)
+    if ok:
+        return {"success": True, "message": "已通过管理员权限写入 Claude 桌面版配置"}
+    detail = output or "用户取消了管理员授权，或系统拒绝提权"
+    return {"success": False, "message": f"需要管理员权限写入 Claude 桌面版配置：{detail}"}
+
+
 def _win_get_config_status() -> dict:
     import winreg
     key = _win_get_key(read_only=True)
@@ -128,7 +225,7 @@ def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models
     import winreg
     key = _win_get_key(read_only=False)
     if key is None:
-        return {"success": False, "message": "无法打开注册表，请以管理员身份运行"}
+        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models)
     try:
         inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
         values = {
@@ -144,7 +241,7 @@ def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models
             winreg.SetValueEx(key, name, 0, type_, value)
         return {"success": True, "message": "Desktop 3P 配置已应用"}
     except PermissionError:
-        return {"success": False, "message": "权限不足，请以管理员身份运行"}
+        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models)
     except Exception as e:
         return {"success": False, "message": f"配置失败: {str(e)}"}
     finally:

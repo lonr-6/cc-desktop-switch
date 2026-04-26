@@ -215,6 +215,62 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(by_name["qwen3.6-flash"]["supports1m"])
         self.assertNotIn("supports1m", by_name["qwen3.6-max-preview"])
 
+    def test_windows_registry_apply_falls_back_to_elevated_helper_when_key_is_not_writable(self):
+        if not hasattr(registry, "_win_apply_config"):
+            self.skipTest("Windows registry helper is unavailable")
+
+        with patch("backend.registry._win_get_key", return_value=None):
+            with patch("backend.registry._win_apply_config_elevated", return_value={"success": True}) as elevated:
+                result = registry._win_apply_config(
+                    "http://127.0.0.1:18080",
+                    "gateway-key",
+                    '[{"name":"deepseek-v4-pro[1m]","supports1m":true}]',
+                )
+
+        self.assertTrue(result["success"])
+        elevated.assert_called_once()
+
+    def test_elevated_registry_script_does_not_contain_plain_gateway_key(self):
+        captured = {}
+
+        def fake_run(script):
+            captured["script"] = script
+            return True, ""
+
+        with patch("backend.registry._current_user_sid", return_value="S-1-5-21-test"):
+            with patch("backend.registry._run_elevated_powershell", fake_run):
+                result = registry._win_apply_config_elevated(
+                    "http://127.0.0.1:18080",
+                    "plain-gateway-key",
+                    '[{"name":"deepseek-v4-pro[1m]","supports1m":true}]',
+                )
+
+        self.assertTrue(result["success"])
+        self.assertNotIn("plain-gateway-key", captured["script"])
+        self.assertIn("FromBase64String", captured["script"])
+        self.assertNotIn(r"HKCU:\SOFTWARE\Policies\Claude", captured["script"])
+
+    def test_elevated_registry_script_targets_current_user_hive(self):
+        captured = {}
+
+        def fake_run(script):
+            captured["script"] = script
+            return True, ""
+
+        with patch("backend.registry._run_elevated_powershell", fake_run):
+            with patch("backend.registry._current_user_sid", return_value="S-1-5-21-1001"):
+                result = registry._win_apply_config_elevated(
+                    "http://127.0.0.1:18080",
+                    "gateway-key",
+                    '[{"name":"deepseek-v4-pro[1m]","supports1m":true}]',
+                )
+
+        self.assertTrue(result["success"])
+        expected_path = registry._b64_utf8(
+            r"Registry::HKEY_USERS\S-1-5-21-1001\SOFTWARE\Policies\Claude"
+        )
+        self.assertIn(expected_path, captured["script"])
+
     def test_update_provider_preserves_or_clears_request_options_explicitly(self):
         provider = cfg.add_provider({
             "name": "DeepSeek",
@@ -298,7 +354,7 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_fetch_latest_json_accepts_utf8_bom(self):
         class FakeResponse:
-            content = b'\xef\xbb\xbf{"version":"1.0.8","platforms":{"windows-x64":{"assets":[]}}}'
+            content = b'\xef\xbb\xbf{"version":"1.0.9","platforms":{"windows-x64":{"assets":[]}}}'
 
             def raise_for_status(self):
                 return None
@@ -322,7 +378,7 @@ class ProviderConfigTests(unittest.TestCase):
         with patch("backend.update.httpx.AsyncClient", FakeClient):
             data = asyncio.run(updater.fetch_latest_json("https://example.com/latest.json"))
 
-        self.assertEqual(data["version"], "1.0.8")
+        self.assertEqual(data["version"], "1.0.9")
 
     def test_update_installer_asset_prefers_setup_exe(self):
         asset = updater.pick_windows_installer([
@@ -817,11 +873,11 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "updateAvailable": True,
                 "currentVersion": current_version,
-                "latestVersion": "1.0.8",
+                "latestVersion": "1.0.9",
                 "platform": platform,
                 "assets": [],
                 "downloaded": True,
-                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.8-Windows-Setup.exe",
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.9-Windows-Setup.exe",
             }
 
         with patch("backend.main.updater.download_update", fake_download_update):
@@ -835,7 +891,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         popen.assert_called_once_with(
-            [r"C:\Temp\CC-Desktop-Switch-v1.0.8-Windows-Setup.exe"],
+            [r"C:\Temp\CC-Desktop-Switch-v1.0.9-Windows-Setup.exe"],
             close_fds=True,
         )
 
@@ -1311,13 +1367,22 @@ class DesktopTrayControllerTests(unittest.TestCase):
         window = FakeTrayWindow()
         tray = DesktopTrayController(window, "missing-icon.png")
 
-        with patch("main.show_message_box", return_value=True) as message_box:
+        with patch("main.show_message_box_async") as message_box:
             tray.show_desktop_restart_dialog({"name": "Kimi"}, desktop_synced=True)
 
         message_box.assert_called_once()
         self.assertEqual(message_box.call_args.args[0], "需要重启 Claude 桌面版")
         self.assertIn("Kimi", message_box.call_args.args[1])
         self.assertIn("重新打开 Claude 桌面版", message_box.call_args.args[1])
+
+    def test_installer_reuses_previous_install_dir_and_closes_running_app(self):
+        installer = Path(__file__).resolve().parents[1] / "installer.nsi"
+        text = installer.read_text(encoding="utf-8")
+
+        self.assertIn('InstallDirRegKey HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
+        self.assertIn('ReadRegStr $R1 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
+        self.assertIn('taskkill /IM "CC-Desktop-Switch.exe" /T /F', text)
+        self.assertIn('WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"', text)
 
 
 class StaticFrontendTests(unittest.TestCase):

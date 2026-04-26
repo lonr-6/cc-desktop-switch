@@ -15,13 +15,13 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.8-Windows-Setup.exe
+CC-Desktop-Switch-v1.0.9-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.8-Windows-Portable.zip
+CC-Desktop-Switch-v1.0.9-Windows-Portable.zip
 ```
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：

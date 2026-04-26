@@ -4,11 +4,11 @@
 ;  Prerequisites:
 ;     1. Install NSIS 3.0+
 ;     2. Run: makensis installer.nsi
-;     3. Output: CC-Desktop-Switch-Setup-1.0.8.exe
+;     3. Output: CC-Desktop-Switch-Setup-1.0.9.exe
 ;============================================
 
 !define PRODUCT_NAME "CC Desktop Switch"
-!define PRODUCT_VERSION "1.0.8"
+!define PRODUCT_VERSION "1.0.9"
 !define PRODUCT_PUBLISHER "CC Desktop Switch"
 !define PRODUCT_DIR "$PROGRAMFILES64\CC-Desktop-Switch"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
@@ -16,6 +16,7 @@
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "CC-Desktop-Switch-Setup-${PRODUCT_VERSION}.exe"
 InstallDir "${PRODUCT_DIR}"
+InstallDirRegKey HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
 RequestExecutionLevel admin
 
 !include "MUI2.nsh"
@@ -44,11 +45,29 @@ RequestExecutionLevel admin
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
+    ReadRegStr $R1 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
     ReadRegStr $R0 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
+    ${If} $R1 == ""
+    ${AndIf} $R0 != ""
+        ${GetParent} $R0 $R1
+    ${EndIf}
+    ${If} $R1 != ""
+        StrCpy $INSTDIR $R1
+    ${EndIf}
+
+    Call CloseRunningApp
+
     ${If} $R0 != ""
-        MessageBox MB_ICONINFORMATION|MB_OK "Existing version detected. The installer will uninstall it first. Please close ${PRODUCT_NAME} before continuing."
+        DetailPrint "Existing version detected. The installer will uninstall it first."
         ExecWait '"$R0" /S'
     ${EndIf}
+FunctionEnd
+
+Function CloseRunningApp
+    DetailPrint "Closing running ${PRODUCT_NAME} process if needed..."
+    nsExec::ExecToStack 'taskkill /IM "CC-Desktop-Switch.exe" /T /F'
+    Pop $0
+    Pop $1
 FunctionEnd
 
 Section "Main" SEC01
@@ -65,6 +84,8 @@ Section "Main" SEC01
 
     WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
     WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\CC-Desktop-Switch.exe"
     WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
     WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
     WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoModify" 1
@@ -78,8 +99,15 @@ Section "Main" SEC01
 SectionEnd
 
 Section "Uninstall"
+    Call un.CloseRunningApp
     Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
     RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
     RMDir /r "$INSTDIR"
     DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
 SectionEnd
+
+Function un.CloseRunningApp
+    nsExec::ExecToStack 'taskkill /IM "CC-Desktop-Switch.exe" /T /F'
+    Pop $0
+    Pop $1
+FunctionEnd
