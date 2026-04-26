@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+APP_PATH="/Applications/CC Desktop Switch.app"
+BUNDLE_ID="io.github.lonr6.ccdesktopswitch"
+EXECUTABLE_NAME="CC-Desktop-Switch"
+
+if /usr/bin/pgrep -x "$EXECUTABLE_NAME" >/dev/null 2>&1; then
+  /usr/bin/osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  /bin/sleep 2
+  /usr/bin/pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+fi
+
+if [ -d "$APP_PATH" ]; then
+  /bin/rm -rf "$APP_PATH"
+fi
+
+exit 0

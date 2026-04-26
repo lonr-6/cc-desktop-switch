@@ -222,10 +222,10 @@ def _win_get_config_status() -> dict:
 
 
 def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
-    import winreg
     key = _win_get_key(read_only=False)
     if key is None:
         return _win_apply_config_elevated(base_url, gateway_api_key, inference_models)
+    import winreg
     try:
         inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
         values = {
@@ -287,18 +287,21 @@ def _win_clear_config() -> dict:
 
 MAC_BUNDLE = "com.anthropic.claudefordesktop"
 MAC_PLIST = f"~/Library/Preferences/{MAC_BUNDLE}.plist"
+MAC_3P_CONFIG = "~/Library/Application Support/Claude-3p/claude_desktop_config.json"
+MAC_3P_CONFIG_LIBRARY = "configLibrary"
 
 
 def _mac_run(args: list) -> tuple:
     """运行 defaults 命令，返回 (ok, output)"""
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=5)
-        return r.returncode == 0, r.stdout.strip()
+        output = "\n".join(part.strip() for part in (r.stdout, r.stderr) if part.strip())
+        return r.returncode == 0, output
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return False, str(e)
 
 
-def _mac_get_config_status() -> dict:
+def _mac_get_plist_config_status() -> dict:
     keys = {}
     for name in DESKTOP_CONFIG:
         ok, out = _mac_run(["defaults", "read", MAC_BUNDLE, name])
@@ -311,9 +314,11 @@ def _mac_get_config_status() -> dict:
     return {"configured": configured, "keys": keys, "message": ""}
 
 
-def _mac_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _mac_apply_plist_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
     try:
         inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
+        expected = {}
+        failures = []
         for name in DESKTOP_CONFIG:
             val, typ = DESKTOP_CONFIG[name]
             if name == "inferenceGatewayBaseUrl":
@@ -322,18 +327,337 @@ def _mac_apply_config(base_url: str, gateway_api_key: str = "", inference_models
                 val = gateway_api_key
             if name == "inferenceModels":
                 val = inference_models
+            expected[name] = val
             # 根据 Python 类型选择 defaults 的 -type 参数
             if typ == int:
-                _mac_run(["defaults", "write", MAC_BUNDLE, name, "-int", str(val)])
+                ok, out = _mac_run(["defaults", "write", MAC_BUNDLE, name, "-int", str(val)])
             else:
-                _mac_run(["defaults", "write", MAC_BUNDLE, name, "-string", str(val)])
-        _mac_run(["defaults", "write", MAC_BUNDLE, CCDS_MARKER, "-string", "true"])
+                ok, out = _mac_run(["defaults", "write", MAC_BUNDLE, name, "-string", str(val)])
+            if not ok:
+                detail = out if "key" not in name.lower() else "defaults write failed"
+                failures.append(f"{name}: {detail or 'defaults write failed'}")
+
+        ok, out = _mac_run(["defaults", "write", MAC_BUNDLE, CCDS_MARKER, "-string", "true"])
+        if not ok:
+            failures.append(f"{CCDS_MARKER}: {out or 'defaults write failed'}")
+        expected[CCDS_MARKER] = "true"
+
+        if failures:
+            return {"success": False, "message": "macOS 配置写入失败: " + "; ".join(failures)}
+
+        for name, val in expected.items():
+            ok, out = _mac_run(["defaults", "read", MAC_BUNDLE, name])
+            if not ok:
+                failures.append(f"{name}: readback failed")
+                continue
+            if str(out) != str(val):
+                failures.append(f"{name}: readback mismatch")
+
+        if failures:
+            return {"success": False, "message": "macOS 配置写入校验失败: " + "; ".join(failures)}
         return {"success": True, "message": "macOS Desktop 3P 配置已应用"}
     except Exception as e:
         return {"success": False, "message": f"macOS 配置失败: {str(e)}"}
 
 
-def _mac_clear_config() -> dict:
+def _mac_config_json_path() -> str:
+    return os.path.expanduser(MAC_3P_CONFIG)
+
+
+def _mac_config_library_dir_path() -> str:
+    return os.path.join(os.path.dirname(_mac_config_json_path()), MAC_3P_CONFIG_LIBRARY)
+
+
+def _mac_config_library_meta_path() -> str:
+    return os.path.join(_mac_config_library_dir_path(), "_meta.json")
+
+
+def _mac_config_library_entry_path(entry_id: str) -> str:
+    return os.path.join(_mac_config_library_dir_path(), f"{entry_id}.json")
+
+
+def _mac_read_json_file(path: str) -> tuple[bool, dict, str]:
+    if not os.path.exists(path):
+        return True, {}, ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            return False, {}, "JSON root is not an object"
+        return True, data, ""
+    except Exception as exc:
+        return False, {}, str(exc)
+
+
+def _mac_write_json_file(path: str, data: dict) -> tuple[bool, str]:
+    directory = os.path.dirname(path)
+    temp_path = ""
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(prefix=".ccds-", suffix=".json", dir=directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(temp_path, path)
+        return True, ""
+    except Exception as exc:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        return False, str(exc)
+
+
+def _mac_read_json_config() -> tuple[bool, dict, str]:
+    return _mac_read_json_file(_mac_config_json_path())
+
+
+def _mac_write_json_config(data: dict) -> tuple[bool, str]:
+    return _mac_write_json_file(_mac_config_json_path(), data)
+
+
+def _mac_json_model_names(inference_models: str) -> list[str]:
+    try:
+        parsed = json.loads(inference_models or DESKTOP_CONFIG["inferenceModels"][0])
+    except (TypeError, ValueError):
+        parsed = []
+    result = []
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                model_name = str(item.get("name") or "").strip()
+            else:
+                model_name = str(item or "").strip()
+            if model_name and model_name not in result:
+                result.append(model_name)
+    return result or ["sonnet", "haiku", "opus"]
+
+
+def _mac_json_enterprise_config(base_url: str, gateway_api_key: str, inference_models: str) -> dict:
+    return {
+        "inferenceProvider": "gateway",
+        "inferenceGatewayBaseUrl": base_url,
+        "inferenceGatewayApiKey": gateway_api_key,
+        "inferenceGatewayAuthScheme": "bearer",
+        "inferenceModels": _mac_json_model_names(inference_models),
+        "isClaudeCodeForDesktopEnabled": True,
+    }
+
+
+def _mac_json_status_keys(enterprise_config: dict) -> dict:
+    keys = {}
+    for name in DESKTOP_CONFIG:
+        if name not in enterprise_config:
+            continue
+        value = enterprise_config.get(name)
+        if name == "inferenceModels" and isinstance(value, list):
+            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if name == "isClaudeCodeForDesktopEnabled" and isinstance(value, bool):
+            value = int(value)
+        keys[name] = _safe_config_value(name, value)
+    return keys
+
+
+def _mac_flat_config_status_keys(config: dict) -> dict:
+    keys = _mac_json_status_keys(config)
+    aliases = {
+        "provider": "inferenceProvider",
+        "apiKey": "inferenceGatewayApiKey",
+        "authScheme": "inferenceGatewayAuthScheme",
+        "baseUrl": "inferenceGatewayBaseUrl",
+        "models": "inferenceModels",
+    }
+    for source, target in aliases.items():
+        if target in keys or source not in config:
+            continue
+        value = config.get(source)
+        if source == "models" and isinstance(value, dict):
+            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        keys[target] = _safe_config_value(target, value)
+    return keys
+
+
+def _mac_get_json_config_status() -> dict:
+    path = _mac_config_json_path()
+    exists = os.path.exists(path)
+    ok, data, message = _mac_read_json_config()
+    if not ok:
+        return {"configured": False, "keys": {}, "message": message, "exists": exists}
+    enterprise_config = data.get("enterpriseConfig")
+    if not isinstance(enterprise_config, dict):
+        return {"configured": False, "keys": {}, "message": "", "exists": exists}
+    keys = _mac_json_status_keys(enterprise_config)
+    configured = data.get("deploymentMode") == "3p" and keys.get("inferenceProvider") == "gateway"
+    return {"configured": configured, "keys": keys, "message": "", "exists": exists}
+
+
+def _mac_config_library_entry_paths(include_missing_active: bool = False) -> tuple[bool, list[str], str]:
+    library_dir = _mac_config_library_dir_path()
+    meta_path = _mac_config_library_meta_path()
+    ok, meta, message = _mac_read_json_file(meta_path)
+    if not ok:
+        return False, [], message
+
+    paths = []
+    applied_id = str(meta.get("appliedId") or "").strip()
+    if applied_id and "/" not in applied_id and "\\" not in applied_id:
+        active_path = _mac_config_library_entry_path(applied_id)
+        if include_missing_active or os.path.exists(active_path):
+            paths.append(active_path)
+
+    if not paths and os.path.isdir(library_dir):
+        for name in sorted(os.listdir(library_dir)):
+            if not name.endswith(".json") or name == "_meta.json":
+                continue
+            paths.append(os.path.join(library_dir, name))
+
+    return True, paths, ""
+
+
+def _mac_get_library_config_status() -> dict:
+    ok, paths, message = _mac_config_library_entry_paths()
+    if not ok:
+        return {"configured": False, "keys": {}, "message": message, "exists": False}
+    if not paths:
+        return {"configured": False, "keys": {}, "message": "", "exists": os.path.isdir(_mac_config_library_dir_path())}
+
+    for path in paths:
+        ok, data, message = _mac_read_json_file(path)
+        if not ok:
+            return {"configured": False, "keys": {}, "message": message, "exists": True}
+        keys = _mac_flat_config_status_keys(data)
+        if keys:
+            return {
+                "configured": keys.get("inferenceProvider") == "gateway",
+                "keys": keys,
+                "message": "",
+                "exists": True,
+            }
+    return {"configured": False, "keys": {}, "message": "", "exists": True}
+
+
+def _mac_apply_library_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+    ok, paths, message = _mac_config_library_entry_paths(include_missing_active=True)
+    if not ok:
+        return {"success": False, "message": f"configLibrary 元数据读取失败: {message}"}
+    if not paths:
+        return {"success": True, "message": "configLibrary 不存在，无需写入"}
+
+    expected = _mac_json_enterprise_config(
+        base_url,
+        gateway_api_key,
+        inference_models or DESKTOP_CONFIG["inferenceModels"][0],
+    )
+    failures = []
+    for path in paths:
+        ok, data, message = _mac_read_json_file(path)
+        if not ok:
+            failures.append(f"{os.path.basename(path)}: read failed: {message}")
+            continue
+        data.update(expected)
+        ok, message = _mac_write_json_file(path, data)
+        if not ok:
+            failures.append(f"{os.path.basename(path)}: write failed: {message}")
+            continue
+
+        ok, saved, message = _mac_read_json_file(path)
+        if not ok:
+            failures.append(f"{os.path.basename(path)}: readback failed: {message}")
+            continue
+        for name, value in expected.items():
+            if saved.get(name) != value:
+                failures.append(f"{os.path.basename(path)}: {name}: readback mismatch")
+
+    if failures:
+        return {"success": False, "message": "configLibrary 写入校验失败: " + "; ".join(failures)}
+    return {"success": True, "message": "macOS configLibrary 3P 配置已应用"}
+
+
+def _mac_apply_json_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+    ok, data, message = _mac_read_json_config()
+    if not ok:
+        return {"success": False, "message": f"JSON 配置读取失败: {message}"}
+
+    expected = _mac_json_enterprise_config(
+        base_url,
+        gateway_api_key,
+        inference_models or DESKTOP_CONFIG["inferenceModels"][0],
+    )
+    enterprise_config = data.get("enterpriseConfig")
+    if not isinstance(enterprise_config, dict):
+        enterprise_config = {}
+    enterprise_config.update(expected)
+    data["deploymentMode"] = "3p"
+    data["enterpriseConfig"] = enterprise_config
+
+    ok, message = _mac_write_json_config(data)
+    if not ok:
+        return {"success": False, "message": f"JSON 配置写入失败: {message}"}
+
+    ok, saved, message = _mac_read_json_config()
+    if not ok:
+        return {"success": False, "message": f"JSON 配置读回失败: {message}"}
+    saved_enterprise = saved.get("enterpriseConfig")
+    if not isinstance(saved_enterprise, dict) or saved.get("deploymentMode") != "3p":
+        return {"success": False, "message": "JSON 配置写入校验失败: deploymentMode 或 enterpriseConfig 不正确"}
+    failures = []
+    for name, value in expected.items():
+        if saved_enterprise.get(name) != value:
+            failures.append(f"{name}: readback mismatch")
+    if failures:
+        return {"success": False, "message": "JSON 配置写入校验失败: " + "; ".join(failures)}
+    return {"success": True, "message": "macOS JSON 3P 配置已应用"}
+
+
+def _mac_get_config_status() -> dict:
+    plist_status = _mac_get_plist_config_status()
+    json_status = _mac_get_json_config_status()
+    library_status = _mac_get_library_config_status()
+    library_has_runtime_config = bool(library_status.get("keys"))
+    json_has_runtime_config = bool(json_status.get("keys"))
+
+    if library_has_runtime_config:
+        keys = dict(library_status.get("keys") or {})
+        configured = library_status.get("configured", False)
+    else:
+        keys = dict(plist_status.get("keys") or {})
+        for name, value in (json_status.get("keys") or {}).items():
+            if name == "inferenceModels" and keys.get("inferenceModels"):
+                continue
+            keys[name] = value
+        configured = json_status.get("configured", False) if json_has_runtime_config else plist_status.get("configured", False)
+
+    return {
+        "configured": configured,
+        "keys": keys,
+        "message": library_status.get("message") or json_status.get("message") or plist_status.get("message", ""),
+        "sources": {
+            "plist": plist_status.get("configured", False),
+            "json": json_status.get("configured", False),
+            "configLibrary": library_status.get("configured", False),
+        },
+    }
+
+
+def _mac_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+    plist_result = _mac_apply_plist_config(base_url, gateway_api_key, inference_models)
+    json_result = _mac_apply_json_config(base_url, gateway_api_key, inference_models)
+    library_result = _mac_apply_library_config(base_url, gateway_api_key, inference_models)
+    if plist_result.get("success") and json_result.get("success") and library_result.get("success"):
+        return {"success": True, "message": "macOS Desktop 3P 配置已应用"}
+
+    failures = []
+    if not plist_result.get("success"):
+        failures.append(f"plist: {plist_result.get('message', '写入失败')}")
+    if not json_result.get("success"):
+        failures.append(f"json: {json_result.get('message', '写入失败')}")
+    if not library_result.get("success"):
+        failures.append(f"configLibrary: {library_result.get('message', '写入失败')}")
+    return {"success": False, "message": "macOS 配置部分写入失败: " + "; ".join(failures)}
+
+
+def _mac_clear_plist_config() -> dict:
     managed = list(DESKTOP_CONFIG.keys()) + [CCDS_MARKER]
     count = 0
     for name in managed:
@@ -343,6 +667,81 @@ def _mac_clear_config() -> dict:
     if count:
         return {"success": True, "message": f"已清除 {count} 项配置"}
     return {"success": True, "message": "没有需要清除的配置"}
+
+
+def _mac_clear_json_config() -> dict:
+    ok, data, message = _mac_read_json_config()
+    if not ok:
+        return {"success": False, "message": f"JSON 配置读取失败: {message}"}
+    if not data:
+        return {"success": True, "message": "JSON 配置不存在，无需清除"}
+
+    changed = False
+    if "enterpriseConfig" in data:
+        data.pop("enterpriseConfig", None)
+        changed = True
+    if data.get("deploymentMode") != "clear":
+        data["deploymentMode"] = "clear"
+        changed = True
+    if not changed:
+        return {"success": True, "message": "JSON 配置无需清除"}
+
+    ok, message = _mac_write_json_config(data)
+    if not ok:
+        return {"success": False, "message": f"JSON 配置写入失败: {message}"}
+    return {"success": True, "message": "JSON 3P 配置已清除"}
+
+
+def _mac_clear_library_config() -> dict:
+    ok, paths, message = _mac_config_library_entry_paths()
+    if not ok:
+        return {"success": False, "message": f"configLibrary 元数据读取失败: {message}"}
+    if not paths:
+        return {"success": True, "message": "configLibrary 不存在，无需清除"}
+
+    managed = set(DESKTOP_CONFIG.keys()) | {
+        "provider",
+        "apiKey",
+        "authScheme",
+        "baseUrl",
+        "models",
+    }
+    failures = []
+    for path in paths:
+        ok, data, message = _mac_read_json_file(path)
+        if not ok:
+            failures.append(f"{os.path.basename(path)}: read failed: {message}")
+            continue
+        changed = False
+        for name in managed:
+            if name in data:
+                data.pop(name, None)
+                changed = True
+        if not changed:
+            continue
+        ok, message = _mac_write_json_file(path, data)
+        if not ok:
+            failures.append(f"{os.path.basename(path)}: write failed: {message}")
+
+    if failures:
+        return {"success": False, "message": "configLibrary 清除失败: " + "; ".join(failures)}
+    return {"success": True, "message": "configLibrary 3P 配置已清除"}
+
+
+def _mac_clear_config() -> dict:
+    plist_result = _mac_clear_plist_config()
+    json_result = _mac_clear_json_config()
+    library_result = _mac_clear_library_config()
+    if plist_result.get("success") and json_result.get("success") and library_result.get("success"):
+        return {"success": True, "message": "macOS Desktop 3P 配置已清除"}
+    failures = []
+    if not plist_result.get("success"):
+        failures.append(f"plist: {plist_result.get('message', '清除失败')}")
+    if not json_result.get("success"):
+        failures.append(f"json: {json_result.get('message', '清除失败')}")
+    if not library_result.get("success"):
+        failures.append(f"configLibrary: {library_result.get('message', '清除失败')}")
+    return {"success": False, "message": "macOS 配置部分清除失败: " + "; ".join(failures)}
 
 
 # ── 统一入口 ──

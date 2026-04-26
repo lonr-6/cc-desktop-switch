@@ -2,8 +2,10 @@
 .packaged-runtime-home/
 .onefile-runtime-home/
 .runtime-home/
-.tmp-*/
+.tmp/
 .playwright-mcp/
+.kiro-review/
+.DS_Store
 __pycache__/
 *.pyc
 *.log
@@ -15,8 +17,14 @@ dist/
 release/
 *.zip
 *.exe
+*.dmg
+*.pkg
 *.sig
 latest.json
+macos/assets/app-icon.icns
+macos/assets/app-icon.iconset/
+macos/assets/app-icon-prepared.png
+macos-packaging-plan.md
 
 # Local-only project materials and generated review screenshots.
 prompt-codex.md

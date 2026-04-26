@@ -1,10 +1,10 @@
 # CC Desktop Switch
 
 CC Desktop Switch 是一个轻量桌面工具，用本地桌面界面管理第三方 API 提供商，并把 Claude Desktop 的第三方推理请求转发到 DeepSeek、Kimi、智谱、阿里云百炼等平台。
-安装版和便携版默认会打开独立桌面窗口；浏览器地址只作为调试和备用入口。
-点击窗口关闭按钮时，应用会缩小到系统托盘继续运行；需要完全退出时，请右键托盘图标选择“退出”。
+Windows 安装版和便携版默认会打开独立桌面窗口；浏览器地址只作为调试和备用入口。
+Windows 版点击窗口关闭按钮时，应用会缩小到系统托盘继续运行；需要完全退出时，请右键托盘图标选择“退出”。
 
-项目当前主要面向 Windows。macOS 保留了 plist 配置入口；Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
+项目当前支持 Windows 和 macOS。Windows 版写入 Claude Desktop 的本机策略配置；macOS 版会写入 Claude Desktop 的本机 3P 配置，并自动定位当前生效的 `configLibrary` 配置条目。Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
 
 ## 下载
 
@@ -18,6 +18,7 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 - `CC-Desktop-Switch-v1.0.9-Windows-Setup.exe`：安装版
 - `CC-Desktop-Switch-v1.0.9-Windows-Portable.zip`：便携版
+- macOS 版可下载对应的 DMG 或 PKG。DMG 打开后把应用拖到“应用程序”；如果该位置已有旧版，Finder 会提示是否替换。PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
 Windows 版目前还没有 Authenticode 代码签名证书，系统可能提示未知发布者。Release 页面提供了 `.sha256` 和 `.sig` 文件用于校验下载完整性。
 
@@ -87,7 +88,7 @@ node --check frontend/js/i18n.js
 ## 安全说明
 
 - API Key 只保存在本机配置文件中，不要上传 `~/.cc-desktop-switch/config.json`。
-- “一键应用到 Claude 桌面版”会写入 Claude Desktop 的本机 managed policy。
+- “一键应用到 Claude 桌面版”会写入 Claude Desktop 在当前系统上使用的本机配置。Windows 使用本机策略配置；macOS 会同时覆盖 Claude Desktop 3P 根配置和当前选中的 `configLibrary` 条目。
 - Claude Desktop 使用本工具生成的本地 gateway key 调用代理；真正的上游 API Key 不直接写进 Claude Desktop。
 
 ## 致谢

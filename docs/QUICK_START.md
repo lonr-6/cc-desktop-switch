@@ -10,6 +10,8 @@
 CC-Desktop-Switch.exe
 ```
 
+macOS 版可以使用 DMG 或 PKG。DMG 打开后把应用拖到“应用程序”；如果该位置已有旧版，Finder 会提示是否替换。PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
+
 打开后先看首页。红框里的区域是主要操作区：选择提供商、查看状态、添加新提供商。
 
 ![首页主要区域](tutorial/assets/01-dashboard-redbox.png)
@@ -40,6 +42,8 @@ CC-Desktop-Switch.exe
 
 这个按钮会保存配置、设为默认、写入 Claude 桌面版连接信息，并启动本机转发服务。
 
+Windows 版会写入 Claude Desktop 的本机策略配置。macOS 版会自动定位 Claude Desktop 当前生效的 3P 配置条目，不需要手动复制别人的配置文件名。
+
 完成后重启 Claude Desktop，再正常发消息即可。
 
 ![一键应用](tutorial/assets/04-apply-redbox.png)
@@ -56,4 +60,5 @@ Claude 桌面版只连接到本机的 CC Desktop Switch。真实的上游 API Ke
 
 - 不要把真实 API Key 放进截图、issue 或评论。
 - Windows 版暂时没有 Authenticode 代码签名，系统可能提示未知发布者。
+- macOS 版目前不提供系统托盘驻留菜单，需要使用时直接打开应用窗口。
 - 如果请求失败，先看“代理”页面的日志，再核对 API Key、余额和模型名。

@@ -1,5 +1,6 @@
 import copy
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -229,6 +230,270 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertTrue(result["success"])
         elevated.assert_called_once()
+
+    def test_macos_apply_config_reports_defaults_write_failure(self):
+        def fake_mac_run(args):
+            if args[:4] == ["defaults", "write", registry.MAC_BUNDLE, "inferenceGatewayBaseUrl"]:
+                return False, "permission denied"
+            return True, ""
+
+        with patch("backend.registry._mac_run", side_effect=fake_mac_run):
+            result = registry._mac_apply_plist_config(
+                "http://127.0.0.1:18080",
+                gateway_api_key="secret-value",
+                inference_models='[{"name":"sonnet","displayName":"sonnet"}]',
+            )
+
+        self.assertFalse(result["success"])
+        self.assertIn("inferenceGatewayBaseUrl", result["message"])
+        self.assertNotIn("secret-value", result["message"])
+
+    def test_macos_apply_config_reports_readback_mismatch(self):
+        def fake_mac_run(args):
+            if args[:3] == ["defaults", "read", registry.MAC_BUNDLE]:
+                key = args[3]
+                if key == "inferenceGatewayBaseUrl":
+                    return True, "http://127.0.0.1:9999"
+                if key == registry.CCDS_MARKER:
+                    return True, "true"
+                value, _ = registry.DESKTOP_CONFIG[key]
+                if key == "inferenceGatewayBaseUrl":
+                    value = "http://127.0.0.1:18080"
+                if key == "inferenceGatewayApiKey":
+                    value = "secret-value"
+                if key == "inferenceModels":
+                    value = '[{"name":"sonnet","displayName":"sonnet"}]'
+                return True, str(value)
+            return True, ""
+
+        with patch("backend.registry._mac_run", side_effect=fake_mac_run):
+            result = registry._mac_apply_plist_config(
+                "http://127.0.0.1:18080",
+                gateway_api_key="secret-value",
+                inference_models='[{"name":"sonnet","displayName":"sonnet"}]',
+            )
+
+        self.assertFalse(result["success"])
+        self.assertIn("inferenceGatewayBaseUrl", result["message"])
+        self.assertIn("readback mismatch", result["message"])
+        self.assertNotIn("secret-value", result["message"])
+
+    def test_macos_apply_config_writes_json_and_preserves_preferences(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "deploymentMode": "1p",
+                "enterpriseConfig": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "https://old.example",
+                },
+                "preferences": {"sidebarMode": "task"},
+            }, handle)
+
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_apply_plist_config", return_value={"success": True}) as plist_apply:
+                result = registry._mac_apply_config(
+                    "http://127.0.0.1:18080",
+                    gateway_api_key="secret-value",
+                    inference_models='[{"name":"model-a","displayName":"Model A"},{"name":"model-b","supports1m":true}]',
+                )
+
+        self.assertTrue(result["success"])
+        plist_apply.assert_called_once()
+        with open(json_path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["deploymentMode"], "3p")
+        self.assertEqual(saved["preferences"], {"sidebarMode": "task"})
+        self.assertEqual(saved["enterpriseConfig"]["inferenceProvider"], "gateway")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayBaseUrl"], "http://127.0.0.1:18080")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayApiKey"], "secret-value")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayAuthScheme"], "bearer")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceModels"], ["model-a", "model-b"])
+        self.assertIs(saved["enterpriseConfig"]["isClaudeCodeForDesktopEnabled"], True)
+
+    def test_macos_apply_config_writes_active_config_library_entry(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        library_dir = os.path.join(os.path.dirname(json_path), "configLibrary")
+        entry_id = "1b050dc2-874f-4096-a303-566f42c64bcb"
+        entry_path = os.path.join(library_dir, f"{entry_id}.json")
+        os.makedirs(library_dir, exist_ok=True)
+        with open(os.path.join(library_dir, "_meta.json"), "w", encoding="utf-8") as handle:
+            json.dump({
+                "appliedId": entry_id,
+                "entries": [{"id": entry_id, "name": "Default"}],
+            }, handle)
+        with open(entry_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "inferenceProvider": "gateway",
+                "inferenceGatewayBaseUrl": "https://old.example",
+                "note": "keep me",
+            }, handle)
+
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_apply_plist_config", return_value={"success": True}):
+                result = registry._mac_apply_config(
+                    "http://127.0.0.1:18080",
+                    gateway_api_key="secret-value",
+                    inference_models='[{"name":"model-a","displayName":"Model A"},{"name":"model-b","supports1m":true}]',
+                )
+
+        self.assertTrue(result["success"])
+        with open(entry_path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["note"], "keep me")
+        self.assertEqual(saved["inferenceProvider"], "gateway")
+        self.assertEqual(saved["inferenceGatewayBaseUrl"], "http://127.0.0.1:18080")
+        self.assertEqual(saved["inferenceGatewayApiKey"], "secret-value")
+        self.assertEqual(saved["inferenceGatewayAuthScheme"], "bearer")
+        self.assertEqual(saved["inferenceModels"], ["model-a", "model-b"])
+        self.assertIs(saved["isClaudeCodeForDesktopEnabled"], True)
+
+    def test_macos_status_prefers_json_runtime_values_and_keeps_plist_models(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "deploymentMode": "3p",
+                "enterpriseConfig": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "https://stale.example",
+                    "inferenceGatewayApiKey": "secret-value",
+                    "inferenceModels": ["model-a"],
+                },
+            }, handle)
+
+        plist_models = '[{"name":"model-a","displayName":"model-a","supports1m":true}]'
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_get_plist_config_status", return_value={
+                "configured": True,
+                "keys": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                    "inferenceGatewayApiKey": "******",
+                    "inferenceModels": plist_models,
+                },
+                "message": "",
+            }):
+                status = registry._mac_get_config_status()
+
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["keys"]["inferenceGatewayBaseUrl"], "https://stale.example")
+        self.assertEqual(status["keys"]["inferenceGatewayApiKey"], "******")
+        self.assertEqual(status["keys"]["inferenceModels"], plist_models)
+        self.assertTrue(status["sources"]["plist"])
+        self.assertTrue(status["sources"]["json"])
+        self.assertFalse(status["sources"]["configLibrary"])
+
+    def test_macos_status_prefers_config_library_over_root_json(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        library_dir = os.path.join(os.path.dirname(json_path), "configLibrary")
+        entry_id = "1b050dc2-874f-4096-a303-566f42c64bcb"
+        os.makedirs(library_dir, exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "deploymentMode": "3p",
+                "enterpriseConfig": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "https://root.example",
+                    "inferenceGatewayApiKey": "root-secret",
+                    "inferenceModels": ["root-model"],
+                },
+            }, handle)
+        with open(os.path.join(library_dir, "_meta.json"), "w", encoding="utf-8") as handle:
+            json.dump({
+                "appliedId": entry_id,
+                "entries": [{"id": entry_id, "name": "Default"}],
+            }, handle)
+        with open(os.path.join(library_dir, f"{entry_id}.json"), "w", encoding="utf-8") as handle:
+            json.dump({
+                "inferenceProvider": "gateway",
+                "inferenceGatewayBaseUrl": "https://library.example",
+                "inferenceGatewayApiKey": "library-secret",
+                "inferenceModels": ["library-model"],
+            }, handle)
+
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_get_plist_config_status", return_value={
+                "configured": True,
+                "keys": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                    "inferenceGatewayApiKey": "******",
+                    "inferenceModels": '[{"name":"plist-model","supports1m":true}]',
+                },
+                "message": "",
+            }):
+                status = registry._mac_get_config_status()
+
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["keys"]["inferenceGatewayBaseUrl"], "https://library.example")
+        self.assertEqual(status["keys"]["inferenceGatewayApiKey"], "******")
+        self.assertEqual(status["keys"]["inferenceModels"], '["library-model"]')
+        self.assertTrue(status["sources"]["plist"])
+        self.assertTrue(status["sources"]["json"])
+        self.assertTrue(status["sources"]["configLibrary"])
+
+    def test_macos_clear_config_clears_json_without_touching_preferences(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "deploymentMode": "3p",
+                "enterpriseConfig": {
+                    "inferenceProvider": "gateway",
+                    "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                    "inferenceGatewayApiKey": "secret-value",
+                },
+                "preferences": {"sidebarMode": "task"},
+            }, handle)
+
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_clear_plist_config", return_value={"success": True}) as plist_clear:
+                result = registry._mac_clear_config()
+
+        self.assertTrue(result["success"])
+        plist_clear.assert_called_once()
+        with open(json_path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["deploymentMode"], "clear")
+        self.assertNotIn("enterpriseConfig", saved)
+        self.assertEqual(saved["preferences"], {"sidebarMode": "task"})
+
+    def test_macos_clear_config_clears_active_config_library_entry(self):
+        json_path = os.path.join(self.temp_dir.name, "Claude-3p", "claude_desktop_config.json")
+        library_dir = os.path.join(os.path.dirname(json_path), "configLibrary")
+        entry_id = "1b050dc2-874f-4096-a303-566f42c64bcb"
+        entry_path = os.path.join(library_dir, f"{entry_id}.json")
+        os.makedirs(library_dir, exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "deploymentMode": "3p",
+                "enterpriseConfig": {"inferenceProvider": "gateway"},
+            }, handle)
+        with open(os.path.join(library_dir, "_meta.json"), "w", encoding="utf-8") as handle:
+            json.dump({
+                "appliedId": entry_id,
+                "entries": [{"id": entry_id, "name": "Default"}],
+            }, handle)
+        with open(entry_path, "w", encoding="utf-8") as handle:
+            json.dump({
+                "inferenceProvider": "gateway",
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceGatewayApiKey": "secret-value",
+                "inferenceGatewayAuthScheme": "bearer",
+                "inferenceModels": ["model-a"],
+                "note": "keep me",
+            }, handle)
+
+        with patch.object(registry, "MAC_3P_CONFIG", json_path):
+            with patch("backend.registry._mac_clear_plist_config", return_value={"success": True}):
+                result = registry._mac_clear_config()
+
+        self.assertTrue(result["success"])
+        with open(entry_path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved, {"note": "keep me"})
 
     def test_elevated_registry_script_does_not_contain_plain_gateway_key(self):
         captured = {}
@@ -1252,6 +1517,16 @@ class DesktopTrayControllerTests(unittest.TestCase):
         cfg.CONFIG_FILE = self.old_config_file
         cfg.BACKUP_DIR = self.old_backup_dir
         self.temp_dir.cleanup()
+
+    def test_tray_is_disabled_on_macos_to_keep_appkit_on_main_thread(self):
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+
+        with patch("main.sys.platform", "darwin"):
+            self.assertFalse(tray.start())
+
+        self.assertIsNone(tray.icon)
+        self.assertIsNone(tray.thread)
 
     def test_close_hides_window_and_cancels_close(self):
         window = FakeTrayWindow()

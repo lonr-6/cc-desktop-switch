@@ -5,3 +5,8 @@ pywebview>=5.4,<6.0
 pystray>=0.19.5,<0.20.0
 Pillow>=10.0.0
 pyinstaller>=6.0.0
+pyobjc-core>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-WebKit>=10.0; sys_platform == "darwin"
+pyobjc-framework-Security>=10.0; sys_platform == "darwin"

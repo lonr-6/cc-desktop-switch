@@ -151,6 +151,10 @@ class DesktopTrayController:
 
     def start(self) -> bool:
         """启动系统托盘图标。依赖缺失时返回 False，不影响主窗口打开。"""
+        if sys.platform == "darwin":
+            safe_print("system tray disabled on macOS: AppKit must run on the main thread")
+            return False
+
         try:
             import pystray
             from PIL import Image
