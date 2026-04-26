@@ -329,7 +329,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.5</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.6</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
@@ -365,6 +365,23 @@
           <div class="modal-footer">
             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="common.cancel">取消</button>
             <button type="button" class="btn btn-danger" id="confirmDelete" data-i18n="common.delete">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="restartReminderModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content restart-modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" data-i18n="restartReminder.title">请重启 Claude 桌面版</h5>
+          </div>
+          <div class="modal-body">
+            <p data-i18n="restartReminder.body">已切换供应商并同步模型列表。请关闭并重新打开 Claude 桌面版，否则主面板可能还在使用旧模型。</p>
+          </div>
+          <div class="modal-footer restart-modal-footer">
+            <label class="restart-reminder-check"><input type="checkbox" id="restartReminderDontShow"><span data-i18n="restartReminder.dontShow">不再提醒</span></label>
+            <button type="button" class="btn btn-primary" id="restartReminderAck" data-i18n="restartReminder.ack">我已知晓</button>
           </div>
         </div>
       </div>

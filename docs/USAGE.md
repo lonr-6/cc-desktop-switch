@@ -5,7 +5,7 @@
 ## 适用场景
 
 - 你已经安装 Claude Desktop。
-- 你有 DeepSeek、Kimi、七牛云、智谱、SiliconFlow 或阿里云百炼等平台的 API Key。
+- 你有 DeepSeek、Kimi、智谱或阿里云百炼等平台的 API Key。
 - 你希望少手改配置，让 Claude 桌面版走本机的 CC Desktop Switch，再转发到真实 API。
 
 ## 快速开始
@@ -15,13 +15,13 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.5-Windows-Setup.exe
+CC-Desktop-Switch-v1.0.6-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.5-Windows-Portable.zip
+CC-Desktop-Switch-v1.0.6-Windows-Portable.zip
 ```
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
@@ -43,9 +43,7 @@ http://127.0.0.1:18081
 
 - DeepSeek
 - Kimi（月之暗面）
-- 七牛云 AI
 - 智谱 GLM
-- SiliconFlow（硅基流动）
 - 阿里云百炼
 
 选择预设后，API 地址和推荐模型会自动填好。你只需要填自己的 API Key。
@@ -64,14 +62,14 @@ http://127.0.0.1:18081
 | --- | --- | --- |
 | DeepSeek | `deepseek-v4-pro` | `deepseek-v4-flash` |
 | Kimi | `kimi-k2.6` | `kimi-k2.6` |
-| 七牛云 AI | `moonshotai/kimi-k2-thinking` | `moonshotai/kimi-k2-thinking` |
 | 智谱 GLM | `glm-5.1` | `glm-4.7` |
-| SiliconFlow | `Pro/moonshotai/Kimi-K2.5` | `Pro/moonshotai/Kimi-K2.5` |
 | 阿里云百炼 | `qwen3.6-plus` | `qwen3.6-flash` |
 
 如果厂商更新了模型名，可以点“自动获取模型”，或手动改成厂商控制台里显示的模型 ID。
 
 DeepSeek 额外提供“解锁 1M 上下文”选项。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`。
+
+阿里云百炼额外提供“开启千问 1M 上下文”选项。勾选后，会把 `qwen3.6-plus` / `qwen3.6-flash` 的 1M 能力写入 Claude 桌面版；不勾选时按普通上下文显示。
 
 DeepSeek 还提供“DeepSeek Max 思维”选项。Claude 界面可能仍显示 `High`，但勾选后本工具会在转发时使用 DeepSeek 的 `max` 思维深度；不勾选则按 Claude 当前默认配置处理。
 

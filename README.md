@@ -1,6 +1,6 @@
 # CC Desktop Switch
 
-CC Desktop Switch 是一个轻量桌面工具，用本地桌面界面管理第三方 API 提供商，并把 Claude Desktop 的第三方推理请求转发到 DeepSeek、Kimi、七牛云、智谱等平台。
+CC Desktop Switch 是一个轻量桌面工具，用本地桌面界面管理第三方 API 提供商，并把 Claude Desktop 的第三方推理请求转发到 DeepSeek、Kimi、智谱、阿里云百炼等平台。
 安装版和便携版默认会打开独立桌面窗口；浏览器地址只作为调试和备用入口。
 点击窗口关闭按钮时，应用会缩小到系统托盘继续运行；需要完全退出时，请右键托盘图标选择“退出”。
 
@@ -16,14 +16,14 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 推荐普通用户下载：
 
-- `CC-Desktop-Switch-v1.0.5-Windows-Setup.exe`：安装版
-- `CC-Desktop-Switch-v1.0.5-Windows-Portable.zip`：便携版
+- `CC-Desktop-Switch-v1.0.6-Windows-Setup.exe`：安装版
+- `CC-Desktop-Switch-v1.0.6-Windows-Portable.zip`：便携版
 
 Windows 版目前还没有 Authenticode 代码签名证书，系统可能提示未知发布者。Release 页面提供了 `.sha256` 和 `.sig` 文件用于校验下载完整性。
 
 ## 能做什么
 
-- 管理 DeepSeek、Kimi、七牛云、智谱等 API 提供商。
+- 管理 DeepSeek、Kimi、智谱、阿里云百炼等 API 提供商。
 - 一键写入 Claude 桌面版第三方推理配置。
 - 启动本机转发服务，把 Claude 模型名映射到上游模型。
 - 对提供商 API 地址做基础连通测速。

@@ -28,9 +28,9 @@
     bigmodel: { logo: 'assets/providers/zhipu.png' },
     glm: { logo: 'assets/providers/zhipu.png' },
     siliconflow: { icon: 'bi-diagram-3-fill' },
-    bailian: { icon: 'bi-boxes' },
-    dashscope: { icon: 'bi-boxes' },
-    aliyun: { icon: 'bi-cloud-fill' },
+    bailian: { logo: 'assets/providers/aliyun.ico' },
+    dashscope: { logo: 'assets/providers/aliyun.ico' },
+    aliyun: { logo: 'assets/providers/aliyun.ico' },
   };
 
   function computeIcon(provider) {

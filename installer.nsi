@@ -4,11 +4,11 @@
 ;  Prerequisites:
 ;     1. Install NSIS 3.0+
 ;     2. Run: makensis installer.nsi
-;     3. Output: CC-Desktop-Switch-Setup-1.0.5.exe
+;     3. Output: CC-Desktop-Switch-Setup-1.0.6.exe
 ;============================================
 
 !define PRODUCT_NAME "CC Desktop Switch"
-!define PRODUCT_VERSION "1.0.5"
+!define PRODUCT_VERSION "1.0.6"
 !define PRODUCT_PUBLISHER "CC Desktop Switch"
 !define PRODUCT_DIR "$PROGRAMFILES64\CC-Desktop-Switch"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"

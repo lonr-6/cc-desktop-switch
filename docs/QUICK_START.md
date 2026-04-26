@@ -16,7 +16,7 @@ CC-Desktop-Switch.exe
 
 ## 2. 添加 API 提供商
 
-点击右上角 `+`，进入添加页面。先点右侧快捷预设，比如 DeepSeek、Kimi、七牛云、智谱、SiliconFlow 或阿里云百炼。
+点击右上角 `+`，进入添加页面。先点右侧快捷预设，比如 DeepSeek、Kimi、智谱或阿里云百炼。
 
 红框里的预设会自动填入 API 地址和推荐模型。API Key 需要你自己填写。
 
@@ -27,6 +27,8 @@ CC-Desktop-Switch.exe
 模型映射已经在添加页面下方。简单说，它负责把 Claude 的 Sonnet / Haiku / Opus 对应到厂商自己的模型名。
 
 如果你选 DeepSeek，可以按需勾选“解锁 1M 上下文”。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`。
+
+如果你选阿里云百炼，可以按需勾选“开启千问 1M 上下文”。勾选后，会把 `qwen3.6-plus` / `qwen3.6-flash` 的 1M 能力写入 Claude 桌面版。
 
 如果需要更深的推理，可以勾选“DeepSeek Max 思维”。Claude 界面可能仍显示 `High`，但本工具会按 DeepSeek Max 转发；不勾选则按默认配置运行。
 

@@ -111,8 +111,8 @@ def _desktop_health(desktop_status: dict, proxy_port: int, provider: Optional[di
                 break
         if not one_million_ready:
             issues.append({
-                "code": "deepseek_1m_not_written",
-                "message": "DeepSeek 1M 模型尚未写入桌面版配置，请重新一键应用并重启 Claude 桌面版。",
+                "code": "one_million_not_written",
+                "message": "1M 上下文模型尚未写入桌面版配置，请重新一键应用并重启 Claude 桌面版。",
             })
 
     return {
@@ -146,8 +146,34 @@ def _sync_desktop_for_active_provider() -> dict:
     }
 
 
+def _provider_test_model(provider: dict) -> str:
+    models = provider.get("models") or {}
+    if isinstance(models, dict):
+        for key in ("default", "sonnet", "haiku", "opus"):
+            model = models.get(key)
+            if model:
+                return model
+    return "claude-sonnet-4-6"
+
+
+def _provider_test_body(provider: dict, api_format: str) -> dict:
+    model = _provider_test_model(provider)
+    if api_format == "openai":
+        return {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 8,
+            "stream": False,
+        }
+    return {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 8,
+    }
+
+
 async def _test_provider_connection(provider: dict) -> dict:
-    """测试 provider 基础地址的网络可达性，不发送模型推理请求。"""
+    """测试 provider 是否能真实访问上游接口。"""
     api_format = str(provider.get("apiFormat", "anthropic")).lower()
     base_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
     parsed = urlparse(base_url)
@@ -167,6 +193,12 @@ async def _test_provider_connection(provider: dict) -> dict:
             response = await client.head(base_url, headers=headers)
             if response.status_code in {404, 405}:
                 response = await client.get(base_url, headers=headers)
+            if response.status_code in {404, 405} and provider.get("apiKey"):
+                response = await client.post(
+                    base_url,
+                    headers=get_upstream_headers(provider),
+                    json=_provider_test_body(provider, api_format),
+                )
     except httpx.RequestError as exc:
         latency_ms = round((time.perf_counter() - started) * 1000)
         return {
@@ -182,7 +214,11 @@ async def _test_provider_connection(provider: dict) -> dict:
     if 200 <= status_code < 300:
         message = f"连接正常，{latency_ms} ms"
     elif status_code in {401, 403}:
-        message = f"地址可达，认证返回 {status_code}，{latency_ms} ms"
+        reachable = False
+        message = f"认证失败，HTTP {status_code}，请检查 API Key 和 API 地址是否匹配，{latency_ms} ms"
+    elif status_code in {404, 405}:
+        reachable = False
+        message = f"接口不可用，HTTP {status_code}，请检查 API 地址是否填到了兼容 Claude 的接口，{latency_ms} ms"
     else:
         message = f"地址可达，HTTP {status_code}，{latency_ms} ms"
 
@@ -197,7 +233,7 @@ async def _test_provider_connection(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.5")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.6")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):

@@ -14,7 +14,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.5",
+    "version": "1.0.6",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -75,7 +75,7 @@ BUILTIN_PRESETS = [
     {
         "id": "kimi",
         "name": "Kimi (月之暗面)",
-        "baseUrl": "https://api.moonshot.cn/anthropic",
+        "baseUrl": "https://api.moonshot.ai/anthropic",
         "authScheme": "bearer",
         "apiFormat": "anthropic",
         "models": {
@@ -83,20 +83,6 @@ BUILTIN_PRESETS = [
             "haiku": "kimi-k2.6",
             "opus": "kimi-k2.6",
             "default": "kimi-k2.6",
-        },
-        "isBuiltin": True,
-    },
-    {
-        "id": "qiniu",
-        "name": "七牛云 AI",
-        "baseUrl": "https://api.qnaigc.com",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "moonshotai/kimi-k2-thinking",
-            "haiku": "moonshotai/kimi-k2-thinking",
-            "opus": "moonshotai/kimi-k2-thinking",
-            "default": "moonshotai/kimi-k2-thinking",
         },
         "isBuiltin": True,
     },
@@ -115,20 +101,6 @@ BUILTIN_PRESETS = [
         "isBuiltin": True,
     },
     {
-        "id": "siliconflow",
-        "name": "SiliconFlow (硅基流动)",
-        "baseUrl": "https://api.siliconflow.cn",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "Pro/moonshotai/Kimi-K2.5",
-            "haiku": "Pro/moonshotai/Kimi-K2.5",
-            "opus": "Pro/moonshotai/Kimi-K2.5",
-            "default": "Pro/moonshotai/Kimi-K2.5",
-        },
-        "isBuiltin": True,
-    },
-    {
         "id": "bailian",
         "name": "阿里云百炼",
         "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
@@ -140,10 +112,17 @@ BUILTIN_PRESETS = [
             "opus": "qwen3.6-max-preview",
             "default": "qwen3.6-plus",
         },
-        "modelCapabilities": {
-            "qwen3.6-plus": {"supports1m": True},
-            "qwen3.6-flash": {"supports1m": True},
+        "modelOptions": {
+            "qwen_1m": {
+                "label": "开启千问 1M 上下文",
+                "description": "阿里云文档确认 qwen3.6-plus / qwen3.6-flash 支持 1M。勾选后会把 1M 能力写入 Claude 桌面版；不勾选则按普通上下文显示。",
+                "modelCapabilities": {
+                    "qwen3.6-plus": {"supports1m": True},
+                    "qwen3.6-flash": {"supports1m": True},
+                },
+            }
         },
+        "modelCapabilities": {},
         "requestOptions": {},
         "isBuiltin": True,
     },

@@ -37,13 +37,13 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 它主要做三件事：
 
-1. 管理 DeepSeek、Kimi、七牛云、智谱这些 API 提供商。
+1. 管理 DeepSeek、Kimi、智谱、阿里云百炼这些 API 提供商。
 2. 在本机启动代理，把 Claude 模型名转成上游模型名。
 3. 一键写入 Claude Desktop 支持的 3P managed policy。
 
 不是破解，也不是绕过官方机制。它只是把官方支持的配置方式做成了一个本地界面。
 
-目前 v1.0.5 已经发到 GitHub：
+目前 v1.0.6 已经发到 GitHub：
 
 https://github.com/lonr-6/cc-desktop-switch
 
@@ -66,12 +66,12 @@ https://github.com/lonr-6/cc-desktop-switch
 
 ### Single post
 
-I released CC Desktop Switch v1.0.5.
+I released CC Desktop Switch v1.0.6.
 
 It is a small local desktop app for configuring Claude Desktop with third-party API providers.
 
 What it does:
-- provider presets for DeepSeek, Kimi, Qiniu, Zhipu, SiliconFlow, and Bailian
+- provider presets for DeepSeek, Kimi, Zhipu, and Alibaba Bailian
 - local proxy on 127.0.0.1
 - model name mapping
 - Anthropic-compatible upstream presets
@@ -93,7 +93,7 @@ https://github.com/lonr-6/cc-desktop-switch
 
 2/ The flow is simple:
 
-Claude Desktop -> 127.0.0.1:18080 -> DeepSeek / Kimi / Qiniu / Zhipu
+Claude Desktop -> 127.0.0.1:18080 -> DeepSeek / Kimi / Zhipu / Bailian
 
 The app manages providers, API keys, model mapping, and the local proxy.
 
@@ -101,7 +101,7 @@ The app manages providers, API keys, model mapping, and the local proxy.
 
 So this is not a bypass or a patch. It is a UI around the supported configuration path.
 
-4/ v1.0.5 includes:
+4/ v1.0.6 includes:
 
 - Windows installer
 - portable ZIP
@@ -124,7 +124,7 @@ Use a test API key first. Do not paste real keys into issues, screenshots, or co
 ### 标题备选
 
 1. 开源了一个 Claude Desktop 3P 配置小工具：CC Desktop Switch
-2. CC Desktop Switch v1.0.5：桌面应用方式接 DeepSeek / Kimi / 七牛云 / 智谱
+2. CC Desktop Switch v1.0.6：桌面应用方式接 DeepSeek / Kimi / 智谱 / 阿里云百炼
 3. 把 Claude Desktop 的第三方推理配置做成了一个 Windows 本地工具
 
 ### 正文
@@ -150,14 +150,14 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 ```text
 Claude Desktop
   -> http://127.0.0.1:18080
-  -> DeepSeek / Kimi / 七牛云 / 智谱
+  -> DeepSeek / Kimi / 智谱 / 阿里云百炼
 ```
 
 目前做了这些：
 
 - FastAPI 管理后台。
 - Vanilla JS + Bootstrap 前端。
-- Provider 预设：DeepSeek、Kimi、七牛云、智谱、SiliconFlow、阿里云百炼。
+- Provider 预设：DeepSeek、Kimi、智谱、阿里云百炼。
 - 主流程使用 Anthropic 兼容接口，避免用户手动判断 API 格式。
 - Claude 模型名到上游模型名的映射已整合到添加/编辑页面。
 - SSE 流式转发。

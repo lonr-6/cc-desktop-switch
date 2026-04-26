@@ -2177,6 +2177,29 @@ body {
   justify-content: flex-end;
 }
 
+.restart-modal-content {
+  border-radius: 16px;
+}
+
+.restart-modal-content .modal-body p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.restart-modal-footer {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.restart-reminder-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .backup-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

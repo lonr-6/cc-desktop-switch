@@ -519,7 +519,7 @@ async def forward_request_stream(
                             "message": error_text or "上游 API 返回错误",
                         },
                     }
-                    yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                    yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
                     return
 
                 if api_format == "openai":
@@ -636,7 +636,17 @@ from backend.config import get_active_provider, get_gateway_api_key
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.5")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.6")
+
+    def upstream_error_status(result: dict) -> int:
+        """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
+        error = result.get("error") if isinstance(result, dict) else None
+        status = error.get("status") if isinstance(error, dict) else None
+        try:
+            status_code = int(status)
+        except (TypeError, ValueError):
+            return 502
+        return status_code if 400 <= status_code <= 599 else 502
 
     def gateway_auth_failed(request: Request) -> bool:
         gateway_api_key = get_gateway_api_key()
@@ -727,6 +737,11 @@ def create_proxy_app() -> FastAPI:
             )
         else:
             result = await forward_request(body, provider, request_id)
+            if isinstance(result, dict) and result.get("error"):
+                return JSONResponse(
+                    status_code=upstream_error_status(result),
+                    content=result,
+                )
             return JSONResponse(content=result)
 
     return app

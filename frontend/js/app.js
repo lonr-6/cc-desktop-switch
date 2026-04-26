@@ -1,5 +1,6 @@
 (function () {
   const routes = ["dashboard", "providers/add", "providers", "desktop", "proxy", "settings", "guide"];
+  const restartReminderStorageKey = "ccds.restartReminder.dismissed";
   const modelMeta = [
     { key: "sonnet", title: "Sonnet", icon: "bi-stars", source: "claude-sonnet-4-6" },
     { key: "haiku", title: "Haiku", icon: "bi-leaf", source: "claude-haiku-3-5" },
@@ -13,6 +14,7 @@
   let formRequestOptions = {};
   let editingProviderId = null;
   let deleteModal = null;
+  let restartReminderModal = null;
   let toast = null;
   let updateCheckCache = null;
 
@@ -32,6 +34,33 @@
   function showToast(message) {
     $("#toastBody").textContent = message;
     toast.show();
+  }
+
+  function restartReminderDismissed() {
+    try {
+      return localStorage.getItem(restartReminderStorageKey) === "1";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function showRestartReminder() {
+    if (restartReminderDismissed()) return;
+    const checkbox = $("#restartReminderDontShow");
+    if (checkbox) checkbox.checked = false;
+    restartReminderModal?.show();
+  }
+
+  function dismissRestartReminder() {
+    const checkbox = $("#restartReminderDontShow");
+    if (checkbox?.checked) {
+      try {
+        localStorage.setItem(restartReminderStorageKey, "1");
+      } catch (error) {
+        console.warn(error);
+      }
+    }
+    restartReminderModal?.hide();
   }
 
   function t(key) {
@@ -193,14 +222,36 @@
     return JSON.stringify(normalizeRequestOptions(left)) === JSON.stringify(normalizeRequestOptions(right));
   }
 
+  function capabilitiesMatch(left = {}, right = {}) {
+    return JSON.stringify(normalizeCapabilities(left)) === JSON.stringify(normalizeCapabilities(right));
+  }
+
+  function mergeCapabilities(base = {}, extra = {}) {
+    return {
+      ...normalizeCapabilities(base),
+      ...normalizeCapabilities(extra),
+    };
+  }
+
+  function clearCapabilities(base = {}, option = {}) {
+    const current = normalizeCapabilities(base);
+    Object.keys(normalizeCapabilities(option)).forEach((modelId) => {
+      delete current[modelId];
+    });
+    return current;
+  }
+
   function optionEnabled(option = {}, currentMappings = collectProviderMappings()) {
     const hasModels = option.models && typeof option.models === "object";
     const hasRequestOptions = option.requestOptions && typeof option.requestOptions === "object";
-    if (hasModels && hasRequestOptions) {
-      return modelsMatch(option.models, currentMappings) && requestOptionsMatch(option.requestOptions, formRequestOptions);
+    const hasCapabilities = option.modelCapabilities && typeof option.modelCapabilities === "object";
+    const modelsOk = !hasModels || modelsMatch(option.models, currentMappings);
+    const requestOptionsOk = !hasRequestOptions || requestOptionsMatch(option.requestOptions, formRequestOptions);
+    const optionChangesModels = hasModels && !modelsMatch(option.models, selectedPreset?.models || {});
+    const capabilitiesOk = !hasCapabilities || optionChangesModels || capabilitiesMatch(option.modelCapabilities, formModelCapabilities);
+    if (hasModels || hasRequestOptions || hasCapabilities) {
+      return modelsOk && requestOptionsOk && capabilitiesOk;
     }
-    if (hasModels) return modelsMatch(option.models, currentMappings);
-    if (hasRequestOptions) return requestOptionsMatch(option.requestOptions, formRequestOptions);
     return false;
   }
 
@@ -286,14 +337,22 @@
   function applyPresetModelOption(optionId, enabled) {
     const option = selectedPreset?.modelOptions?.[optionId] || selectedPreset?.requestOptionPresets?.[optionId];
     if (!option) return;
+    const hasModels = option.models && typeof option.models === "object";
+    const hasCapabilities = option.modelCapabilities && typeof option.modelCapabilities === "object";
     const mappings = option.models
       ? (enabled ? option.models : selectedPreset.models || emptyMappings())
       : collectProviderMappings();
-    if (option.models) {
+    if (hasModels) {
+      setProviderMappings(mappings);
+    }
+    if (hasCapabilities) {
+      formModelCapabilities = enabled
+        ? mergeCapabilities(formModelCapabilities || selectedPreset.modelCapabilities || {}, option.modelCapabilities)
+        : clearCapabilities(formModelCapabilities, option.modelCapabilities);
+    } else if (hasModels) {
       formModelCapabilities = normalizeCapabilities(enabled
         ? option.modelCapabilities || selectedPreset.modelCapabilities || {}
         : selectedPreset.modelCapabilities || {});
-      setProviderMappings(mappings);
     }
     if (option.requestOptions) {
       formRequestOptions = enabled
@@ -842,6 +901,7 @@
       selectedPreset = null;
       window.location.hash = "dashboard";
       showToast(t("toast.providerAppliedDesktop"));
+      showRestartReminder();
     } finally {
       actionEl.disabled = false;
     }
@@ -868,10 +928,12 @@
         const desktopSync = result.desktopSync || {};
         if (desktopSync.attempted && desktopSync.success) {
           showToast(t("toast.defaultUpdatedDesktop"));
+          showRestartReminder();
         } else if (desktopSync.attempted && desktopSync.success === false) {
           showToast(t("toast.defaultUpdatedDesktopFailed"));
         } else {
           showToast(t("toast.defaultUpdated"));
+          showRestartReminder();
         }
       }
 
@@ -1185,6 +1247,7 @@
     $("#configImportFile")?.addEventListener("change", (event) => {
       importConfigFile(event.target.files?.[0]);
     });
+    $("#restartReminderAck")?.addEventListener("click", dismissRestartReminder);
 
     $("#confirmDelete").addEventListener("click", async () => {
       if (!pendingDeleteId) return;
@@ -1207,6 +1270,10 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     deleteModal = new bootstrap.Modal($("#deleteModal"));
+    restartReminderModal = new bootstrap.Modal($("#restartReminderModal"), {
+      backdrop: "static",
+      keyboard: false,
+    });
     toast = new bootstrap.Toast($("#appToast"), { delay: 2200 });
     bindEvents();
     CCI18n.apply("zh");

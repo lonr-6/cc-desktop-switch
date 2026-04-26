@@ -1,4 +1,5 @@
 import copy
+import asyncio
 import os
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.main import _desktop_health, create_admin_app
+from backend.main import _desktop_health, _test_provider_connection, create_admin_app
 from main import DesktopTrayController
 from backend import config as cfg
 from backend import provider_tools
@@ -142,10 +143,8 @@ class ProviderConfigTests(unittest.TestCase):
 
         expected_urls = {
             "deepseek": "https://api.deepseek.com/anthropic",
-            "kimi": "https://api.moonshot.cn/anthropic",
-            "qiniu": "https://api.qnaigc.com",
+            "kimi": "https://api.moonshot.ai/anthropic",
             "zhipu": "https://open.bigmodel.cn/api/anthropic",
-            "siliconflow": "https://api.siliconflow.cn",
             "bailian": "https://dashscope.aliyuncs.com/apps/anthropic",
         }
 
@@ -156,11 +155,14 @@ class ProviderConfigTests(unittest.TestCase):
             self.assertTrue(presets[preset_id]["models"]["default"])
 
         self.assertEqual(presets["kimi"]["models"]["default"], "kimi-k2.6")
-        self.assertEqual(presets["qiniu"]["models"]["default"], "moonshotai/kimi-k2-thinking")
         self.assertEqual(presets["zhipu"]["models"]["haiku"], "glm-4.7")
-        self.assertEqual(presets["siliconflow"]["models"]["default"], "Pro/moonshotai/Kimi-K2.5")
-        self.assertTrue(presets["bailian"]["modelCapabilities"]["qwen3.6-plus"]["supports1m"])
-        self.assertTrue(presets["bailian"]["modelCapabilities"]["qwen3.6-flash"]["supports1m"])
+        self.assertNotIn("qiniu", presets)
+        self.assertNotIn("siliconflow", presets)
+        self.assertEqual(presets["bailian"]["modelCapabilities"], {})
+        qwen_1m = presets["bailian"]["modelOptions"]["qwen_1m"]
+        self.assertIn("开启千问 1M 上下文", qwen_1m["label"])
+        self.assertTrue(qwen_1m["modelCapabilities"]["qwen3.6-plus"]["supports1m"])
+        self.assertTrue(qwen_1m["modelCapabilities"]["qwen3.6-flash"]["supports1m"])
 
         deepseek_1m = presets["deepseek"]["modelOptions"]["deepseek_1m"]
         self.assertEqual(deepseek_1m["models"]["sonnet"], "deepseek-v4-pro[1m]")
@@ -343,7 +345,7 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertTrue(health["needsApply"])
         self.assertIn("gateway_base_url_mismatch", codes)
-        self.assertIn("deepseek_1m_not_written", codes)
+        self.assertIn("one_million_not_written", codes)
 
         current_status = {
             "configured": True,
@@ -566,6 +568,85 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["suggested"]["default"], "example-pro")
 
+    def test_provider_connection_marks_auth_failure_as_not_ok(self):
+        class FakeResponse:
+            def __init__(self, status_code=401):
+                self.status_code = status_code
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def head(self, *args, **kwargs):
+                return FakeResponse(401)
+
+            async def get(self, *args, **kwargs):
+                return FakeResponse(401)
+
+        with patch("backend.main.httpx.AsyncClient", FakeClient):
+            result = asyncio.run(_test_provider_connection({
+                "name": "Kimi",
+                "baseUrl": "https://api.moonshot.ai/anthropic",
+                "apiKey": "bad-key",
+                "authScheme": "bearer",
+                "apiFormat": "anthropic",
+            }))
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["statusCode"], 401)
+        self.assertIn("认证失败", result["message"])
+
+    def test_provider_connection_probes_post_when_head_and_get_are_not_supported(self):
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, status_code):
+                self.status_code = status_code
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def head(self, *args, **kwargs):
+                calls.append(("head", args, kwargs))
+                return FakeResponse(404)
+
+            async def get(self, *args, **kwargs):
+                calls.append(("get", args, kwargs))
+                return FakeResponse(404)
+
+            async def post(self, *args, **kwargs):
+                calls.append(("post", args, kwargs))
+                return FakeResponse(401)
+
+        with patch("backend.main.httpx.AsyncClient", FakeClient):
+            result = asyncio.run(_test_provider_connection({
+                "name": "Kimi",
+                "baseUrl": "https://api.moonshot.ai/anthropic",
+                "apiKey": "bad-key",
+                "authScheme": "bearer",
+                "apiFormat": "anthropic",
+                "models": {"default": "kimi-k2.6"},
+            }))
+
+        self.assertEqual([call[0] for call in calls], ["head", "get", "post"])
+        self.assertEqual(calls[-1][2]["json"]["model"], "kimi-k2.6")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["statusCode"], 401)
+
     def test_usage_route_returns_normalized_provider_tools_result(self):
         provider = cfg.add_provider({
             "name": "DeepSeek",
@@ -703,11 +784,11 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "updateAvailable": True,
                 "currentVersion": current_version,
-                "latestVersion": "1.0.5",
+                "latestVersion": "1.0.7",
                 "platform": platform,
                 "assets": [],
                 "downloaded": True,
-                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.5-Windows-Setup.exe",
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.7-Windows-Setup.exe",
             }
 
         with patch("backend.main.updater.download_update", fake_download_update):
@@ -721,7 +802,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         popen.assert_called_once_with(
-            [r"C:\Temp\CC-Desktop-Switch-v1.0.5-Windows-Setup.exe"],
+            [r"C:\Temp\CC-Desktop-Switch-v1.0.7-Windows-Setup.exe"],
             close_fds=True,
         )
 
@@ -947,6 +1028,73 @@ class ProxyAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_messages_endpoint_returns_upstream_error_status(self):
+        cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.ai/anthropic",
+            "apiKey": "bad-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+
+        async def fake_forward_request(_body, _provider, _request_id):
+            return {
+                "error": {
+                    "type": "upstream_error",
+                    "status": 401,
+                    "message": "Invalid Authentication",
+                }
+            }
+
+        with patch("backend.proxy.forward_request", fake_forward_request):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 8,
+                },
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["status"], 401)
+
+    def test_streaming_upstream_error_uses_sse_error_event(self):
+        cfg.add_provider({
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.ai/anthropic",
+            "apiKey": "bad-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+
+        async def fake_forward_request_stream(_body, _provider, _request_id):
+            yield (
+                'event: error\n'
+                'data: {"type":"error","error":{"type":"upstream_error","status":401}}\n\n'
+            )
+
+        with patch("backend.proxy.forward_request_stream", fake_forward_request_stream):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 8,
+                    "stream": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: error", response.text)
+        self.assertIn('"status":401', response.text)
+
 
 class FakeTrayWindow:
     def __init__(self):
@@ -1165,6 +1313,7 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("formRequestOptions", app_js)
         self.assertIn("requestOptionPresets", app_js + api_js)
         self.assertIn("modelsMatch(option.models", app_js)
+        self.assertIn("capabilitiesMatch", app_js)
         self.assertIn("reorderProviders", api_js)
         self.assertIn("desktopHealth", app_js + api_js)
         self.assertIn("modelCapabilities", app_js + api_js)
@@ -1172,8 +1321,15 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("white-space: pre-line", css)
         self.assertIn('data-action="install-update"', html)
         self.assertIn('id="settingsInstallUpdate"', html)
+        self.assertIn('id="restartReminderModal"', html)
+        self.assertIn('id="restartReminderAck"', html)
         self.assertIn("installUpdate(updateUrl)", api_js)
+        self.assertIn("assets/providers/aliyun.ico", api_js)
+        self.assertTrue((self.root / "frontend" / "assets" / "providers" / "aliyun.ico").exists())
+        self.assertIn("restartReminderStorageKey", app_js)
+        self.assertIn("showRestartReminder", app_js)
         self.assertIn("toast.defaultUpdatedDesktop", app_js + i18n)
+        self.assertIn("restartReminder.dontShow", i18n)
         self.assertIn("confirm.installUpdate", app_js + i18n)
 
 
