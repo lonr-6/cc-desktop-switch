@@ -147,6 +147,10 @@ netstat -ano | findstr :18080
 
 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` は Claude Code の prompt cache 互換用です。Claude Desktop の 3P 設定ではなく、local gateway の代わりにはなりません。
 
+### GitHub Copilot サブスクリプション
+
+GitHub Copilot のサブスクリプションは、CC Desktop Switch の provider API として直接サポートされません。Copilot や別サービスを OpenAI Chat または Anthropic 互換 endpoint として中継するものを自分で用意する場合は、custom third-party provider として自己責任で試せます。利用規約、アカウントリスク、API format、Base URL、streaming、tool-call compatibility を事前に確認してください。
+
 ## Star History
 
 <a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">

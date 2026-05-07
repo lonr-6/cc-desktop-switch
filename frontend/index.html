@@ -295,6 +295,8 @@
         <article class="terminal-panel">
           <div class="terminal-toolbar">
             <button class="btn btn-outline-light btn-sm" type="button" data-action="clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
+            <button class="btn btn-outline-light btn-sm" type="button" data-action="run-diagnostics"><i class="bi bi-activity"></i><span data-i18n="diagnostics.run">运行诊断</span></button>
+            <button class="btn btn-outline-light btn-sm" type="button" data-action="export-diagnostics"><i class="bi bi-shield-lock"></i><span data-i18n="diagnostics.export">导出诊断包</span></button>
             <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="autoScroll" checked><span class="switch-ui"></span></label>
           </div>
           <div class="terminal-log" id="proxyLog"></div>
@@ -374,6 +376,18 @@
             </div>
           </div>
           <div class="settings-row settings-row-stack">
+            <strong data-i18n="diagnostics.title">诊断与支持</strong>
+            <div>
+              <div class="settings-actions">
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="run-diagnostics"><i class="bi bi-activity"></i><span data-i18n="diagnostics.run">运行诊断</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="export-diagnostics"><i class="bi bi-shield-lock"></i><span data-i18n="diagnostics.export">导出诊断包</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="copy-diagnostics"><i class="bi bi-clipboard"></i><span data-i18n="diagnostics.copy">复制诊断包</span></button>
+              </div>
+              <div class="compatibility-list" id="diagnosticsResult"></div>
+              <p class="settings-note" data-i18n="diagnostics.hint">诊断包会自动脱敏 API Key、gateway key、Authorization 和 token，可用于提交 issue。</p>
+            </div>
+          </div>
+          <div class="settings-row settings-row-stack">
             <strong data-i18n="settings.configBackup">配置备份</strong>
             <div>
               <div class="settings-actions">
@@ -401,7 +415,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.19</strong></div>
+          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.20</strong></div>
           <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>

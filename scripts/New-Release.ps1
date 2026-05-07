@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.19",
+    [string]$Version = "1.0.20",
     [string]$OutputDir = "release",
     [switch]$Build,
     [switch]$TryInstaller,
@@ -8,7 +8,8 @@ param(
     [string]$CodeSigningCertificatePassword,
     [string]$CodeSigningCertificateBase64,
     [string]$TimestampServer = "http://timestamp.digicert.com",
-    [string]$Repository = $env:GITHUB_REPOSITORY
+    [string]$Repository = $env:GITHUB_REPOSITORY,
+    [switch]$SkipManifest
 )
 
 $ErrorActionPreference = "Stop"
@@ -245,7 +246,7 @@ Invoke-OptionalCodeSigning -Files @($folderExe, $oneFileExe)
 if ($TryInstaller) {
     $makensis = Get-Makensis
     if ($makensis) {
-        & $makensis installer.nsi
+        & $makensis "/DPRODUCT_VERSION=$Version" installer.nsi
         if ($LASTEXITCODE -ne 0) {
             throw "NSIS failed with exit code $LASTEXITCODE"
         }
@@ -254,31 +255,38 @@ if ($TryInstaller) {
     }
 }
 
-$keyDir = Join-Path $root ".release-signing"
-$privateKey = Get-OrCreateSigningKey -KeyDir $keyDir -ReleaseDir $releaseDir
-$assets = [System.Collections.Generic.List[object]]::new()
+$windowsAssetPaths = [System.Collections.Generic.List[string]]::new()
 
 $portableZip = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-Portable.zip"
 if (Test-Path -LiteralPath $portableZip) { Remove-Item -LiteralPath $portableZip -Force }
 Compress-Archive -Path (Join-Path $folderDist "*") -DestinationPath $portableZip -Force
-Add-Asset -Assets $assets -Path $portableZip -PrivateKeyPath $privateKey
+$windowsAssetPaths.Add($portableZip) | Out-Null
 
 $releaseExe = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-x64.exe"
 Copy-Item -LiteralPath $oneFileExe -Destination $releaseExe -Force
+$windowsAssetPaths.Add($releaseExe) | Out-Null
 
 $releaseSetup = $null
 if (Test-Path -LiteralPath $setupExe) {
     $releaseSetup = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-Setup.exe"
     Copy-Item -LiteralPath $setupExe -Destination $releaseSetup -Force
+    $windowsAssetPaths.Add($releaseSetup) | Out-Null
 }
 
 if ($CodeSign -and $releaseSetup -and (Test-Path -LiteralPath $releaseSetup)) {
     Invoke-OptionalCodeSigning -Files @($releaseSetup)
 }
 
-Add-Asset -Assets $assets -Path $releaseExe -PrivateKeyPath $privateKey
-if ($releaseSetup -and (Test-Path -LiteralPath $releaseSetup)) {
-    Add-Asset -Assets $assets -Path $releaseSetup -PrivateKeyPath $privateKey
+if ($SkipManifest) {
+    Get-ChildItem -LiteralPath $releaseDir -File | Sort-Object Name | Select-Object Name, Length
+    return
+}
+
+$keyDir = Join-Path $root ".release-signing"
+$privateKey = Get-OrCreateSigningKey -KeyDir $keyDir -ReleaseDir $releaseDir
+$assets = [System.Collections.Generic.List[object]]::new()
+foreach ($assetPath in $windowsAssetPaths) {
+    Add-Asset -Assets $assets -Path $assetPath -PrivateKeyPath $privateKey
 }
 
 $platforms = [ordered]@{

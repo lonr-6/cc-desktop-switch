@@ -3,12 +3,15 @@
 import asyncio
 import json
 import os
+import platform as platform_module
+import re
+import secrets
 import socket
 import subprocess
 import sys
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import uvicorn
@@ -39,6 +42,25 @@ from backend.proxy import (
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _update_quit_handler: Optional[Callable[[], None]] = None
 _app_activation_handler: Optional[Callable[[], bool]] = None
+_admin_token = secrets.token_urlsafe(32)
+ADMIN_TOKEN_HEADER = "x-ccds-admin-token"
+STATIC_REQUEST_HEADER = "x-ccds-request"
+DIAGNOSTICS_FORMAT = "ccds.diagnostics.v1"
+REDACTED = "******"
+_SENSITIVE_FIELD_RE = re.compile(
+    r"(api[-_]?key|gatewayapikey|token|secret|password|authorization|cookie|headers)",
+    re.IGNORECASE,
+)
+
+
+def get_admin_token() -> str:
+    """返回当前进程的本机管理 API token。"""
+    return _admin_token
+
+
+def verify_admin_token(value: str) -> bool:
+    """校验本机管理 API token。"""
+    return bool(value) and secrets.compare_digest(str(value), _admin_token)
 
 
 def _popen_hidden(command: list[str], *, detached: bool = False):
@@ -129,6 +151,174 @@ def _public_provider(provider: Optional[dict]) -> Optional[dict]:
         public.pop("apiKey", None)
     public.pop("extraHeaders", None)
     return public
+
+
+def _redact_text(value: str, limit: int = 500) -> str:
+    """脱敏文本，供诊断包和支持信息使用。"""
+    text = str(value or "")
+    text = re.sub(r"(?i)(bearer\s+)[a-z0-9._~+/=-]{12,}", r"\1******", text)
+    text = re.sub(
+        r"(?i)(\b(?:authorization|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)\b\s*[:=]\s*[\"']?)[^\"'\s,&<>]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(
+        r"(?i)([?&][^=&#\s]*(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)[^=&#\s]*=)[^&#\s]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(\b[\w.-]*(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)[\w.-]*\s*=\s*)[^<>\s,&]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(r"(?i)\b(sk-[a-z0-9_-]{8,}|ccds_[a-z0-9_-]{8,})\b", REDACTED, text)
+    text = re.sub(r"(https?://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text)
+    return text[:limit]
+
+
+def _is_sensitive_field(key: str) -> bool:
+    return bool(_SENSITIVE_FIELD_RE.search(str(key or "")))
+
+
+def _redact_value(value, field_name: str = ""):
+    """递归脱敏诊断输出，避免配置 key 或日志文本泄露。"""
+    if _is_sensitive_field(field_name):
+        if isinstance(value, dict):
+            return {str(key): REDACTED if item else "" for key, item in value.items()}
+        if isinstance(value, list):
+            return [REDACTED if item else "" for item in value]
+        return REDACTED if value else ""
+    if isinstance(value, dict):
+        return {str(key): _redact_value(item, str(key)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item, field_name) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value, 2000)
+    return value
+
+
+def _safe_url_parts(url: str) -> dict:
+    """只保留不含凭据和查询参数的 URL 诊断信息。"""
+    try:
+        parsed = urlparse(str(url or ""))
+    except Exception:
+        return {"scheme": "", "host": "", "path": ""}
+    return {
+        "scheme": parsed.scheme,
+        "host": parsed.hostname or "",
+        "port": parsed.port,
+        "path": parsed.path or "",
+        "base": urlunparse((parsed.scheme, parsed.netloc.split("@")[-1], parsed.path, "", "", "")),
+    }
+
+
+def _diagnostics_provider(provider: dict) -> dict:
+    models = provider.get("models") if isinstance(provider.get("models"), dict) else {}
+    return {
+        "id": provider.get("id"),
+        "name": provider.get("name"),
+        "apiFormat": provider.get("apiFormat") or "anthropic",
+        "authScheme": provider.get("authScheme") or "bearer",
+        "hasApiKey": bool(provider.get("apiKey")),
+        "baseUrl": _safe_url_parts(provider.get("baseUrl", "")),
+        "mappedSlots": sorted([key for key, value in models.items() if value]),
+    }
+
+
+def _diagnostics_recent_logs(limit: int = 50) -> list[dict]:
+    logs = proxy_logs.get_all()[-limit:]
+    return [
+        {
+            "time": item.get("time"),
+            "level": item.get("level"),
+            "message": _redact_text(item.get("message", ""), 800),
+        }
+        for item in logs
+    ]
+
+
+def _diagnostics_payload() -> dict:
+    settings = cfg.get_settings()
+    providers = cfg.get_providers()
+    active = cfg.get_active_provider()
+    desktop_status = registry.get_config_status()
+    proxy_port = settings.get("proxyPort", 18080)
+    desktop_health = _desktop_health(desktop_status, proxy_port, active, providers, False)
+    return {
+        "format": DIAGNOSTICS_FORMAT,
+        "exportedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "app": {
+            "version": cfg.DEFAULT_CONFIG.get("version", "1.0.0"),
+            "platform": sys.platform,
+            "platformDetail": platform_module.platform(),
+            "adminPort": settings.get("adminPort", 18081),
+            "proxyPort": proxy_port,
+        },
+        "desktop": {
+            "configured": bool(desktop_status.get("configured")),
+            "health": _redact_value(desktop_health),
+            "keys": _redact_value(desktop_status.get("keys") or {}),
+        },
+        "providers": [_diagnostics_provider(provider) for provider in providers],
+        "activeProviderId": active.get("id") if active else None,
+        "settings": {
+            "autoStart": bool(settings.get("autoStart")),
+            "upstreamProxy": {
+                "enabled": bool(settings.get("upstreamProxyEnabled")),
+                "value": "******" if settings.get("upstreamProxy") else "",
+            },
+        },
+        "proxy": {
+            "running": bool(_proxy_running),
+            "port": _proxy_port or proxy_port,
+            "stats": proxy_stats.to_dict(),
+            "recentLogs": _diagnostics_recent_logs(),
+        },
+        "redactions": [
+            "apiKey",
+            "gatewayApiKey",
+            "authorization",
+            "x-api-key",
+            "url.userinfo",
+            "token-like-query",
+        ],
+    }
+
+
+def _diagnostics_checks(payload: dict) -> list[dict]:
+    checks = []
+    active_id = payload.get("activeProviderId")
+    providers = payload.get("providers") or []
+    active = next((provider for provider in providers if provider.get("id") == active_id), None)
+    checks.append({
+        "code": "active_provider",
+        "ok": bool(active),
+        "message": "已选择默认 provider" if active else "尚未选择默认 provider",
+    })
+    checks.append({
+        "code": "active_provider_api_key",
+        "ok": bool(active and active.get("hasApiKey")),
+        "message": "默认 provider 已保存 API Key" if active and active.get("hasApiKey") else "默认 provider 缺少 API Key",
+    })
+    checks.append({
+        "code": "desktop_config",
+        "ok": bool(payload.get("desktop", {}).get("configured")),
+        "message": "Claude Desktop 配置由本工具管理" if payload.get("desktop", {}).get("configured") else "Claude Desktop 尚未配置或不是由本工具管理",
+    })
+    health = payload.get("desktop", {}).get("health") or {}
+    checks.append({
+        "code": "desktop_health",
+        "ok": not bool(health.get("needsApply")),
+        "message": "桌面版配置与当前 provider 一致" if not health.get("needsApply") else "桌面版配置需要重新应用",
+        "issues": health.get("issues") or [],
+    })
+    checks.append({
+        "code": "local_gateway",
+        "ok": bool(payload.get("proxy", {}).get("running")),
+        "message": "本机 gateway 正在运行" if payload.get("proxy", {}).get("running") else "本机 gateway 未运行",
+    })
+    return checks
 
 
 def _provider_not_found():
@@ -550,31 +740,37 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.19")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.20")
 
     @app.middleware("http")
-    async def require_app_header_for_writes(request: Request, call_next):
-        """阻止普通网页表单跨站触发本地写操作。"""
-        sensitive_read = (
-            request.url.path == "/api/config/export"
-            or (
-                request.url.path.startswith("/api/providers/")
-                and request.url.path.endswith("/secret")
-            )
-        )
-        if (
-            request.url.path.startswith("/api/")
-            and (
-                request.method not in {"GET", "HEAD", "OPTIONS"}
-                or sensitive_read
-            )
-            and request.headers.get("x-ccds-request") != "1"
-        ):
-            return JSONResponse(
-                status_code=403,
-                content={"success": False, "message": "Invalid local request"},
-            )
+    async def require_local_admin_auth(request: Request, call_next):
+        """保护本机管理 API，避免普通网页读取或触发敏感操作。"""
+        path = request.url.path
+        if path == "/api/ready":
+            return await call_next(request)
+
+        if path == "/api/app/activate":
+            if request.headers.get(STATIC_REQUEST_HEADER) != "1":
+                return JSONResponse(
+                    status_code=403,
+                    content={"success": False, "message": "Invalid local request"},
+                )
+            return await call_next(request)
+
+        if path.startswith("/api/"):
+            token = request.headers.get(ADMIN_TOKEN_HEADER, "")
+            if not verify_admin_token(token):
+                return JSONResponse(
+                    status_code=403,
+                    content={"success": False, "message": "Invalid admin token"},
+                )
+
         return await call_next(request)
+
+    @app.get("/api/ready")
+    async def ready():
+        """公开最小探活端点，不返回本机配置。"""
+        return {"success": True, "ready": True}
 
     # ── 状态 API ──
     @app.get("/api/status")
@@ -854,6 +1050,45 @@ def create_admin_app() -> FastAPI:
             "success": True,
             "message": "配置已导入",
             "backup": result["backup"],
+        }
+
+    # ── 诊断 API ──
+    @app.get("/api/diagnostics/summary")
+    async def diagnostics_summary():
+        """返回可展示的脱敏诊断摘要。"""
+        payload = _diagnostics_payload()
+        return {
+            "success": True,
+            "format": payload["format"],
+            "summary": {
+                "format": payload["format"],
+                "app": payload["app"],
+                "desktop": payload["desktop"],
+                "activeProviderId": payload["activeProviderId"],
+                "proxy": {
+                    "running": payload["proxy"]["running"],
+                    "port": payload["proxy"]["port"],
+                    "stats": payload["proxy"]["stats"],
+                },
+            },
+        }
+
+    @app.post("/api/diagnostics/export")
+    async def diagnostics_export():
+        """导出可发给维护者的脱敏诊断包。"""
+        payload = _diagnostics_payload()
+        return {"success": True, "format": payload["format"], "diagnostics": payload}
+
+    @app.post("/api/diagnostics/check")
+    async def diagnostics_check():
+        """执行本机配置状态检查。"""
+        payload = _diagnostics_payload()
+        checks = _diagnostics_checks(payload)
+        return {
+            "success": True,
+            "format": payload["format"],
+            "ok": all(item.get("ok") for item in checks),
+            "checks": checks,
         }
 
     # ── CC-Switch 导入 API ──

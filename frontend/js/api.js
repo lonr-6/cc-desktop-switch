@@ -2,9 +2,36 @@
   'use strict';
 
   const BASE = '';
+  const ADMIN_TOKEN_KEY = 'ccdsAdminToken';
+
+  function readAdminToken() {
+    const hash = window.location.hash || '';
+    if (hash.startsWith('#')) {
+      const params = new URLSearchParams(hash.slice(1));
+      const token = params.get('token');
+      if (token) {
+        sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+        params.delete('token');
+        const nextHash = params.toString();
+        const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`;
+        window.history.replaceState(null, '', nextUrl || '/');
+        return token;
+      }
+    }
+    return sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  }
+
+  function requestHeaders() {
+    const headers = { 'X-CCDS-Request': '1' };
+    const token = readAdminToken();
+    if (token) {
+      headers['X-CCDS-Admin-Token'] = token;
+    }
+    return headers;
+  }
 
   async function api(method, path, body) {
-    const opts = { method, headers: { 'X-CCDS-Request': '1' } };
+    const opts = { method, headers: requestHeaders() };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
@@ -18,7 +45,7 @@
   }
 
   async function apiResult(method, path, body) {
-    const opts = { method, headers: { 'X-CCDS-Request': '1' } };
+    const opts = { method, headers: requestHeaders() };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
@@ -274,6 +301,18 @@
 
     async clearLogs() {
       return api('POST', '/api/proxy/logs/clear');
+    },
+
+    async getDiagnosticsSummary() {
+      return api('GET', '/api/diagnostics/summary');
+    },
+
+    async exportDiagnostics() {
+      return api('POST', '/api/diagnostics/export');
+    },
+
+    async checkDiagnostics() {
+      return api('POST', '/api/diagnostics/check');
     },
 
     async getSettings() {

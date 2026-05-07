@@ -1,0 +1,101 @@
+name: Provider request
+description: Request a new provider preset or compatibility improvement.
+title: "[Provider]: "
+labels: ["provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for new provider presets, relay endpoints, or compatibility gaps. Do not share real API keys.
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 23H2 / macOS 15.4 arm64
+    validations:
+      required: true
+  - type: input
+    id: claude_desktop_version
+    attributes:
+      label: Claude Desktop version
+      placeholder: 1.6259.1
+    validations:
+      required: true
+  - type: input
+    id: ccds_version
+    attributes:
+      label: CC Desktop Switch version
+      placeholder: v1.0.20
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: Provider or relay service name.
+      placeholder: Provider name
+    validations:
+      required: true
+  - type: dropdown
+    id: api_format
+    attributes:
+      label: API format
+      options:
+        - Anthropic-compatible
+        - OpenAI Chat
+        - OpenAI Responses
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: base_url
+    attributes:
+      label: Base URL
+      description: Keep the host/path visible and remove private tokens.
+      placeholder: https://api.example.com/v1/messages
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Provider documentation
+      description: Link official API docs, model docs, or compatibility notes.
+      placeholder: https://...
+    validations:
+      required: true
+  - type: textarea
+    id: models
+    attributes:
+      label: Models and mappings
+      description: List the upstream model IDs and the Claude slots you expect them to map to.
+      placeholder: |
+        Sonnet -> ...
+        Haiku -> ...
+        Opus -> ...
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Attach screenshots of the provider console, API docs, or CC Desktop Switch setup. Redact secrets.
+      placeholder: Drag screenshots here.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics_package
+    attributes:
+      label: Diagnostics package
+      description: Attach a diagnostics package or sanitized compatibility test output.
+      placeholder: Drag diagnostics here, or paste sanitized output.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Compatibility boundaries
+      options:
+        - label: I understand that user-provided relay or subscription-derived endpoints are used at my own risk.
+          required: true
+        - label: I removed API keys, tokens, and private account data from screenshots and diagnostics.
+          required: true

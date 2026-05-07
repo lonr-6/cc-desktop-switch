@@ -147,6 +147,10 @@ netstat -ano | findstr :18080
 
 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 只用于 Claude Code 的 prompt cache 兼容，不是 Claude Desktop 第三方推理配置项，也不能替代本机 gateway。
 
+### GitHub Copilot 订阅账号
+
+CC Desktop Switch 不直接支持把 GitHub Copilot 订阅账号当作 provider API 使用。如果你自己提供了 OpenAI Chat 或 Anthropic 兼容的 Copilot 中转端点，可以按自定义第三方 provider 尝试接入，但风险由用户自行承担。请先确认端点使用规则、账号风险、API 格式、Base URL、流式输出和工具调用是否真的兼容。
+
 ## Star History
 
 <a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">

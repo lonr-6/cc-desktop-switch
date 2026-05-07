@@ -1,0 +1,112 @@
+name: Bug report
+description: Report a reproducible CC Desktop Switch or Claude Desktop integration bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include real API keys, access tokens, or private provider account data.
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      description: "Example: Windows 11 23H2, macOS 15.4 arm64"
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+  - type: input
+    id: claude_desktop_version
+    attributes:
+      label: Claude Desktop version
+      description: Copy the exact version from Claude Desktop About/Settings.
+      placeholder: 1.6259.1
+    validations:
+      required: true
+  - type: input
+    id: ccds_version
+    attributes:
+      label: CC Desktop Switch version
+      description: Copy the exact release version or commit.
+      placeholder: v1.0.20
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: Built-in preset or custom provider name.
+      placeholder: DeepSeek / Kimi / Zhipu GLM / Alibaba Bailian / Custom
+    validations:
+      required: true
+  - type: dropdown
+    id: api_format
+    attributes:
+      label: API format
+      description: Choose the format configured in CC Desktop Switch.
+      options:
+        - Anthropic-compatible
+        - OpenAI Chat
+        - OpenAI Responses
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: base_url
+    attributes:
+      label: Base URL
+      description: Redact only private tokens. Keep the host/path visible.
+      placeholder: https://api.example.com/anthropic
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include exact error messages from Claude Desktop or the local gateway.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest steps that reproduce the problem.
+      placeholder: |
+        1. Add provider ...
+        2. Click Apply to Claude Desktop ...
+        3. Restart Claude Desktop ...
+        4. Send ...
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Attach screenshots of the provider settings, Claude Desktop error, and CC Desktop Switch status. Redact secrets.
+      placeholder: Drag screenshots here.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics_package
+    attributes:
+      label: Diagnostics package
+      description: Attach the diagnostics package or sanitized diagnostics/logs/config status. Remove API keys before uploading.
+      placeholder: Drag the diagnostics package here, or paste sanitized diagnostics text.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed API keys, tokens, and private account data from screenshots and diagnostics.
+          required: true
+        - label: I fully restarted Claude Desktop after applying the provider.
+          required: true

@@ -2,9 +2,11 @@
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request
@@ -302,6 +304,92 @@ def _is_max_unsupported_error(status_code: int, error_text: str) -> bool:
     return any(kw in text for kw in keywords)
 
 
+def _redact_sensitive_text(value: str, limit: int = 500) -> str:
+    """返回可用于日志和诊断包的脱敏文本摘要。"""
+    text = str(value or "")
+    text = re.sub(r"(?i)(bearer\s+)[a-z0-9._~+/=-]{12,}", r"\1******", text)
+    text = re.sub(
+        r"(?i)(\b(?:authorization|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)\b\s*[:=]\s*[\"']?)[^\"'\s,&<>]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(
+        r"(?i)([?&][^=&#\s]*(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)[^=&#\s]*=)[^&#\s]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(\b[\w.-]*(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|token|secret|password|key)[\w.-]*\s*=\s*)[^<>\s,&]+",
+        r"\1******",
+        text,
+    )
+    text = re.sub(r"(?i)\b(sk-[a-z0-9_-]{8,}|ccds_[a-z0-9_-]{8,})\b", "******", text)
+    text = re.sub(r"(https?://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text)
+    text = " ".join(text.split())
+    return text[:limit]
+
+
+def _content_type_header(response: httpx.Response) -> str:
+    return str(response.headers.get("content-type") or "").strip()
+
+
+def _content_type(response: httpx.Response) -> str:
+    return _content_type_header(response).split(";")[0].strip().lower()
+
+
+def _upstream_host(upstream_url: str) -> str:
+    try:
+        return urlsplit(upstream_url).netloc
+    except Exception:
+        return ""
+
+
+def _invalid_upstream_response_error(
+    response: httpx.Response,
+    upstream_url: str,
+    api_format: str,
+    body_preview: str,
+) -> dict:
+    return {
+        "error": {
+            "type": "invalid_upstream_response",
+            "status": response.status_code,
+            "contentType": _content_type_header(response) or "unknown",
+            "bodyPreview": body_preview,
+            "upstreamHost": _upstream_host(upstream_url),
+            "apiFormat": api_format,
+            "message": (
+                "上游 API 返回了非 JSON 响应。"
+                "这通常表示中转返回了 HTML/文本错误页、鉴权失败页、路径不匹配，"
+                "或该中转并不完全兼容当前选择的 API 格式。"
+            ),
+        }
+    }
+
+
+def _log_invalid_upstream_response(response: httpx.Response, preview: str):
+    log_buffer.add(
+        "ERROR",
+        (
+            "上游返回非 JSON："
+            f"HTTP {response.status_code}, content-type={_content_type_header(response) or 'unknown'}, "
+            f"preview={preview or '(empty)'}"
+        ),
+    )
+
+
+def _stream_content_type_compatible(response: httpx.Response) -> bool:
+    content_type = _content_type(response)
+    if not content_type:
+        return True
+    return (
+        content_type == "text/event-stream"
+        or content_type == "application/json"
+        or content_type.endswith("+json")
+        or content_type == "application/x-ndjson"
+    )
+
+
 def _normalize_usage(usage) -> dict:
     """保证 Anthropic usage 至少包含 input_tokens / output_tokens。"""
     def token_int(value) -> int:
@@ -420,8 +508,9 @@ async def forward_request(
         )
 
         if not resp.is_success:
-            error_text = resp.text[:500] or "上游 API 返回错误"
-            if _is_max_unsupported_error(resp.status_code, error_text):
+            raw_error_text = resp.text or "上游 API 返回错误"
+            error_text = _redact_sensitive_text(raw_error_text)
+            if _is_max_unsupported_error(resp.status_code, raw_error_text):
                 return {
                     "id": "msg_hint",
                     "type": "message",
@@ -444,13 +533,9 @@ async def forward_request(
         except json.JSONDecodeError:
             stats.failed += 1
             stats.success = max(0, stats.success - 1)
-            log_buffer.add("ERROR", "上游 API 返回了非 JSON 响应")
-            return {
-                "error": {
-                    "type": "invalid_upstream_response",
-                    "message": "上游 API 返回了非 JSON 响应",
-                }
-            }
+            preview = _redact_sensitive_text(resp.text)
+            _log_invalid_upstream_response(resp, preview)
+            return _invalid_upstream_response_error(resp, upstream_url, api_format, preview)
 
         if api_format == "openai_chat":
             # OpenAI → Anthropic 格式转换
@@ -520,8 +605,9 @@ async def forward_request_stream(
 
                 if not resp.is_success:
                     stats.record(False)
-                    error_text = (await resp.aread()).decode("utf-8", errors="replace")[:500]
-                    if _is_max_unsupported_error(resp.status_code, error_text):
+                    raw_error_text = (await resp.aread()).decode("utf-8", errors="replace")
+                    error_text = _redact_sensitive_text(raw_error_text)
+                    if _is_max_unsupported_error(resp.status_code, raw_error_text):
                         model = body.get("model", "")
                         hint = "该模型不支持 max，请取消勾选。"
                         yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"msg_hint","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
@@ -542,22 +628,64 @@ async def forward_request_stream(
                     yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
                     return
 
+                if not _stream_content_type_compatible(resp):
+                    stats.record(False)
+                    raw_text = (await resp.aread()).decode("utf-8", errors="replace")
+                    preview = _redact_sensitive_text(raw_text)
+                    _log_invalid_upstream_response(resp, preview)
+                    error_event = {
+                        "type": "error",
+                        "error": _invalid_upstream_response_error(
+                            resp,
+                            upstream_url,
+                            api_format,
+                            preview,
+                        )["error"],
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                    return
+
                 if api_format == "openai_chat":
                     prefix = "data: "
+                    emitted_event = False
+                    preview_lines = []
                     async for line in resp.aiter_lines():
                         if not line.strip():
                             continue
+                        data_str = ""
                         if line.startswith(prefix):
                             data_str = line[len(prefix):]
-                            if data_str.strip() == "[DONE]":
-                                yield "event: done\ndata: {}\n\n"
-                                continue
-                            try:
-                                openai_chunk = json.loads(data_str)
-                                anthropic_chunk = _openai_chunk_to_anthropic(openai_chunk, body.get("model", ""))
-                                yield f"data: {json.dumps(anthropic_chunk)}\n\n"
-                            except json.JSONDecodeError:
-                                continue
+                        else:
+                            data_str = line.strip()
+
+                        if data_str.strip() == "[DONE]":
+                            emitted_event = True
+                            yield "event: done\ndata: {}\n\n"
+                            continue
+                        try:
+                            openai_chunk = json.loads(data_str)
+                            anthropic_chunk = _openai_chunk_to_anthropic(openai_chunk, body.get("model", ""))
+                            emitted_event = True
+                            yield f"data: {json.dumps(anthropic_chunk)}\n\n"
+                        except json.JSONDecodeError:
+                            if len(preview_lines) < 8:
+                                preview_lines.append(line)
+                            continue
+                    if not emitted_event:
+                        stats.record(False)
+                        preview = _redact_sensitive_text("\n".join(preview_lines))
+                        _log_invalid_upstream_response(resp, preview)
+                        error_event = {
+                            "type": "error",
+                            "error": _invalid_upstream_response_error(
+                                resp,
+                                upstream_url,
+                                api_format,
+                                preview,
+                            )["error"],
+                        }
+                        yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                        return
                 else:
                     async for line in resp.aiter_lines():
                         if line.startswith("data:"):
@@ -637,7 +765,7 @@ def _get_http_proxy() -> Optional[str]:
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.19")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.20")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""

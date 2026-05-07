@@ -1548,6 +1548,30 @@
     `).join("");
   }
 
+  function renderDiagnosticsResult(result) {
+    const target = $("#diagnosticsResult");
+    if (!target) return;
+    const checks = result?.checks || [];
+    if (!checks.length) {
+      target.innerHTML = `<p class="compatibility-empty">${escapeHtml(t("diagnostics.notRun"))}</p>`;
+      return;
+    }
+    target.innerHTML = checks.map((check) => `
+      <article class="compatibility-item ${check.ok ? "stable" : "experimental"}">
+        <div>
+          <strong>${escapeHtml(check.code)}</strong>
+          <span>${escapeHtml(check.message || "")}</span>
+        </div>
+        <em>${escapeHtml(check.ok ? t("diagnostics.ok") : t("diagnostics.warn"))}</em>
+      </article>
+    `).join("");
+  }
+
+  function diagnosticsFilename() {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    return `cc-desktop-switch-diagnostics-${stamp}.json`;
+  }
+
   async function refreshCcSwitchImportStatus() {
     const target = $("#ccSwitchImportList");
     if (!target) return;
@@ -1933,6 +1957,34 @@
         } finally {
           actionEl.disabled = false;
         }
+      }
+
+      if (action === "run-diagnostics") {
+        actionEl.disabled = true;
+        try {
+          const result = await CCApi.checkDiagnostics();
+          renderDiagnosticsResult(result);
+          showToast(result.ok ? t("diagnostics.allGood") : t("diagnostics.hasWarnings"));
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
+      if (action === "export-diagnostics") {
+        actionEl.disabled = true;
+        try {
+          const result = await CCApi.exportDiagnostics();
+          downloadJson(diagnosticsFilename(), result.diagnostics || result);
+          showToast(t("diagnostics.exported"));
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
+      if (action === "copy-diagnostics") {
+        const result = await CCApi.exportDiagnostics();
+        await navigator.clipboard.writeText(JSON.stringify(result.diagnostics || result, null, 2));
+        showToast(t("diagnostics.copied"));
       }
 
       if (action === "detect-proxy") {

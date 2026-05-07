@@ -7,21 +7,82 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without v prefix, for example 1.0.2"
+        description: "Release version without v prefix, for example 1.0.20"
         required: true
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  windows:
-    name: Windows release
-    runs-on: windows-latest
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version || '' }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="$INPUT_VERSION"
+          if [[ -z "$version" ]]; then
+            version="${REF_NAME#v}"
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release tag for manual run
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags
+          target_sha="$(git rev-parse HEAD)"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$tag_sha" != "$target_sha" ]]; then
+              echo "Tag $tag points to $tag_sha, but this workflow is building $target_sha." >&2
+              echo "Run the workflow from the tagged commit or choose a new version." >&2
+              exit 1
+            fi
+          else
+            git tag "$tag"
+            git push origin "$tag"
+          fi
+
+  build_windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,25 +99,23 @@ jobs:
         shell: powershell
         run: choco install nsis -y --no-progress
 
-      - name: Build release assets
+      - name: Build Windows release assets
         shell: powershell
         env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
         run: |
-          $version = "${{ inputs.version }}"
-          if (-not $version) {
-            $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          }
-
           $args = @(
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
             "-File", "scripts\New-Release.ps1",
-            "-Version", $version,
+            "-Version", $env:RELEASE_VERSION,
+            "-OutputDir", "release-staging",
             "-Build",
             "-TryInstaller",
+            "-SkipManifest",
             "-Repository", $env:GITHUB_REPOSITORY
           )
 
@@ -69,65 +128,34 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Verify release signatures
-        shell: powershell
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\latest.json"
-          $setup = "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
-          if (Test-Path -LiteralPath $setup) {
-            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $setup
+          $required = @(
+            "release-staging\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe",
+            "release-staging\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Required Windows artifact missing: $path"
+            }
           }
 
-      - name: Ensure release tag for manual run
-        if: github.event_name == 'workflow_dispatch'
-        shell: powershell
-        run: |
-          $tag = "v$env:RELEASE_VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --tags
-          cmd /c "git rev-parse -q --verify refs/tags/$tag >NUL 2>NUL"
-          if ($LASTEXITCODE -ne 0) {
-            git tag $tag
-            git push origin $tag
-          }
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: release-staging/*
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Publish GitHub Release
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "v$env:RELEASE_VERSION"
-          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
-          $notes = "Windows release for CC Desktop Switch v$env:RELEASE_VERSION."
-          if (Test-Path -LiteralPath $notesPath) {
-            $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
-          }
-          $assets = Get-ChildItem -LiteralPath "release" -File | ForEach-Object { $_.FullName }
-          if (-not $assets) {
-            throw "No release assets found."
-          }
-
-          cmd /c "gh release view $tag --repo $env:GITHUB_REPOSITORY >NUL 2>NUL"
-          $releaseExists = $LASTEXITCODE -eq 0
-          if ($releaseExists) {
-            gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
-          } else {
-            gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" --notes $notes --verify-tag
-          }
-
-  macos:
-    name: macOS release
-    runs-on: macos-latest
-    needs: windows
+  build_macos:
+    name: Build macOS arm64
+    runs-on: macos-14
+    needs: prepare
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -136,21 +164,18 @@ jobs:
 
       - name: Build macOS assets
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          version="${{ inputs.version }}"
-          if [[ -z "$version" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          fi
           arch="$(uname -m)"
-          if [[ "$arch" == "x86_64" ]]; then
-            release_arch="x64"
-          else
-            release_arch="$arch"
+          if [[ "$arch" != "arm64" ]]; then
+            echo "Expected macOS arm64 runner, got: $arch" >&2
+            exit 1
           fi
 
-          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
-          echo "RELEASE_ARCH=$release_arch" >> "$GITHUB_ENV"
-          CCDS_VERSION="$version" ./macos/build-macos.sh
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCH=arm64" >> "$GITHUB_ENV"
+          CCDS_VERSION="$RELEASE_VERSION" ./macos/build-macos.sh
 
       - name: Smoke test macOS app bundle
         shell: bash
@@ -173,7 +198,7 @@ jobs:
 
           ok=0
           for _ in {1..60}; do
-            if curl -fsS "http://127.0.0.1:19081/api/status" >/dev/null; then
+            if curl -fsS "http://127.0.0.1:19081/api/ready" >/dev/null; then
               ok=1
               break
             fi
@@ -188,27 +213,135 @@ jobs:
       - name: Verify macOS packages
         shell: bash
         run: |
-          pkg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg"
-          dmg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg"
+          pkg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-arm64.pkg"
+          dmg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-arm64.dmg"
 
           test -f "$pkg"
           test -f "$dmg"
           pkgutil --expand "$pkg" "$RUNNER_TEMP/pkg-expanded"
           hdiutil verify "$dmg"
 
-          (cd dist/mac && shasum -a 256 "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg" > "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg.sha256")
-          (cd dist/mac && shasum -a 256 "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg" > "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg.sha256")
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: |
+            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-arm64.pkg
+            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-arm64.dmg
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Upload macOS assets
-        shell: bash
+  publish_release:
+    name: Publish release
+    runs-on: windows-latest
+    needs:
+      - prepare
+      - build_windows
+      - build_macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-staging
+          merge-multiple: true
+
+      - name: Generate manifest and signatures
+        shell: powershell
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
+          $args = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", "scripts\New-ReleaseManifest.ps1",
+            "-Version", $env:RELEASE_VERSION,
+            "-StagingDir", "release-staging",
+            "-Repository", $env:GITHUB_REPOSITORY,
+            "-RequiredPlatforms", "windows-x64", "macos-arm64"
+          )
+          if (Test-Path -LiteralPath $notesPath) {
+            $args += @("-NotesFile", $notesPath)
+          }
+
+          powershell @args
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Verify release signatures
+        shell: powershell
+        run: |
+          $publicKey = "release-staging\CC-Desktop-Switch-release-public.pem"
+          $files = Get-ChildItem -LiteralPath "release-staging" -File |
+            Where-Object {
+              $_.Name -ne "CC-Desktop-Switch-release-public.pem" -and
+              $_.Name -notlike "*.sha256" -and
+              $_.Name -notlike "*.sig"
+            }
+
+          foreach ($file in $files) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $file.FullName -PublicKey $publicKey
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+      - name: Publish GitHub Release
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          tag="v${RELEASE_VERSION}"
-          assets=(
-            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg"
-            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg.sha256"
-            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg"
-            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg.sha256"
-          )
-          gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          function Invoke-Gh {
+            gh @args
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh $($args -join ' ') failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          $tag = $env:RELEASE_TAG
+          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
+          $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          if (Test-Path -LiteralPath $notesPath) {
+            Copy-Item -LiteralPath $notesPath -Destination $notesFile -Force
+          } else {
+            Set-Content -LiteralPath $notesFile -Value "Release for CC Desktop Switch v$env:RELEASE_VERSION." -Encoding utf8
+          }
+
+          $isDraft = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft --jq ".isDraft" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($isDraft.Trim() -ne "true") {
+              throw "Release $tag already exists and is not a draft."
+            }
+            Invoke-Gh release edit $tag --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" --notes-file $notesFile --verify-tag
+          } else {
+            Invoke-Gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --title "CC Desktop Switch $tag" --notes-file $notesFile --verify-tag
+          }
+
+          $existingAssetsText = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq ".assets[].name" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $existingAssets = $existingAssetsText -split "\r?\n"
+            foreach ($asset in $existingAssets) {
+              if ($asset) {
+                Invoke-Gh release delete-asset $tag $asset --repo $env:GITHUB_REPOSITORY --yes
+              }
+            }
+          }
+
+          $assets = Get-ChildItem -LiteralPath "release-staging" -File | Sort-Object Name | ForEach-Object { $_.FullName }
+          if (-not $assets) {
+            throw "No release assets found."
+          }
+
+          Invoke-Gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
+          Invoke-Gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --latest --verify-tag

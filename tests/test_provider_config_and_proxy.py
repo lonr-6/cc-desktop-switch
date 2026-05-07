@@ -2,7 +2,9 @@ import copy
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,13 +17,17 @@ from backend.main import (
     _test_provider_connection,
     create_admin_app,
     desktop_config_target_for_provider,
+    get_admin_token,
     register_app_activation_handler,
 )
 from main import (
     DesktopTrayController,
     acquire_single_instance_lock,
+    admin_public_url,
+    admin_ui_url,
     release_single_instance_lock,
     request_existing_instance_activate,
+    run_browser_mode,
 )
 from backend import config as cfg
 from backend import ccswitch_import
@@ -38,9 +44,22 @@ from backend.proxy import (
     apply_anthropic_request_options,
     build_upstream_url,
     create_proxy_app,
+    forward_request,
+    forward_request_stream,
     gateway_models_response,
+    log_buffer,
     map_model,
 )
+
+
+def admin_headers(extra=None):
+    headers = {
+        "x-ccds-request": "1",
+        "x-ccds-admin-token": get_admin_token(),
+    }
+    if extra:
+        headers.update(extra)
+    return headers
 
 
 class ProviderConfigTests(unittest.TestCase):
@@ -1171,14 +1190,15 @@ class CcSwitchImportTests(unittest.TestCase):
             {"apiFormat": "anthropic"},
         )
         client = TestClient(create_admin_app())
+        headers = admin_headers()
 
         with patch("backend.main.ccswitch_import.CCSWITCH_DIR", self.ccswitch_dir):
-            status_response = client.get("/api/ccswitch/status")
-            preview_response = client.get("/api/ccswitch/providers")
+            status_response = client.get("/api/ccswitch/status", headers=headers)
+            preview_response = client.get("/api/ccswitch/providers", headers=headers)
             blocked_import = client.post("/api/ccswitch/import", json={"ids": ["zhipu"]})
             import_response = client.post(
                 "/api/ccswitch/import",
-                headers={"x-ccds-request": "1"},
+                headers=headers,
                 json={"ids": ["zhipu"]},
             )
 
@@ -1284,7 +1304,23 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(allowed.json(), {"success": True, "handled": True})
         self.assertEqual(calls, ["activated"])
 
-    def test_config_export_requires_local_header_and_keeps_provider_list_public(self):
+    def test_ready_is_public_and_status_requires_admin_token(self):
+        ready = self.client.get("/api/ready")
+        blocked = self.client.get("/api/status")
+        wrong_token = self.client.get(
+            "/api/status",
+            headers={"x-ccds-admin-token": "wrong-token"},
+        )
+        allowed = self.client.get("/api/status", headers=admin_headers())
+
+        self.assertEqual(ready.status_code, 200)
+        self.assertEqual(ready.json(), {"success": True, "ready": True})
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(wrong_token.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertIn("providerCount", allowed.json())
+
+    def test_config_export_requires_admin_token_and_returns_masked_provider_list(self):
         cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -1295,10 +1331,12 @@ class AdminApiTests(unittest.TestCase):
         })
 
         blocked = self.client.get("/api/config/export")
-        allowed = self.client.get("/api/config/export", headers={"x-ccds-request": "1"})
-        providers = self.client.get("/api/providers")
+        static_only = self.client.get("/api/config/export", headers={"x-ccds-request": "1"})
+        allowed = self.client.get("/api/config/export", headers=admin_headers())
+        providers = self.client.get("/api/providers", headers=admin_headers())
 
         self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(static_only.status_code, 403)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["config"]["providers"][0]["apiKey"], "secret-key")
         public_provider = providers.json()["providers"][0]
@@ -1306,7 +1344,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertNotIn("extraHeaders", public_provider)
         self.assertTrue(public_provider["hasApiKey"])
 
-    def test_provider_secret_requires_local_header(self):
+    def test_provider_secret_requires_admin_token(self):
         provider = cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -1318,12 +1356,71 @@ class AdminApiTests(unittest.TestCase):
         blocked = self.client.get(f"/api/providers/{provider['id']}/secret")
         allowed = self.client.get(
             f"/api/providers/{provider['id']}/secret",
-            headers={"x-ccds-request": "1"},
+            headers=admin_headers(),
         )
 
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["apiKey"], "secret-key")
+
+    def test_diagnostics_export_requires_token_and_redacts_secrets(self):
+        provider = cfg.add_provider({
+            "name": "Private Gateway",
+            "baseUrl": (
+                "https://user:pass@new.aibado.cn/v1/chat/completions?"
+                "token=url-secret-token&access_token=access-secret-token&"
+                "refresh_token=refresh-secret-token&client_secret=client-secret-token"
+            ),
+            "apiKey": "sk-live-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+            "models": {"sonnet": "provider-model", "default": "provider-model"},
+            "extraHeaders": {
+                "Authorization": "Bearer sk-header-secret123456",
+                "x-api-key": "sk-extra-secret123456",
+            },
+        })
+        config = cfg.load_config()
+        config["activeProvider"] = provider["id"]
+        config["gatewayApiKey"] = "ccds_gateway_secret123456"
+        cfg.save_config(config)
+        log_buffer.clear()
+        log_buffer.add(
+            "ERROR",
+            (
+                "Authorization: Bearer sk-log-secret123456 "
+                "url=https://example.test?token=query-secret-token&"
+                "access_token=log-access-secret&refresh_token=log-refresh-secret&client_secret=log-client-secret"
+            ),
+        )
+
+        blocked = self.client.post("/api/diagnostics/export")
+        allowed = self.client.post("/api/diagnostics/export", headers=admin_headers())
+        check = self.client.post("/api/diagnostics/check", headers=admin_headers())
+
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        payload = allowed.json()["diagnostics"]
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        self.assertEqual(payload["format"], "ccds.diagnostics.v1")
+        self.assertEqual(payload["providers"][0]["baseUrl"]["host"], "new.aibado.cn")
+        self.assertNotIn("sk-live-secret123456", serialized)
+        self.assertNotIn("sk-header-secret123456", serialized)
+        self.assertNotIn("sk-extra-secret123456", serialized)
+        self.assertNotIn("ccds_gateway_secret123456", serialized)
+        self.assertNotIn("user:pass", serialized)
+        self.assertNotIn("url-secret-token", serialized)
+        self.assertNotIn("access-secret-token", serialized)
+        self.assertNotIn("refresh-secret-token", serialized)
+        self.assertNotIn("client-secret-token", serialized)
+        self.assertNotIn("query-secret-token", serialized)
+        self.assertNotIn("log-access-secret", serialized)
+        self.assertNotIn("log-refresh-secret", serialized)
+        self.assertNotIn("log-client-secret", serialized)
+        self.assertIn("******", serialized)
+        self.assertEqual(check.status_code, 200)
+        self.assertIn("checks", check.json())
 
     def test_autofill_models_route_updates_provider_mapping(self):
         provider = cfg.add_provider({
@@ -1349,7 +1446,7 @@ class AdminApiTests(unittest.TestCase):
         with patch("backend.main.provider_tools.fetch_provider_models", fake_fetch):
             response = self.client.post(
                 f"/api/providers/{provider['id']}/models/autofill",
-                headers={"x-ccds-request": "1"},
+                headers=admin_headers(),
             )
 
         self.assertEqual(response.status_code, 200)
@@ -1373,7 +1470,7 @@ class AdminApiTests(unittest.TestCase):
         with patch("backend.main.provider_tools.fetch_provider_models", fake_fetch):
             response = self.client.post(
                 "/api/providers/models/available",
-                headers={"x-ccds-request": "1"},
+                headers=admin_headers(),
                 json={
                     "name": "Example",
                     "baseUrl": "https://api.example.com/v1",
@@ -1488,7 +1585,7 @@ class AdminApiTests(unittest.TestCase):
         with patch("backend.main.provider_tools.query_provider_usage", fake_usage):
             response = self.client.post(
                 f"/api/providers/{provider['id']}/usage",
-                headers={"x-ccds-request": "1"},
+                headers=admin_headers(),
             )
 
         self.assertEqual(response.status_code, 200)
@@ -1510,7 +1607,7 @@ class AdminApiTests(unittest.TestCase):
 
         response = self.client.put(
             "/api/providers/reorder",
-            headers={"x-ccds-request": "1"},
+            headers=admin_headers(),
             json={"providerIds": [second["id"], first["id"]]},
         )
 
@@ -1539,7 +1636,7 @@ class AdminApiTests(unittest.TestCase):
 
         with patch("backend.main.updater.current_platform", return_value="windows-x64"):
             with patch("backend.main.updater.check_update", fake_check_update):
-                response = self.client.get("/api/update/check")
+                response = self.client.get("/api/update/check", headers=admin_headers())
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["url"], cfg.DEFAULT_UPDATE_URL)
@@ -1561,7 +1658,7 @@ class AdminApiTests(unittest.TestCase):
 
         with patch("backend.main.updater.current_platform", return_value="macos-arm64"):
             with patch("backend.main.updater.check_update", fake_check_update):
-                response = self.client.get("/api/update/check")
+                response = self.client.get("/api/update/check", headers=admin_headers())
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["platform"], "macos-arm64")
@@ -1581,7 +1678,7 @@ class AdminApiTests(unittest.TestCase):
             }
 
         with patch("backend.main.updater.check_update", fake_check_update):
-            response = self.client.get("/api/update/check?platform=macos-arm64")
+            response = self.client.get("/api/update/check?platform=macos-arm64", headers=admin_headers())
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["platform"], "macos-arm64")
@@ -1606,7 +1703,7 @@ class AdminApiTests(unittest.TestCase):
             with patch("backend.main._start_proxy_server", return_value=True) as start_proxy:
                 response = self.client.put(
                     f"/api/providers/{second['id']}/default",
-                    headers={"x-ccds-request": "1"},
+                    headers=admin_headers(),
                 )
 
         self.assertEqual(response.status_code, 200)
@@ -1647,7 +1744,7 @@ class AdminApiTests(unittest.TestCase):
             with patch("backend.main._start_proxy_server", return_value=True):
                 response = self.client.put(
                     f"/api/providers/{second['id']}/default",
-                    headers={"x-ccds-request": "1"},
+                    headers=admin_headers(),
                 )
 
         self.assertEqual(response.status_code, 200)
@@ -1669,7 +1766,7 @@ class AdminApiTests(unittest.TestCase):
             with patch("backend.main._start_proxy_server", return_value=False) as start_proxy:
                 response = self.client.post(
                     "/api/desktop/configure",
-                    headers={"x-ccds-request": "1"},
+                    headers=admin_headers(),
                 )
 
         self.assertEqual(response.status_code, 200)
@@ -1695,7 +1792,7 @@ class AdminApiTests(unittest.TestCase):
         with patch("backend.main.registry.apply_config") as apply_config:
             response = self.client.post(
                 "/api/desktop/configure",
-                headers={"x-ccds-request": "1"},
+                headers=admin_headers(),
             )
 
         self.assertEqual(response.status_code, 200)
@@ -1721,7 +1818,7 @@ class AdminApiTests(unittest.TestCase):
             "apiFormat": "openai_chat",
         })
 
-        response = self.client.get("/api/providers/compatibility", headers={"x-ccds-request": "1"})
+        response = self.client.get("/api/providers/compatibility", headers=admin_headers())
 
         self.assertEqual(response.status_code, 200)
         by_name = {item["name"]: item for item in response.json()["providers"]}
@@ -1747,7 +1844,7 @@ class AdminApiTests(unittest.TestCase):
                 with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
-                        headers={"x-ccds-request": "1"},
+                        headers=admin_headers(),
                         json={},
                     )
 
@@ -1773,7 +1870,7 @@ class AdminApiTests(unittest.TestCase):
                 with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
-                        headers={"x-ccds-request": "1"},
+                        headers=admin_headers(),
                         json={},
                     )
 
@@ -1799,7 +1896,7 @@ class AdminApiTests(unittest.TestCase):
                 with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
-                        headers={"x-ccds-request": "1"},
+                        headers=admin_headers(),
                         json={},
                     )
 
@@ -1830,7 +1927,7 @@ class AdminApiTests(unittest.TestCase):
                             with patch("backend.main._popen_hidden") as popen:
                                 response = self.client.post(
                                     "/api/update/install",
-                                    headers={"x-ccds-request": "1"},
+                                    headers=admin_headers(),
                                     json={},
                                 )
 
@@ -1846,6 +1943,117 @@ class AdminApiTests(unittest.TestCase):
             ),
             detached=True,
         )
+
+
+class ReleaseManifestTests(unittest.TestCase):
+    VERSION = "1.0.20"
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(__file__).resolve().parents[1]
+        self.staging = Path(self.temp_dir.name) / "staging"
+        self.key_dir = Path(self.temp_dir.name) / "keys"
+        self.staging.mkdir()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _powershell(self):
+        executable = shutil.which("powershell") or shutil.which("pwsh")
+        if not executable:
+            self.skipTest("PowerShell is not available")
+        return executable
+
+    def _touch_asset(self, name):
+        path = self.staging / name
+        path.write_bytes(f"asset:{name}".encode("utf-8"))
+        return path
+
+    def _write_windows_assets(self):
+        for name in (
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-x64.exe",
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-Portable.zip",
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-Setup.exe",
+        ):
+            self._touch_asset(name)
+
+    def _write_macos_assets(self):
+        for name in (
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.pkg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.dmg",
+        ):
+            self._touch_asset(name)
+
+    def _run_manifest(self):
+        script = self.root / "scripts" / "New-ReleaseManifest.ps1"
+        return subprocess.run(
+            [
+                self._powershell(),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-Version",
+                self.VERSION,
+                "-StagingDir",
+                str(self.staging),
+                "-Repository",
+                "lonr-6/cc-desktop-switch",
+                "-KeyDir",
+                str(self.key_dir),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    def test_release_manifest_fails_when_macos_asset_is_missing(self):
+        self._write_windows_assets()
+
+        result = self._run_manifest()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"Required release asset missing: CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.pkg",
+            result.stdout + result.stderr,
+        )
+
+    def test_release_manifest_generates_signed_platform_complete_latest_json(self):
+        self._write_windows_assets()
+        self._write_macos_assets()
+
+        result = self._run_manifest()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        latest = json.loads((self.staging / "latest.json").read_text(encoding="utf-8"))
+        self.assertEqual(latest["version"], self.VERSION)
+        self.assertIn("windows-x64", latest["platforms"])
+        self.assertIn("macos-arm64", latest["platforms"])
+        self.assertTrue((self.staging / "latest.json.sha256").exists())
+        self.assertTrue((self.staging / "latest.json.sig").exists())
+        self.assertTrue((self.staging / "CC-Desktop-Switch-release-public.pem").exists())
+        for asset in (
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-x64.exe",
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-Portable.zip",
+            f"CC-Desktop-Switch-v{self.VERSION}-Windows-Setup.exe",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.pkg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.dmg",
+        ):
+            self.assertTrue((self.staging / f"{asset}.sha256").exists(), asset)
+            self.assertTrue((self.staging / f"{asset}.sig").exists(), asset)
+
+    def test_release_workflow_pins_builds_to_tag_and_clears_draft_assets(self):
+        workflow = (self.root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        new_release = (self.root / "scripts" / "New-Release.ps1").read_text(encoding="utf-8")
+        installer = (self.root / "installer.nsi").read_text(encoding="utf-8")
+
+        self.assertIn('tag_sha="$(git rev-list -n 1 "$tag")"', workflow)
+        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.tag }}"), 3)
+        self.assertIn("release delete-asset", workflow)
+        self.assertIn('"/DPRODUCT_VERSION=$Version"', new_release)
+        self.assertIn("!ifndef PRODUCT_VERSION", installer)
 
 
 class SingleInstanceStartupTests(unittest.TestCase):
@@ -1934,6 +2142,22 @@ class SingleInstanceStartupTests(unittest.TestCase):
             result = request_existing_instance_activate(18081, timeout=0)
 
         self.assertFalse(result)
+
+    def test_browser_mode_does_not_print_admin_token(self):
+        messages = []
+
+        def fake_safe_print(message):
+            messages.append(str(message))
+
+        with patch("main.safe_print", fake_safe_print):
+            with patch("main.uvicorn.run") as uvicorn_run:
+                run_browser_mode(create_admin_app(), 18081, open_ui=False)
+
+        printed = "\n".join(messages)
+        uvicorn_run.assert_called_once()
+        self.assertIn(admin_public_url(18081), printed)
+        self.assertNotIn(admin_ui_url(18081), printed)
+        self.assertNotIn(get_admin_token(), printed)
 
 
 class ProxyConversionTests(unittest.TestCase):
@@ -2177,6 +2401,304 @@ class ProxyConversionTests(unittest.TestCase):
 
         self.assertEqual(event["message"]["usage"]["input_tokens"], 0)
         self.assertEqual(event["message"]["usage"]["output_tokens"], 0)
+
+    def test_openai_non_json_success_response_returns_structured_diagnostic_error(self):
+        class FakeElapsed:
+            def total_seconds(self):
+                return 0.01
+
+        class FakeResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "text/html; charset=utf-8"}
+            text = (
+                "<html>login required token=secret-token "
+                "access_token=access-secret-token refresh_token=refresh-secret-token "
+                "client_secret=client-secret-token Authorization: Bearer sk-live-secret123456</html>"
+            )
+            elapsed = FakeElapsed()
+
+            def json(self):
+                raise json.JSONDecodeError("Expecting value", self.text, 0)
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        provider = {
+            "name": "Private Relay",
+            "baseUrl": "https://new.aibado.cn/v1/chat/completions",
+            "apiKey": "sk-provider-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            result = asyncio.run(forward_request(body, provider, "req-test"))
+
+        error = result["error"]
+        serialized = json.dumps(error, ensure_ascii=False)
+        self.assertEqual(error["type"], "invalid_upstream_response")
+        self.assertEqual(error["status"], 200)
+        self.assertEqual(error["contentType"], "text/html; charset=utf-8")
+        self.assertEqual(error["upstreamHost"], "new.aibado.cn")
+        self.assertEqual(error["apiFormat"], "openai_chat")
+        self.assertIn("bodyPreview", error)
+        self.assertNotIn("sk-live-secret123456", serialized)
+        self.assertNotIn("secret-token", serialized)
+        self.assertNotIn("access-secret-token", serialized)
+        self.assertNotIn("refresh-secret-token", serialized)
+        self.assertNotIn("client-secret-token", serialized)
+        self.assertIn("******", serialized)
+
+    def test_openai_non_success_error_response_is_redacted(self):
+        class FakeElapsed:
+            def total_seconds(self):
+                return 0.01
+
+        class FakeResponse:
+            status_code = 401
+            is_success = False
+            headers = {"content-type": "text/html"}
+            text = (
+                "<html>bad auth access_token=access-secret-token&refresh_token=refresh-secret-token "
+                "client_secret=client-secret-token Authorization: Bearer sk-error-secret123456</html>"
+            )
+            elapsed = FakeElapsed()
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        provider = {
+            "name": "Private Relay",
+            "baseUrl": "https://new.aibado.cn/v1/chat/completions",
+            "apiKey": "sk-provider-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            result = asyncio.run(forward_request(body, provider, "req-401"))
+
+        error = result["error"]
+        serialized = json.dumps(error, ensure_ascii=False)
+        self.assertEqual(error["type"], "upstream_error")
+        self.assertEqual(error["status"], 401)
+        self.assertNotIn("sk-error-secret123456", serialized)
+        self.assertNotIn("access-secret-token", serialized)
+        self.assertNotIn("refresh-secret-token", serialized)
+        self.assertNotIn("client-secret-token", serialized)
+        self.assertIn("******", serialized)
+
+    def test_openai_streaming_non_sse_success_response_returns_sse_error_event(self):
+        class FakeStreamResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "text/html"}
+
+            async def aread(self):
+                return b"<html>bad relay token=stream-secret-token Authorization: Bearer sk-stream-secret123456</html>"
+
+            async def aiter_lines(self):
+                yield "should not be used"
+
+        class FakeStreamContext:
+            async def __aenter__(self):
+                return FakeStreamResponse()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return FakeStreamContext()
+
+        provider = {
+            "name": "Private Relay",
+            "baseUrl": "https://new.aibado.cn/v1/chat/completions",
+            "apiKey": "sk-provider-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+            "stream": True,
+        }
+
+        async def collect():
+            chunks = []
+            async for chunk in forward_request_stream(body, provider, "req-stream"):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            text = asyncio.run(collect())
+
+        self.assertIn("event: error", text)
+        self.assertIn("invalid_upstream_response", text)
+        self.assertIn("text/html", text)
+        self.assertNotIn("sk-stream-secret123456", text)
+        self.assertNotIn("stream-secret-token", text)
+
+    def test_openai_streaming_text_plain_success_response_returns_sse_error_event(self):
+        class FakeStreamResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "text/plain; charset=utf-8"}
+
+            async def aread(self):
+                return b"login required access_token=stream-access-secret client_secret=stream-client-secret"
+
+            async def aiter_lines(self):
+                yield "login required access_token=stream-access-secret"
+
+        class FakeStreamContext:
+            async def __aenter__(self):
+                return FakeStreamResponse()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return FakeStreamContext()
+
+        provider = {
+            "name": "Private Relay",
+            "baseUrl": "https://new.aibado.cn/v1/chat/completions",
+            "apiKey": "sk-provider-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+            "stream": True,
+        }
+
+        async def collect():
+            chunks = []
+            async for chunk in forward_request_stream(body, provider, "req-text"):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            text = asyncio.run(collect())
+
+        self.assertIn("event: error", text)
+        self.assertIn("invalid_upstream_response", text)
+        self.assertIn("text/plain; charset=utf-8", text)
+        self.assertNotIn("stream-access-secret", text)
+        self.assertNotIn("stream-client-secret", text)
+
+    def test_openai_streaming_ndjson_without_valid_chunks_returns_error_event(self):
+        class FakeStreamResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "application/x-ndjson"}
+
+            async def aread(self):
+                return b""
+
+            async def aiter_lines(self):
+                yield "plain relay failure access_token=ndjson-secret"
+
+        class FakeStreamContext:
+            async def __aenter__(self):
+                return FakeStreamResponse()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return FakeStreamContext()
+
+        provider = {
+            "name": "Private Relay",
+            "baseUrl": "https://new.aibado.cn/v1/chat/completions",
+            "apiKey": "sk-provider-secret123456",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+            "stream": True,
+        }
+
+        async def collect():
+            chunks = []
+            async for chunk in forward_request_stream(body, provider, "req-ndjson"):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            text = asyncio.run(collect())
+
+        self.assertIn("event: error", text)
+        self.assertIn("invalid_upstream_response", text)
+        self.assertNotIn("ndjson-secret", text)
 
 
 class ProxyAppTests(unittest.TestCase):
@@ -2757,6 +3279,38 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('data-action="toggle-model-menu-mode"', html)
         self.assertIn("renderModelMenuModeState", app_js)
         self.assertIn("providers.showAllModels", i18n)
+
+    def test_diagnostics_ui_and_api_hooks_exist(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-action="run-diagnostics"', html)
+        self.assertIn('data-action="export-diagnostics"', html)
+        self.assertIn('data-action="copy-diagnostics"', html)
+        self.assertIn("exportDiagnostics", api_js)
+        self.assertIn("checkDiagnostics", api_js)
+        self.assertIn("renderDiagnosticsResult", app_js)
+
+    def test_current_guides_do_not_use_old_desktop_gateway_wording(self):
+        forbidden = [
+            "默认直连",
+            "关闭本工具也能继续使用",
+            "实验转发模式",
+            "Claude 桌面版 -> 你的 API 提供商",
+        ]
+        guide_paths = [
+            self.root / "README.md",
+            self.root / "README.zh-CN.md",
+            self.root / "README.ja.md",
+            self.root / "docs" / "QUICK_START.md",
+            self.root / "docs" / "USAGE.md",
+        ]
+
+        for path in guide_paths:
+            text = path.read_text(encoding="utf-8")
+            for phrase in forbidden:
+                self.assertNotIn(phrase, text, str(path))
 
     def test_third_party_compatibility_ui_is_folded_and_marked_experimental(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")

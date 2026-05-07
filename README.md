@@ -147,6 +147,10 @@ netstat -ano | findstr :18080
 
 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` is only a Claude Code prompt-cache compatibility option. It is not a Claude Desktop 3P setting and does not replace the local gateway.
 
+### GitHub Copilot subscription
+
+GitHub Copilot subscriptions are not directly supported as a provider API in CC Desktop Switch. If you bring your own OpenAI Chat or Anthropic-compatible endpoint that proxies Copilot or another service, you can try it as a custom third-party provider at your own risk. Verify the endpoint's terms, account risk, API format, base URL, streaming behavior, and tool-call compatibility before relying on it.
+
 ## Star History
 
 <a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">

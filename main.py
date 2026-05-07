@@ -18,6 +18,7 @@ import uvicorn
 from backend.main import (
     create_admin_app,
     desktop_config_target_for_provider,
+    get_admin_token,
     register_app_activation_handler,
     register_update_quit_handler,
     _start_proxy_server,
@@ -28,7 +29,7 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.19"
+APP_VERSION = "1.0.20"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
@@ -178,7 +179,8 @@ def parse_args():
 def wait_for_admin(url: str, timeout: float = 12.0) -> bool:
     """等待管理后台可访问，避免窗口先打开后白屏。"""
     deadline = time.time() + timeout
-    status_url = f"{url}/api/status"
+    base_url = url.split("#", 1)[0].rstrip("/")
+    status_url = f"{base_url}/api/ready"
 
     while time.time() < deadline:
         try:
@@ -189,6 +191,16 @@ def wait_for_admin(url: str, timeout: float = 12.0) -> bool:
             time.sleep(0.2)
 
     return False
+
+
+def admin_ui_url(admin_port: int) -> str:
+    """生成带本机管理 token 的前端入口 URL。"""
+    return f"http://127.0.0.1:{admin_port}/#token={get_admin_token()}"
+
+
+def admin_public_url(admin_port: int) -> str:
+    """生成不含 token 的管理后台展示 URL。"""
+    return f"http://127.0.0.1:{admin_port}"
 
 
 def build_admin_server(admin_app, port: int) -> uvicorn.Server:
@@ -568,7 +580,8 @@ def open_desktop_window(url: str) -> bool:
 
 
 def run_browser_mode(admin_app, admin_port: int, open_ui: bool = True):
-    url = f"http://127.0.0.1:{admin_port}"
+    url = admin_ui_url(admin_port)
+    public_url = admin_public_url(admin_port)
     if open_ui:
         threading.Thread(target=open_browser_when_ready, args=(url,), daemon=True).start()
 
@@ -576,7 +589,7 @@ def run_browser_mode(admin_app, admin_port: int, open_ui: bool = True):
 ╔══════════════════════════════════════════╗
 ║       {APP_NAME} v{APP_VERSION}          ║
 ║                                          ║
-║  管理后台: {url}     ║
+║  管理后台: {public_url}     ║
 ║                                          ║
 ║  按 Ctrl+C 停止                          ║
 ╚══════════════════════════════════════════╝
@@ -593,12 +606,13 @@ def run_browser_mode(admin_app, admin_port: int, open_ui: bool = True):
 
 
 def run_desktop_mode(admin_app, admin_port: int):
-    url = f"http://127.0.0.1:{admin_port}"
+    base_url = f"http://127.0.0.1:{admin_port}"
+    url = admin_ui_url(admin_port)
     server, server_thread = start_admin_server(admin_app, admin_port)
 
     try:
-        if not wait_for_admin(url):
-            safe_print(f"admin server is not ready, fallback to browser: {url}")
+        if not wait_for_admin(base_url):
+            safe_print(f"admin server is not ready, fallback to browser: {base_url}")
             webbrowser.open(url)
             while server_thread.is_alive() and not server.should_exit:
                 time.sleep(0.5)

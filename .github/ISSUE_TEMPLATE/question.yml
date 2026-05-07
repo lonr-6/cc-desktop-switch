@@ -1,0 +1,87 @@
+name: Question
+description: Ask a usage, setup, or compatibility question.
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask setup and compatibility questions here. Please include enough environment details so the answer can be specific.
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 23H2 / macOS 15.4 arm64
+    validations:
+      required: true
+  - type: input
+    id: claude_desktop_version
+    attributes:
+      label: Claude Desktop version
+      placeholder: 1.6259.1
+    validations:
+      required: true
+  - type: input
+    id: ccds_version
+    attributes:
+      label: CC Desktop Switch version
+      placeholder: v1.0.20
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: DeepSeek / Kimi / Custom / Not configured yet
+    validations:
+      required: true
+  - type: dropdown
+    id: api_format
+    attributes:
+      label: API format
+      options:
+        - Anthropic-compatible
+        - OpenAI Chat
+        - OpenAI Responses
+        - Unknown
+        - Not configured yet
+    validations:
+      required: true
+  - type: input
+    id: base_url
+    attributes:
+      label: Base URL
+      description: If configured, keep the host/path visible and remove private tokens.
+      placeholder: https://api.example.com/anthropic
+    validations:
+      required: false
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and where are you stuck?
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Attach screenshots that show the current setup or error. Redact secrets.
+      placeholder: Drag screenshots here.
+    validations:
+      required: false
+  - type: textarea
+    id: diagnostics_package
+    attributes:
+      label: Diagnostics package
+      description: Attach a diagnostics package or sanitized status/log output if the question involves a configured provider.
+      placeholder: Drag diagnostics here, or paste sanitized status/log output.
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed API keys, tokens, and private account data from screenshots and diagnostics.
+          required: true
