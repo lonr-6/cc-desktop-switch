@@ -156,5 +156,7 @@ echo "arch=$arch"
 echo "configLibraryExists=$config_library_exists"
 
 if [[ "$mode" == "run" && "$exit_code" != "0" ]]; then
+  echo "cargo test log tail:" >&2
+  tail -n 120 "$log_path" >&2 || true
   exit "$exit_code"
 fi

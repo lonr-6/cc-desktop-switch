@@ -195,17 +195,32 @@ jobs:
           ARCH: ${{ matrix.arch }}
           REAL_SMOKE_HOME: ${{ runner.temp }}/ccds-real-smoke-home
         run: |
+          original_home="$HOME"
           mkdir -p "$REAL_SMOKE_HOME"
           export HOME="$REAL_SMOKE_HOME"
+          export CARGO_HOME="${CARGO_HOME:-$original_home/.cargo}"
+          export RUSTUP_HOME="${RUSTUP_HOME:-$original_home/.rustup}"
 
+          set +e
           bash scripts/macos/run-real-desktop-smoke.sh --mode run --allow-real-desktop-write
+          real_smoke_exit="$?"
+          set -e
 
           real_smoke_staging="dist/platform-smoke/macos-${ARCH}/real-desktop-smoke"
           mkdir -p "$real_smoke_staging"
-          cp target/real-desktop-smoke/macos-real-desktop-smoke-evidence.md "$real_smoke_staging/"
-          cp target/real-desktop-smoke/macos-real-desktop-smoke-*.log "$real_smoke_staging/"
+          if [[ -f target/real-desktop-smoke/macos-real-desktop-smoke-evidence.md ]]; then
+            cp target/real-desktop-smoke/macos-real-desktop-smoke-evidence.md "$real_smoke_staging/"
+          fi
+          shopt -s nullglob
+          real_smoke_logs=(target/real-desktop-smoke/macos-real-desktop-smoke-*.log)
+          if (( ${#real_smoke_logs[@]} > 0 )); then
+            cp "${real_smoke_logs[@]}" "$real_smoke_staging/"
+          fi
+
+          exit "$real_smoke_exit"
 
       - name: Upload macOS smoke artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rust-mainline-macos-${{ matrix.arch }}
