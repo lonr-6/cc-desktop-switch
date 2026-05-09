@@ -12,8 +12,8 @@ test_name: macos_real_desktop_local_config_smoke
 platform: Darwin
 arch: arm64
 command: cargo test -p cc-desktop-switch --lib macos_real_desktop_local_config_smoke -- --ignored --nocapture
-evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-artifacts\macos-smoke-25599626985-v2\arm64\real-desktop-smoke\macos-real-desktop-smoke-evidence.md
-log: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-artifacts\macos-smoke-25599626985-v2\arm64\real-desktop-smoke\macos-real-desktop-smoke-20260509-112430.log
+evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-actions\25603881072\rust-mainline-macos-arm64\real-desktop-smoke\macos-real-desktop-smoke-evidence.md
+log: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-actions\25603881072\rust-mainline-macos-arm64\real-desktop-smoke\macos-real-desktop-smoke-20260509-150659.log
 configLibrary: /Users/runner/work/_temp/ccds-real-smoke-home/Library/Application Support/Claude-3p/configLibrary
 
 ## Verified Gates

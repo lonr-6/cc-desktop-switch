@@ -9,8 +9,8 @@ Pass
 fingerprint: platform.macos_arm64_x64_smoke_path
 macos-14
 macos-15-intel
-workflow_run_arm64: https://github.com/lonr-6/cc-desktop-switch/actions/runs/25599626985
-workflow_run_x64: https://github.com/lonr-6/cc-desktop-switch/actions/runs/25599626985
+workflow_run_arm64: https://github.com/lonr-6/cc-desktop-switch/actions/runs/25603881072
+workflow_run_x64: https://github.com/lonr-6/cc-desktop-switch/actions/runs/25603881072
 artifact_arm64: rust-mainline-macos-arm64
 artifact_x64: rust-mainline-macos-x64
 
@@ -20,8 +20,8 @@ artifact_x64: rust-mainline-macos-x64
 - expected_uname: arm64
 - actual_uname: arm64
 - version: 1.1.0-rc1
-- commit: bc0b02492c1b3ad9e0ed87e478add4468391905d
-- evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-artifacts\macos-smoke-25599626985-v2\arm64\platform-smoke-evidence.md
+- commit: 941798ae584d9fd090f1ff19f1e1ff6d7f42d983
+- evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-actions\25603881072\rust-mainline-macos-arm64\platform-smoke-evidence.md
 
 ## x64
 
@@ -29,8 +29,8 @@ artifact_x64: rust-mainline-macos-x64
 - expected_uname: x86_64
 - actual_uname: x86_64
 - version: 1.1.0-rc1
-- commit: bc0b02492c1b3ad9e0ed87e478add4468391905d
-- evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-artifacts\macos-smoke-25599626985-v2\x64\platform-smoke-evidence.md
+- commit: 941798ae584d9fd090f1ff19f1e1ff6d7f42d983
+- evidence: D:\ccds-build\cc-desktop-switch-rust-mainline\target\github-actions\25603881072\rust-mainline-macos-x64\platform-smoke-evidence.md
 
 ## Verified Gates
 

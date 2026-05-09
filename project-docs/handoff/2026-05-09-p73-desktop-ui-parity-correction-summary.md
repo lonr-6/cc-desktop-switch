@@ -43,6 +43,14 @@ P73 supersedes P72 for UI direction. The target is desktop CC Desktop Switch UI 
 - `cargo tauri build`
   - built Windows app, MSI, and NSIS bundle on the current Windows x64 machine
 - `cargo xtask verify --stage rc-readiness`
+- GitHub Actions non-publishing workflow
+  - run: `25603881072`
+  - commit: `941798ae584d9fd090f1ff19f1e1ff6d7f42d983`
+  - macOS arm64: pass
+  - macOS x64: pass
+  - covered Rust gate, Leptos build, Tauri build, bundle/pkg smoke, and macOS real Desktop local config smoke
+  - artifacts downloaded to `target/github-actions/25603881072`
+  - macOS platform and real Desktop smoke evidence handoffs refreshed by collectors
 
 ## Not Run
 
@@ -56,4 +64,4 @@ P73 supersedes P72 for UI direction. The target is desktop CC Desktop Switch UI 
 
 ## Next Minimum Task
 
-Push P73 to trigger the non-publishing macOS arm64/x64 workflow for the current UI commit, then review the workflow result. Do not publish, tag, upload GitHub Release assets, or update `latest.json` without explicit user instruction.
+Run the final human RC smoke from `project-docs/runbooks/final-human-rc-smoke.md` on Windows x64, macOS arm64, and macOS x64. Do not publish, tag, upload GitHub Release assets, or update `latest.json` without explicit user instruction.
