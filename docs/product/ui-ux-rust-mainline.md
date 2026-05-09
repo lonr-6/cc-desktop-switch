@@ -19,6 +19,22 @@
 - 诊断/高级
 - 设置
 
+说明：旧版截图中的 Desktop、代理、模型映射、引导等入口不再作为默认顶层导航展开；Rust 主线把它们合并到 Provider、诊断/高级和设置里，避免普通用户被高级概念分流。
+
+## Legacy Visual Baseline
+
+Rust 主线 UI 必须保持旧版 CC Desktop Switch 的主要布局感受：
+
+- 顶部白色 header：应用图标、`CC Desktop Switch` 标题、语言切换、主题按钮。
+- Header 下方使用胶囊式导航。
+- 首页优先展示三张大状态卡：Claude Desktop、Gateway、当前 Provider。
+- 首页保留三枚大操作按钮：配置 Desktop、启动、切换提供商。
+- 首页保留最近操作 / 结果区域，避免命令反馈只藏在诊断页。
+- Provider 页面采用“左侧添加/编辑表单，右侧快捷预设”的双栏结构。
+- Provider 的 import/export、model mapping、backup 属于高级工具，应放在主表单之后，而不是压过普通添加流程。
+
+P71 以后，UI 优化可以提升状态解释、响应式布局和错误可读性，但不能把第一屏改成营销页或完全不同的产品风格。
+
 ## 首页
 
 首页只放高频信息：

@@ -35,7 +35,7 @@ pub fn App() -> impl IntoView {
     let (result, set_result) = signal("尚未执行 command。".to_owned());
     let (diagnostics_text, set_diagnostics_text) = signal("尚未生成 diagnostics。".to_owned());
     let (provider_saved, set_provider_saved) = signal(false);
-    let (gateway_status_text, set_gateway_status_text) = signal("planned :18080".to_owned());
+    let (gateway_status_text, set_gateway_status_text) = signal("计划 :18080".to_owned());
     let (readiness_snapshot, set_readiness_snapshot) = signal(None::<commands::ReadinessSnapshot>);
 
     let copy = move |key: &'static str| text(&language.get(), key);
@@ -701,18 +701,12 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="app-shell" data-theme=move || theme.get()>
             <header class="app-header">
-                <div class="brand">
-                    <span class="brand-mark">"CC"</span>
+                <div class="brand" aria-label="CC Desktop Switch">
+                    <img class="brand-mark" src="app-icon.png" alt="" />
                     <span class="brand-title">"CC Desktop Switch"</span>
                 </div>
-                <nav class="route-tabs" aria-label="Primary navigation">
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>{move || copy("nav_dashboard")}</button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Provider) type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>{move || copy("nav_provider")}</button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Diagnostics) type="button" on:click=move |_| set_active_page.set(AppPage::Diagnostics)>{move || copy("nav_diagnostics")}</button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>{move || copy("nav_settings")}</button>
-                </nav>
                 <div class="header-actions">
-                    <button class="ghost-button" type="button" on:click=move |_| {
+                    <button class="language-toggle" type="button" on:click=move |_| {
                         set_language.update(|value| {
                             *value = if value == "zh" {
                                 "en".to_owned()
@@ -722,7 +716,7 @@ pub fn App() -> impl IntoView {
                                 "zh".to_owned()
                             };
                         });
-                    }>{move || language.get().to_uppercase()}</button>
+                    }>{move || language_switch_label(&language.get())}</button>
                     <button class="icon-button" type="button" aria-label="Toggle theme" on:click=move |_| {
                         set_theme.update(|value| {
                             *value = if value == "dark" { "light".to_owned() } else { "dark".to_owned() };
@@ -732,15 +726,35 @@ pub fn App() -> impl IntoView {
             </header>
 
             <main class="app-main">
-                <section class="page-title">
+                <nav class="route-tabs" aria-label="Primary navigation">
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>
+                        <span class="tab-icon">"⌂"</span>
+                        <span>{move || copy("nav_dashboard")}</span>
+                    </button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Provider) type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>
+                        <span class="tab-icon">"⌁"</span>
+                        <span>{move || copy("nav_provider")}</span>
+                    </button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Diagnostics) type="button" on:click=move |_| set_active_page.set(AppPage::Diagnostics)>
+                        <span class="tab-icon">"◎"</span>
+                        <span>{move || copy("nav_diagnostics")}</span>
+                    </button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
+                        <span class="tab-icon">"⚙"</span>
+                        <span>{move || copy("nav_settings")}</span>
+                    </button>
+                </nav>
+
+                <section class=move || page_title_class(active_page.get())>
                     <h1>{move || page_title(active_page.get(), &language.get())}</h1>
                     <p>{move || page_subtitle(active_page.get(), &language.get())}</p>
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Dashboard)>
-                    <section class="status-grid" aria-label="Status overview">
+                    <section class="status-grid legacy-dashboard-grid" aria-label="Status overview">
                         <article class="status-card">
                             <h2>{move || copy("desktop_status")}</h2>
+                            <div class="status-hero-icon desktop-icon">"✓"</div>
                             <span class="status-value">{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</span>
                             <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))>
                                 {move || readiness_label(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed), copy("readback_pending"))}
@@ -748,13 +762,15 @@ pub fn App() -> impl IntoView {
                         </article>
                         <article class="status-card">
                             <h2>{move || copy("gateway_status")}</h2>
-                            <span class="status-value">"local gateway"</span>
+                            <div class="status-hero-icon gateway-icon">"⌁"</div>
+                            <span class="status-value">"本机 gateway"</span>
                             <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.gateway.running))>
                                 {move || gateway_status_text.get()}
                             </span>
                         </article>
                         <article class="status-card">
                             <h2>{move || copy("active_provider")}</h2>
+                            <div class="status-dot"></div>
                             <span class="status-value">{move || provider_name.get()}</span>
                             <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or_else(|| selected_provider_id.get().map(|_| true)))>
                                 {move || selected_provider_id.get().unwrap_or_else(|| "no provider id".to_owned())}
@@ -762,22 +778,37 @@ pub fn App() -> impl IntoView {
                         </article>
                     </section>
 
-                    <section class="home-command-bar" aria-label="Dashboard actions">
-                        <div class="home-command-copy">
-                            <strong>{move || copy("home_actions")}</strong>
-                            <span>{move || readiness_summary_text(readiness_snapshot.get().as_ref())}</span>
+                    <section class="dashboard-actions" aria-label="Dashboard actions">
+                        <button class="primary-button action-tile" type="button" on:click=move |_| run_apply()>
+                            <span class="button-icon">"⚙"</span>
+                            <span>"配置 Desktop"</span>
+                        </button>
+                        <button class="success-button action-tile" type="button" on:click=start_gateway>
+                            <span class="button-icon">"▷"</span>
+                            <span>"启动"</span>
+                        </button>
+                        <button class="secondary-button action-tile" type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>
+                            <span class="button-icon">"⇆"</span>
+                            <span>"切换提供商"</span>
+                        </button>
+                    </section>
+
+                    <section class="recent-panel" aria-label="Recent operations">
+                        <div class="recent-heading">
+                            <span class="recent-icon">"□"</span>
+                            <h2>"最近操作"</h2>
                         </div>
-                        <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
-                            <button class="primary-button" type="button" on:click=move |_| run_apply()>"Apply"</button>
-                            <button class="secondary-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>{move || copy("report_issue")}</button>
+                        <div class="button-row recent-actions">
+                            <button class="secondary-button compact" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
+                            <button class="secondary-button compact" type="button" on:click=move |_| run_copy_diagnostics_summary()>{move || copy("report_issue")}</button>
                         </div>
+                        <div class="result-box compact-result" aria-live="polite">{move || readiness_summary_text(readiness_snapshot.get().as_ref())}</div>
                     </section>
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Provider)>
-                    <div class="work-grid">
-                    <article class="panel">
+                    <div class="provider-layout">
+                    <article class="panel provider-form-card">
                         <h2>{move || copy("provider_form")}</h2>
                         <div class="form-grid">
                             <label class="field">
@@ -804,22 +835,37 @@ pub fn App() -> impl IntoView {
                                 />
                             </label>
                             <label class="field">
-                                <span>"API Format"</span>
-                                <select on:change=move |event| set_api_format.set(event_target_value(&event))>
-                                    <option value="anthropic" selected=move || api_format.get() == "anthropic">"Anthropic compatible"</option>
-                                    <option value="openai_chat" selected=move || api_format.get() == "openai_chat">"OpenAI Chat"</option>
+                                <span>"Auth Scheme *"</span>
+                                <select disabled=true>
+                                    <option value="bearer">"bearer"</option>
                                 </select>
                             </label>
+                            <div class="field">
+                                <span>"API 格式 *"</span>
+                                <div class="segmented-control" role="group" aria-label="API format">
+                                    <button class=move || api_format_segment_class(api_format.get() == "anthropic") type="button" on:click=move |_| set_api_format.set("anthropic".to_owned())>"Anthropic"</button>
+                                    <button class=move || api_format_segment_class(api_format.get() == "openai_chat") type="button" on:click=move |_| set_api_format.set("openai_chat".to_owned())>"OpenAI"</button>
+                                </div>
+                            </div>
                             <div class="button-row">
-                                <button class="primary-button" type="button" on:click=save_provider>{move || copy("save_provider")}</button>
-                                <button class="secondary-button" type="button" on:click=refresh_providers>"List"</button>
-                                <button class="secondary-button" type="button" on:click=set_selected_active>"Set active"</button>
-                                <button class="secondary-button" type="button" on:click=delete_selected_provider>"Delete"</button>
-                                <button class="secondary-button" type="button" on:click=move_selected_provider_first>"Move first"</button>
+                                <button class="primary-button form-action" type="button" on:click=save_provider>{move || copy("save_provider")}</button>
+                                <button class="secondary-button form-action" type="button" on:click=move |_| {
+                                    set_provider_name.set("DeepSeek".to_owned());
+                                    set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
+                                    set_api_key.set(String::new());
+                                    set_api_format.set("anthropic".to_owned());
+                                }>"取消"</button>
+                                <button class="secondary-button form-action" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
                             </div>
                         </div>
 
                         <div class="provider-list">
+                            <div class="provider-list-toolbar">
+                                <button class="secondary-button compact" type="button" on:click=refresh_providers>"List"</button>
+                                <button class="secondary-button compact" type="button" on:click=set_selected_active>"Set active"</button>
+                                <button class="secondary-button compact" type="button" on:click=delete_selected_provider>"Delete"</button>
+                                <button class="secondary-button compact" type="button" on:click=move_selected_provider_first>"Move first"</button>
+                            </div>
                             <For
                                 each=move || providers.get()
                                 key=|provider| provider.provider_id.clone()
@@ -852,6 +898,73 @@ pub fn App() -> impl IntoView {
                         </div>
                     </article>
 
+                    <aside class="panel quick-preset-panel">
+                        <h2>"快捷预设"</h2>
+                        <div class="preset-card-list">
+                            <button class=move || preset_card_class(selected_preset_id.get() == "deepseek") type="button" on:click=move |_| {
+                                set_selected_preset_id.set("deepseek".to_owned());
+                                set_provider_name.set("DeepSeek".to_owned());
+                                set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
+                                set_api_format.set("anthropic".to_owned());
+                                set_api_key.set(String::new());
+                            }>
+                                <span class="preset-mark">"↯"</span>
+                                <span><strong>"DeepSeek"</strong><small>"https://api.deepseek.com/anthropic"</small></span>
+                                <b>"›"</b>
+                            </button>
+                            <button class=move || preset_card_class(selected_preset_id.get() == "kimi") type="button" on:click=move |_| {
+                                set_selected_preset_id.set("kimi".to_owned());
+                                set_provider_name.set("Kimi（月之暗面）".to_owned());
+                                set_base_url.set("https://api.moonshot.cn/v1".to_owned());
+                                set_api_format.set("openai_chat".to_owned());
+                                set_api_key.set(String::new());
+                            }>
+                                <span class="preset-mark">"K"</span>
+                                <span><strong>"Kimi（月之暗面）"</strong><small>"https://api.moonshot.cn/v1"</small></span>
+                                <b>"›"</b>
+                            </button>
+                            <button class="preset-card" type="button" on:click=move |_| {
+                                set_provider_name.set("七牛云 AI".to_owned());
+                                set_base_url.set("https://api.qnaigc.com/v1".to_owned());
+                                set_api_format.set("openai_chat".to_owned());
+                                set_api_key.set(String::new());
+                            }>
+                                <span class="preset-mark">"☁"</span>
+                                <span><strong>"七牛云 AI"</strong><small>"https://api.qnaigc.com/v1"</small></span>
+                                <b>"›"</b>
+                            </button>
+                            <button class="preset-card" type="button" on:click=move |_| {
+                                set_provider_name.set("智谱 GLM".to_owned());
+                                set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
+                                set_api_format.set("openai_chat".to_owned());
+                                set_api_key.set(String::new());
+                            }>
+                                <span class="preset-mark">"▣"</span>
+                                <span><strong>"智谱 GLM"</strong><small>"https://open.bigmodel.cn/api/paas/v4/"</small></span>
+                                <b>"›"</b>
+                            </button>
+                        </div>
+                        <div class="preset-import-box">
+                            <p class="preset-count">{move || format!("Loaded presets: {}", provider_presets.get().len())}</p>
+                            <label class="field">
+                                <span>"内置 preset API Key"</span>
+                                <input
+                                    type="password"
+                                    placeholder="preset API key"
+                                    value=move || preset_api_key.get()
+                                    on:input=move |event| set_preset_api_key.set(event_target_value(&event))
+                                />
+                            </label>
+                            <div class="button-row">
+                                <button class="secondary-button compact" type="button" on:click=load_provider_presets>"Load presets"</button>
+                                <button class="secondary-button compact" type="button" on:click=preview_preset_import>"Preview"</button>
+                                <button class="primary-button compact" type="button" on:click=move |_| import_preset(false)>"Import"</button>
+                            </div>
+                        </div>
+                    </aside>
+                    </div>
+
+                    <div class="advanced-provider-grid">
                     <article class="panel">
                         <h2>"Provider Import / Export"</h2>
                         <div class="button-row">
@@ -870,47 +983,6 @@ pub fn App() -> impl IntoView {
                             prop:value=move || import_json.get()
                             on:input=move |event| set_import_json.set(event_target_value(&event))
                         ></textarea>
-
-                        <h2>"Provider Presets"</h2>
-                        <div class="preset-controls">
-                            <select on:change=move |event| set_selected_preset_id.set(event_target_value(&event))>
-                                <For
-                                    each=move || provider_presets.get()
-                                    key=|preset| preset.preset_id.clone()
-                                    children=move |preset| view! {
-                                        <option
-                                            value=preset.preset_id.clone()
-                                            selected=move || selected_preset_id.get() == preset.preset_id
-                                        >
-                                            {format!("{} ({})", preset.display_name, preset.preset_id)}
-                                        </option>
-                                    }
-                                />
-                            </select>
-                            <input
-                                type="password"
-                                placeholder="preset API key"
-                                value=move || preset_api_key.get()
-                                on:input=move |event| set_preset_api_key.set(event_target_value(&event))
-                            />
-                        </div>
-                        <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=load_provider_presets>"Load presets"</button>
-                            <button class="secondary-button" type="button" on:click=preview_preset_import>"Preview preset"</button>
-                            <button class="secondary-button" type="button" on:click=move |_| import_preset(false)>"Import preset"</button>
-                            <button class="secondary-button" type="button" on:click=move |_| import_preset(true)>"Replace preset"</button>
-                        </div>
-
-                        <h2>"Config Backups"</h2>
-                        <div class="backup-controls">
-                            <input
-                                placeholder="backup file name"
-                                value=move || backup_file_name.get()
-                                on:input=move |event| set_backup_file_name.set(event_target_value(&event))
-                            />
-                            <button class="secondary-button" type="button" on:click=list_config_backups>"List backups"</button>
-                            <button class="secondary-button" type="button" on:click=read_selected_backup>"Read redacted"</button>
-                        </div>
                     </article>
 
                     <article class="panel">
@@ -924,6 +996,19 @@ pub fn App() -> impl IntoView {
                             prop:value=move || model_mapping_json.get()
                             on:input=move |event| set_model_mapping_json.set(event_target_value(&event))
                         ></textarea>
+                    </article>
+
+                    <article class="panel">
+                        <h2>"Config Backups"</h2>
+                        <div class="backup-controls">
+                            <input
+                                placeholder="backup file name"
+                                value=move || backup_file_name.get()
+                                on:input=move |event| set_backup_file_name.set(event_target_value(&event))
+                            />
+                            <button class="secondary-button" type="button" on:click=list_config_backups>"List backups"</button>
+                            <button class="secondary-button" type="button" on:click=read_selected_backup>"Read redacted"</button>
+                        </div>
                     </article>
                     </div>
                 </section>
@@ -1032,6 +1117,39 @@ fn route_tab_class(active: bool) -> &'static str {
     }
 }
 
+fn page_title_class(page: AppPage) -> &'static str {
+    if page == AppPage::Dashboard {
+        "page-title page-title-dashboard"
+    } else {
+        "page-title"
+    }
+}
+
+fn api_format_segment_class(active: bool) -> &'static str {
+    if active {
+        "segment-button active"
+    } else {
+        "segment-button"
+    }
+}
+
+fn preset_card_class(active: bool) -> &'static str {
+    if active {
+        "preset-card active"
+    } else {
+        "preset-card"
+    }
+}
+
+fn language_switch_label(language: &str) -> &'static str {
+    match language {
+        "zh" => "中 / EN",
+        "en" => "EN / 日",
+        "ja" => "日 / 中",
+        _ => "中 / EN",
+    }
+}
+
 fn page_section_class(active_page: AppPage, page: AppPage) -> &'static str {
     if active_page == page {
         "page-section"
@@ -1042,16 +1160,16 @@ fn page_section_class(active_page: AppPage, page: AppPage) -> &'static str {
 
 fn page_title(page: AppPage, language: &str) -> &'static str {
     match (language, page) {
-        ("en", AppPage::Dashboard) => "Local gateway workbench",
-        ("en", AppPage::Provider) => "Provider",
-        ("en", AppPage::Diagnostics) => "Diagnostics",
+        ("en", AppPage::Dashboard) => "Dashboard",
+        ("en", AppPage::Provider) => "Add provider",
+        ("en", AppPage::Diagnostics) => "Diagnostics / Advanced",
         ("en", AppPage::Settings) => "Settings",
-        ("ja", AppPage::Dashboard) => "ローカル gateway",
-        ("ja", AppPage::Provider) => "Provider",
-        ("ja", AppPage::Diagnostics) => "診断",
+        ("ja", AppPage::Dashboard) => "ダッシュボード",
+        ("ja", AppPage::Provider) => "Provider 追加",
+        ("ja", AppPage::Diagnostics) => "診断 / 高度",
         ("ja", AppPage::Settings) => "設定",
-        (_, AppPage::Dashboard) => "本机 gateway 工作台",
-        (_, AppPage::Provider) => "Provider",
+        (_, AppPage::Dashboard) => "仪表盘",
+        (_, AppPage::Provider) => "添加提供商",
         (_, AppPage::Diagnostics) => "诊断 / 高级",
         (_, AppPage::Settings) => "设置",
     }
@@ -1062,19 +1180,15 @@ fn page_subtitle(page: AppPage, language: &str) -> &'static str {
         ("en", AppPage::Dashboard) => {
             "Save provider, check health, apply to Claude Desktop, and report issues."
         }
-        ("en", AppPage::Provider) => {
-            "Provider profile, import/export, presets, backups, and safe route mappings."
-        }
+        ("en", AppPage::Provider) => "Add a new API provider or choose a preset.",
         ("en", AppPage::Diagnostics) => "Gateway, Apply, readiness, and redacted diagnostics.",
         ("en", AppPage::Settings) => "Language, theme, and local gateway defaults.",
         ("ja", AppPage::Dashboard) => "Provider 保存、health、Apply、問題報告。",
-        ("ja", AppPage::Provider) => {
-            "Provider、import/export、preset、backup、safe route mapping。"
-        }
+        ("ja", AppPage::Provider) => "新しい API Provider を追加するか preset を選択します。",
         ("ja", AppPage::Diagnostics) => "Gateway、Apply、readiness、redacted diagnostics。",
         ("ja", AppPage::Settings) => "言語、テーマ、local gateway default。",
         (_, AppPage::Dashboard) => "保存 Provider、健康检查、一键应用、报告问题。",
-        (_, AppPage::Provider) => "Provider 配置、导入导出、预设、备份和 safe route 映射。",
+        (_, AppPage::Provider) => "添加新的 API 提供商或选择预设。",
         (_, AppPage::Diagnostics) => "Gateway、Apply、readiness 和脱敏诊断。",
         (_, AppPage::Settings) => "语言、主题和本机 gateway 默认项。",
     }
@@ -1085,11 +1199,11 @@ fn desktop_status_value(
     provider_saved: bool,
 ) -> String {
     match snapshot {
-        Some(snapshot) if snapshot.desktop_readback_passed => "readback passed".to_owned(),
-        Some(snapshot) if snapshot.provider_configured => "configured".to_owned(),
-        Some(_) => "not configured".to_owned(),
-        None if provider_saved => "dry-run ready".to_owned(),
-        None => "not configured".to_owned(),
+        Some(snapshot) if snapshot.desktop_readback_passed => "读回通过".to_owned(),
+        Some(snapshot) if snapshot.provider_configured => "已配置".to_owned(),
+        Some(_) => "未配置".to_owned(),
+        None if provider_saved => "待应用".to_owned(),
+        None => "未配置".to_owned(),
     }
 }
 
@@ -1103,8 +1217,8 @@ fn status_pill_class(passed: Option<bool>) -> String {
 
 fn readiness_label(passed: Option<bool>, pending: &'static str) -> String {
     match passed {
-        Some(true) => "pass".to_owned(),
-        Some(false) => "needs attention".to_owned(),
+        Some(true) => "通过".to_owned(),
+        Some(false) => "需处理".to_owned(),
         None => pending.to_owned(),
     }
 }
@@ -1367,19 +1481,19 @@ fn text(language: &str, key: &str) -> &'static str {
         }
         ("en", "desktop_status") => "Claude Desktop",
         ("en", "gateway_status") => "Gateway",
-        ("en", "active_provider") => "Selected provider",
+        ("en", "active_provider") => "Current provider",
         ("en", "readback_pending") => "readback pending",
-        ("en", "provider_form") => "Provider",
-        ("en", "provider_name") => "Provider name",
+        ("en", "provider_form") => "Provider configuration",
+        ("en", "provider_name") => "Provider name *",
         ("en", "save_provider") => "Save",
-        ("en", "check_health") => "Health",
+        ("en", "check_health") => "Check config",
         ("en", "apply_dry_run") => "Apply dry-run",
         ("en", "home_actions") => "Common actions",
         ("en", "report_issue") => "Report issue",
         ("en", "model_mapping") => "Model mapping",
         ("en", "deferred_slot") => "deferred",
         ("en", "readiness_layers") => "Readiness",
-        ("ja", "nav_dashboard") => "ホーム",
+        ("ja", "nav_dashboard") => "ダッシュボード",
         ("ja", "nav_provider") => "プロバイダー",
         ("ja", "nav_diagnostics") => "診断",
         ("ja", "nav_settings") => "設定",
@@ -1389,20 +1503,20 @@ fn text(language: &str, key: &str) -> &'static str {
         }
         ("ja", "desktop_status") => "Claude Desktop",
         ("ja", "gateway_status") => "Gateway",
-        ("ja", "active_provider") => "選択中 Provider",
+        ("ja", "active_provider") => "現在の Provider",
         ("ja", "readback_pending") => "readback 未実行",
-        ("ja", "provider_form") => "Provider",
-        ("ja", "provider_name") => "Provider 名",
+        ("ja", "provider_form") => "Provider 設定",
+        ("ja", "provider_name") => "Provider 名 *",
         ("ja", "save_provider") => "保存",
-        ("ja", "check_health") => "Health",
+        ("ja", "check_health") => "設定確認",
         ("ja", "apply_dry_run") => "Dry-run",
         ("ja", "home_actions") => "よく使う操作",
         ("ja", "report_issue") => "問題を報告",
         ("ja", "model_mapping") => "モデル mapping",
         ("ja", "deferred_slot") => "未実装",
         ("ja", "readiness_layers") => "Readiness",
-        (_, "nav_dashboard") => "首页",
-        (_, "nav_provider") => "Provider",
+        (_, "nav_dashboard") => "仪表盘",
+        (_, "nav_provider") => "提供商",
         (_, "nav_diagnostics") => "诊断",
         (_, "nav_settings") => "设置",
         (_, "dashboard_title") => "本机 gateway 工作台",
@@ -1411,12 +1525,12 @@ fn text(language: &str, key: &str) -> &'static str {
         }
         (_, "desktop_status") => "Claude Desktop 状态",
         (_, "gateway_status") => "Gateway 状态",
-        (_, "active_provider") => "选中 Provider",
+        (_, "active_provider") => "当前提供商",
         (_, "readback_pending") => "等待读回校验",
-        (_, "provider_form") => "Provider 表单",
-        (_, "provider_name") => "Provider 名称",
-        (_, "save_provider") => "保存 Provider",
-        (_, "check_health") => "健康检查",
+        (_, "provider_form") => "提供商配置",
+        (_, "provider_name") => "提供商名称 *",
+        (_, "save_provider") => "保存",
+        (_, "check_health") => "检查配置",
         (_, "apply_dry_run") => "Apply dry-run",
         (_, "home_actions") => "常用操作",
         (_, "report_issue") => "报告问题",
