@@ -198,7 +198,7 @@ jobs:
           mkdir -p "$REAL_SMOKE_HOME"
           export HOME="$REAL_SMOKE_HOME"
 
-          scripts/macos/run-real-desktop-smoke.sh --mode run --allow-real-desktop-write
+          bash scripts/macos/run-real-desktop-smoke.sh --mode run --allow-real-desktop-write
 
           real_smoke_staging="dist/platform-smoke/macos-${ARCH}/real-desktop-smoke"
           mkdir -p "$real_smoke_staging"
