@@ -166,6 +166,14 @@ button {
   padding: 22px 26px 34px;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.page-section {
+  min-width: 0;
+}
+
 .page-title {
   margin: 0 0 22px;
 }
@@ -500,6 +508,14 @@ button {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.settings-grid {
+  align-items: start;
+}
+
+.settings-list strong {
+  font-size: 13px;
 }
 
 @media (max-width: 860px) {

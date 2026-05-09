@@ -5,8 +5,17 @@ use crate::commands::{
     self, ApiFormat, ModelMappingDraft, ProviderDraft, ProviderPreset, ProviderSummary,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppPage {
+    Dashboard,
+    Provider,
+    Diagnostics,
+    Settings,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
+    let (active_page, set_active_page) = signal(AppPage::Dashboard);
     let (language, set_language) = signal("zh".to_owned());
     let (theme, set_theme) = signal("light".to_owned());
     let (providers, set_providers) = signal(Vec::<ProviderSummary>::new());
@@ -697,10 +706,10 @@ pub fn App() -> impl IntoView {
                     <span class="brand-title">"CC Desktop Switch"</span>
                 </div>
                 <nav class="route-tabs" aria-label="Primary navigation">
-                    <button class="route-tab active" type="button">{move || copy("nav_dashboard")}</button>
-                    <button class="route-tab" type="button">{move || copy("nav_provider")}</button>
-                    <button class="route-tab" type="button">{move || copy("nav_diagnostics")}</button>
-                    <button class="route-tab" type="button">{move || copy("nav_settings")}</button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>{move || copy("nav_dashboard")}</button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Provider) type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>{move || copy("nav_provider")}</button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Diagnostics) type="button" on:click=move |_| set_active_page.set(AppPage::Diagnostics)>{move || copy("nav_diagnostics")}</button>
+                    <button class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>{move || copy("nav_settings")}</button>
                 </nav>
                 <div class="header-actions">
                     <button class="ghost-button" type="button" on:click=move |_| {
@@ -724,47 +733,50 @@ pub fn App() -> impl IntoView {
 
             <main class="app-main">
                 <section class="page-title">
-                    <h1>{move || copy("dashboard_title")}</h1>
-                    <p>{move || copy("dashboard_subtitle")}</p>
+                    <h1>{move || page_title(active_page.get(), &language.get())}</h1>
+                    <p>{move || page_subtitle(active_page.get(), &language.get())}</p>
                 </section>
 
-                <section class="status-grid" aria-label="Status overview">
-                    <article class="status-card">
-                        <h2>{move || copy("desktop_status")}</h2>
-                        <span class="status-value">{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</span>
-                        <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))>
-                            {move || readiness_label(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed), copy("readback_pending"))}
-                        </span>
-                    </article>
-                    <article class="status-card">
-                        <h2>{move || copy("gateway_status")}</h2>
-                        <span class="status-value">"local gateway"</span>
-                        <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.gateway.running))>
-                            {move || gateway_status_text.get()}
-                        </span>
-                    </article>
-                    <article class="status-card">
-                        <h2>{move || copy("active_provider")}</h2>
-                        <span class="status-value">{move || provider_name.get()}</span>
-                        <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or_else(|| selected_provider_id.get().map(|_| true)))>
-                            {move || selected_provider_id.get().unwrap_or_else(|| "no provider id".to_owned())}
-                        </span>
-                    </article>
+                <section class=move || page_section_class(active_page.get(), AppPage::Dashboard)>
+                    <section class="status-grid" aria-label="Status overview">
+                        <article class="status-card">
+                            <h2>{move || copy("desktop_status")}</h2>
+                            <span class="status-value">{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</span>
+                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))>
+                                {move || readiness_label(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed), copy("readback_pending"))}
+                            </span>
+                        </article>
+                        <article class="status-card">
+                            <h2>{move || copy("gateway_status")}</h2>
+                            <span class="status-value">"local gateway"</span>
+                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.gateway.running))>
+                                {move || gateway_status_text.get()}
+                            </span>
+                        </article>
+                        <article class="status-card">
+                            <h2>{move || copy("active_provider")}</h2>
+                            <span class="status-value">{move || provider_name.get()}</span>
+                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or_else(|| selected_provider_id.get().map(|_| true)))>
+                                {move || selected_provider_id.get().unwrap_or_else(|| "no provider id".to_owned())}
+                            </span>
+                        </article>
+                    </section>
+
+                    <section class="home-command-bar" aria-label="Dashboard actions">
+                        <div class="home-command-copy">
+                            <strong>{move || copy("home_actions")}</strong>
+                            <span>{move || readiness_summary_text(readiness_snapshot.get().as_ref())}</span>
+                        </div>
+                        <div class="button-row">
+                            <button class="secondary-button" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
+                            <button class="primary-button" type="button" on:click=move |_| run_apply()>"Apply"</button>
+                            <button class="secondary-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>{move || copy("report_issue")}</button>
+                        </div>
+                    </section>
                 </section>
 
-                <section class="home-command-bar" aria-label="Dashboard actions">
-                    <div class="home-command-copy">
-                        <strong>{move || copy("home_actions")}</strong>
-                        <span>{move || readiness_summary_text(readiness_snapshot.get().as_ref())}</span>
-                    </div>
-                    <div class="button-row">
-                        <button class="secondary-button" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
-                        <button class="primary-button" type="button" on:click=move |_| run_apply()>"Apply"</button>
-                        <button class="secondary-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>{move || copy("report_issue")}</button>
-                    </div>
-                </section>
-
-                <section class="work-grid">
+                <section class=move || page_section_class(active_page.get(), AppPage::Provider)>
+                    <div class="work-grid">
                     <article class="panel">
                         <h2>{move || copy("provider_form")}</h2>
                         <div class="form-grid">
@@ -902,6 +914,23 @@ pub fn App() -> impl IntoView {
                     </article>
 
                     <article class="panel">
+                        <h2>{move || copy("model_mapping")}</h2>
+                        <div class="button-row">
+                            <button class="secondary-button" type="button" on:click=load_model_mappings>"Load mappings"</button>
+                            <button class="primary-button" type="button" on:click=save_model_mappings>"Save mappings"</button>
+                        </div>
+                        <textarea
+                            class="json-input mapping-input"
+                            prop:value=move || model_mapping_json.get()
+                            on:input=move |event| set_model_mapping_json.set(event_target_value(&event))
+                        ></textarea>
+                    </article>
+                    </div>
+                </section>
+
+                <section class=move || page_section_class(active_page.get(), AppPage::Diagnostics)>
+                    <div class="work-grid">
+                    <article class="panel">
                         <h2>"Gateway / Apply"</h2>
                         <div class="button-row">
                             <button class="secondary-button" type="button" on:click=check_health>{move || copy("check_health")}</button>
@@ -919,17 +948,6 @@ pub fn App() -> impl IntoView {
                     </article>
 
                     <article class="panel">
-                        <h2>{move || copy("model_mapping")}</h2>
-                        <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=load_model_mappings>"Load mappings"</button>
-                            <button class="primary-button" type="button" on:click=save_model_mappings>"Save mappings"</button>
-                        </div>
-                        <textarea
-                            class="json-input mapping-input"
-                            prop:value=move || model_mapping_json.get()
-                            on:input=move |event| set_model_mapping_json.set(event_target_value(&event))
-                        ></textarea>
-
                         <h2>{move || copy("readiness_layers")}</h2>
                         <ul class="readiness-list">
                             <li><span>"static config"</span><strong class=move || readiness_badge_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or(Some(provider_saved.get())))>{move || readiness_badge_label(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or(Some(provider_saved.get())))}</strong></li>
@@ -953,6 +971,42 @@ pub fn App() -> impl IntoView {
                         </div>
                         <div class="result-box diagnostics-output" aria-live="polite">{move || diagnostics_text.get()}</div>
                     </article>
+                    </div>
+                </section>
+
+                <section class=move || page_section_class(active_page.get(), AppPage::Settings)>
+                    <div class="work-grid settings-grid">
+                        <article class="panel">
+                            <h2>{move || copy("nav_settings")}</h2>
+                            <div class="form-grid">
+                                <label class="field">
+                                    <span>"Language"</span>
+                                    <select on:change=move |event| set_language.set(event_target_value(&event))>
+                                        <option value="zh" selected=move || language.get() == "zh">"中文"</option>
+                                        <option value="en" selected=move || language.get() == "en">"English"</option>
+                                        <option value="ja" selected=move || language.get() == "ja">"日本語"</option>
+                                    </select>
+                                </label>
+                                <label class="field">
+                                    <span>"Theme"</span>
+                                    <select on:change=move |event| set_theme.set(event_target_value(&event))>
+                                        <option value="light" selected=move || theme.get() == "light">"Light"</option>
+                                        <option value="dark" selected=move || theme.get() == "dark">"Dark"</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </article>
+
+                        <article class="panel">
+                            <h2>"Gateway"</h2>
+                            <ul class="readiness-list settings-list">
+                                <li><span>"Mode"</span><strong>"local gateway"</strong></li>
+                                <li><span>"Port"</span><strong>"18080"</strong></li>
+                                <li><span>"Desktop routes"</span><strong>"claude-*"</strong></li>
+                                <li><span>"Default"</span><strong>"hidden"</strong></li>
+                            </ul>
+                        </article>
+                    </div>
                 </section>
             </main>
         </div>
@@ -968,6 +1022,62 @@ fn api_format_value(api_format: &commands::ApiFormat) -> String {
 
 fn format_gateway_health(health: &commands::GatewayHealth) -> String {
     format!("{} running={}", health.base_url, health.running)
+}
+
+fn route_tab_class(active: bool) -> &'static str {
+    if active {
+        "route-tab active"
+    } else {
+        "route-tab"
+    }
+}
+
+fn page_section_class(active_page: AppPage, page: AppPage) -> &'static str {
+    if active_page == page {
+        "page-section"
+    } else {
+        "page-section hidden"
+    }
+}
+
+fn page_title(page: AppPage, language: &str) -> &'static str {
+    match (language, page) {
+        ("en", AppPage::Dashboard) => "Local gateway workbench",
+        ("en", AppPage::Provider) => "Provider",
+        ("en", AppPage::Diagnostics) => "Diagnostics",
+        ("en", AppPage::Settings) => "Settings",
+        ("ja", AppPage::Dashboard) => "ローカル gateway",
+        ("ja", AppPage::Provider) => "Provider",
+        ("ja", AppPage::Diagnostics) => "診断",
+        ("ja", AppPage::Settings) => "設定",
+        (_, AppPage::Dashboard) => "本机 gateway 工作台",
+        (_, AppPage::Provider) => "Provider",
+        (_, AppPage::Diagnostics) => "诊断 / 高级",
+        (_, AppPage::Settings) => "设置",
+    }
+}
+
+fn page_subtitle(page: AppPage, language: &str) -> &'static str {
+    match (language, page) {
+        ("en", AppPage::Dashboard) => {
+            "Save provider, check health, apply to Claude Desktop, and report issues."
+        }
+        ("en", AppPage::Provider) => {
+            "Provider profile, import/export, presets, backups, and safe route mappings."
+        }
+        ("en", AppPage::Diagnostics) => "Gateway, Apply, readiness, and redacted diagnostics.",
+        ("en", AppPage::Settings) => "Language, theme, and local gateway defaults.",
+        ("ja", AppPage::Dashboard) => "Provider 保存、health、Apply、問題報告。",
+        ("ja", AppPage::Provider) => {
+            "Provider、import/export、preset、backup、safe route mapping。"
+        }
+        ("ja", AppPage::Diagnostics) => "Gateway、Apply、readiness、redacted diagnostics。",
+        ("ja", AppPage::Settings) => "言語、テーマ、local gateway default。",
+        (_, AppPage::Dashboard) => "保存 Provider、健康检查、一键应用、报告问题。",
+        (_, AppPage::Provider) => "Provider 配置、导入导出、预设、备份和 safe route 映射。",
+        (_, AppPage::Diagnostics) => "Gateway、Apply、readiness 和脱敏诊断。",
+        (_, AppPage::Settings) => "语言、主题和本机 gateway 默认项。",
+    }
 }
 
 fn desktop_status_value(
