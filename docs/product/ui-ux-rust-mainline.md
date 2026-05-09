@@ -2,7 +2,7 @@
 
 ## Direction
 
-保持旧布局和旧使用路径，但让状态更清楚、失败更可解释、普通用户更少看到高级细节。
+保持当前 CC Desktop Switch 前端的桌面工具布局和使用路径，但让状态更清楚、失败更可解释、普通用户更少看到高级细节。
 
 普通用户只需要理解：
 
@@ -12,40 +12,41 @@
 
 ## Main Navigation
 
-新版只保留四个主要区域：
+Rust 主线默认跟随当前最新前端的顶层入口：
 
 - 首页
-- Provider
-- 诊断/高级
+- 提供商
+- 转发
 - 设置
+- 引导
 
-说明：旧版截图中的 Desktop、代理、模型映射、引导等入口不再作为默认顶层导航展开；Rust 主线把它们合并到 Provider、诊断/高级和设置里，避免普通用户被高级概念分流。
+说明：`Claude 桌面版` 详情页可以由首页/清理/应用动作进入，不必单独放在居中顶层 tab。Provider 添加页属于提供商入口下的子页面。普通 UI 仍只走本机 gateway，不暴露直连 provider 路径。
 
 ## Legacy Visual Baseline
 
-Rust 主线 UI 必须保持旧版 CC Desktop Switch 的主要布局感受：
+Rust 主线 UI 必须以当前 CC Desktop Switch 前端为视觉基线：
 
-- 顶部白色 header：应用图标、`CC Desktop Switch` 标题、语言切换、主题按钮。
-- Header 下方使用胶囊式导航。
-- 首页优先展示三张大状态卡：Claude Desktop、Gateway、当前 Provider。
-- 首页保留三枚大操作按钮：配置 Desktop、启动、切换提供商。
-- 首页保留最近操作 / 结果区域，避免命令反馈只藏在诊断页。
-- Provider 页面采用“左侧添加/编辑表单，右侧快捷预设”的双栏结构。
-- Provider 的 import/export、model mapping、backup 属于高级工具，应放在主表单之后，而不是压过普通添加流程。
+- 顶部白色 header：左侧反馈、导入 CC Switch 配置、清除桌面版配置；中间 5 个图标 tab；右侧设置、主题、添加按钮。
+- 首页使用 provider switch-board/card 列表，不再使用 P71 的三张大状态卡作为默认基线。
+- Provider 管理页显示已配置 Provider，并提供添加、选择、设为默认、编辑、删除等操作。
+- 添加 Provider 页面采用“左侧添加/编辑表单，右侧快捷预设”的双栏结构。
+- 添加表单包含 API Base URL 管理/测速入口、API Key 显示切换、Auth Scheme、红框第三方兼容接口、协议格式选择、模型映射、一键应用说明。
+- 一键应用按钮使用当前前端的橙色主按钮视觉，并必须对应完整事务式 Apply 流程。
+- 高级 import/export、backup、diagnostics 工具不能压过普通添加流程；默认首屏应优先服务“填 key -> 映射 -> 一键应用”。
 
-P71 以后，UI 优化可以提升状态解释、响应式布局和错误可读性，但不能把第一屏改成营销页或完全不同的产品风格。
+P72 以后，UI 优化可以提升状态解释、响应式布局和错误可读性，但不能脱离当前前端的布局结构、密度、按钮层级和颜色 token。P71 的旧截图式大卡片布局不再作为最新 UI 基线。
 
 ## 首页
 
 首页只放高频信息：
 
 - 当前 Provider
-- Claude Desktop 状态
-- Gateway 状态
-- 一键应用
-- 报告问题
+- Provider switch cards
+- 快捷预设
+- 添加/刷新入口
+- 必要的 Desktop warning
 
-不再把“导入 CC-Switch 配置”长期放在首页主按钮。它进入 Provider 导入入口。
+“报告问题 / 导入 CC Switch 配置 / 清除桌面版配置”位于 header 左侧，和当前前端保持一致。
 
 ## Provider
 

@@ -8,9 +8,12 @@ use crate::commands::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppPage {
     Dashboard,
-    Provider,
-    Diagnostics,
+    ProvidersAdd,
+    Providers,
+    Desktop,
+    Proxy,
     Settings,
+    Guide,
 }
 
 #[component]
@@ -23,6 +26,7 @@ pub fn App() -> impl IntoView {
     let (provider_name, set_provider_name) = signal("DeepSeek".to_owned());
     let (base_url, set_base_url) = signal("https://api.deepseek.com/anthropic".to_owned());
     let (api_key, set_api_key) = signal(String::new());
+    let (show_api_key, set_show_api_key) = signal(false);
     let (api_format, set_api_format) = signal("anthropic".to_owned());
     let (import_json, set_import_json) = signal(String::new());
     let (import_preview_text, set_import_preview_text) =
@@ -698,14 +702,120 @@ pub fn App() -> impl IntoView {
     };
     let apply = move |_| run_apply();
 
+    let apply_provider_to_desktop = move |_| {
+        let request = ProviderDraft {
+            provider_id: selected_provider_id.get_untracked(),
+            display_name: provider_name.get_untracked(),
+            base_url: base_url.get_untracked(),
+            api_key: api_key.get_untracked(),
+            api_format: if api_format.get_untracked() == "openai_chat" {
+                ApiFormat::OpenAiChat
+            } else {
+                ApiFormat::Anthropic
+            },
+        };
+        set_result.set("保存 Provider 并应用到 Claude Desktop 中...".to_owned());
+        spawn_local(async move {
+            let summary = match commands::save_provider(request).await {
+                Ok(summary) => summary,
+                Err(error) => {
+                    set_result.set(format!("save_provider failed: {error}"));
+                    return;
+                }
+            };
+            set_provider_saved.set(true);
+            set_selected_provider_id.set(Some(summary.provider_id.clone()));
+            set_api_key.set(String::new());
+
+            if let Err(error) = commands::set_active_provider(summary.provider_id.clone()).await {
+                set_result.set(format!(
+                    "save_provider ok\nset_active_provider failed: {error}"
+                ));
+                return;
+            }
+
+            match commands::apply_detected_local_config().await {
+                Ok(apply_result) => {
+                    if let Ok(next_providers) = commands::list_providers().await {
+                        set_providers.set(next_providers);
+                    }
+                    let steps = apply_result
+                        .steps
+                        .iter()
+                        .map(|step| {
+                            format!(
+                                "- {}: {:?}{}",
+                                step.id,
+                                step.status,
+                                step.error
+                                    .as_ref()
+                                    .map(|error| format!(" ({error})"))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    set_result.set(format!(
+                        "success: {}\nprovider: {}\nmode: {}\nerror: {}\n{}{}",
+                        apply_result.success,
+                        summary.provider_id,
+                        apply_result.mode,
+                        apply_result.error.as_deref().unwrap_or_default(),
+                        steps,
+                        desktop_managed_policy_note(
+                            apply_result.error.as_deref()
+                                == Some("desktop.managed_config_detected")
+                        )
+                    ));
+                }
+                Err(error) => {
+                    set_result.set(format!("apply_detected_local_config failed: {error}"))
+                }
+            }
+        });
+    };
+
     view! {
         <div class="app-shell" data-theme=move || theme.get()>
             <header class="app-header">
-                <div class="brand" aria-label="CC Desktop Switch">
-                    <img class="brand-mark" src="app-icon.png" alt="" />
-                    <span class="brand-title">"CC Desktop Switch"</span>
+                <div class="header-actions-left">
+                    <button class="dashboard-feedback-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>
+                        <span class="button-icon">"◌"</span><span>{move || copy("report_issue")}</span>
+                    </button>
+                    <button class="dashboard-import-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
+                        <span class="button-icon">"⇩"</span><span>"导入 CC Switch 配置"</span>
+                    </button>
+                    <button class="dashboard-clear-button" type="button" on:click=move |_| set_active_page.set(AppPage::Desktop)>
+                        <span class="button-icon">"⌫"</span><span>"清除桌面版配置"</span>
+                    </button>
                 </div>
+
+                <nav class="route-tabs" aria-label="Primary navigation">
+                    <button title="Dashboard" class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>
+                        <span class="tab-icon">"⌂"</span>
+                        <span>{move || copy("nav_dashboard")}</span>
+                    </button>
+                    <button title="Providers" class=move || route_tab_class(primary_route_active(active_page.get(), AppPage::Providers)) type="button" on:click=move |_| set_active_page.set(AppPage::Providers)>
+                        <span class="tab-icon">"⌁"</span>
+                        <span>{move || copy("nav_provider")}</span>
+                    </button>
+                    <button title="Forwarding" class=move || route_tab_class(active_page.get() == AppPage::Proxy) type="button" on:click=move |_| set_active_page.set(AppPage::Proxy)>
+                        <span class="tab-icon">"◎"</span>
+                        <span>{move || copy("nav_proxy")}</span>
+                    </button>
+                    <button title="Settings" class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
+                        <span class="tab-icon">"⚙"</span>
+                        <span>{move || copy("nav_settings")}</span>
+                    </button>
+                    <button title="Guide" class=move || route_tab_class(active_page.get() == AppPage::Guide) type="button" on:click=move |_| set_active_page.set(AppPage::Guide)>
+                        <span class="tab-icon">"?"</span>
+                        <span>{move || copy("nav_guide")}</span>
+                    </button>
+                </nav>
+
                 <div class="header-actions">
+                    <button class="update-badge" type="button" hidden=true>"有新版本"</button>
+                    <button class="theme-btn" type="button" aria-label="Settings" on:click=move |_| set_active_page.set(AppPage::Settings)>"⚙"</button>
                     <button class="language-toggle" type="button" on:click=move |_| {
                         set_language.update(|value| {
                             *value = if value == "zh" {
@@ -717,99 +827,125 @@ pub fn App() -> impl IntoView {
                             };
                         });
                     }>{move || language_switch_label(&language.get())}</button>
-                    <button class="icon-button" type="button" aria-label="Toggle theme" on:click=move |_| {
+                    <button class="theme-btn" type="button" aria-label="Toggle theme" on:click=move |_| {
                         set_theme.update(|value| {
                             *value = if value == "dark" { "light".to_owned() } else { "dark".to_owned() };
                         });
                     }>{theme_label}</button>
+                    <button class="round-add" type="button" aria-label="Add provider" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"+"</button>
                 </div>
             </header>
 
             <main class="app-main">
-                <nav class="route-tabs" aria-label="Primary navigation">
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>
-                        <span class="tab-icon">"⌂"</span>
-                        <span>{move || copy("nav_dashboard")}</span>
-                    </button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Provider) type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>
-                        <span class="tab-icon">"⌁"</span>
-                        <span>{move || copy("nav_provider")}</span>
-                    </button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Diagnostics) type="button" on:click=move |_| set_active_page.set(AppPage::Diagnostics)>
-                        <span class="tab-icon">"◎"</span>
-                        <span>{move || copy("nav_diagnostics")}</span>
-                    </button>
-                    <button class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
-                        <span class="tab-icon">"⚙"</span>
-                        <span>{move || copy("nav_settings")}</span>
-                    </button>
-                </nav>
-
                 <section class=move || page_title_class(active_page.get())>
                     <h1>{move || page_title(active_page.get(), &language.get())}</h1>
                     <p>{move || page_subtitle(active_page.get(), &language.get())}</p>
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Dashboard)>
-                    <section class="status-grid legacy-dashboard-grid" aria-label="Status overview">
-                        <article class="status-card">
-                            <h2>{move || copy("desktop_status")}</h2>
-                            <div class="status-hero-icon desktop-icon">"✓"</div>
-                            <span class="status-value">{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</span>
-                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))>
-                                {move || readiness_label(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed), copy("readback_pending"))}
-                            </span>
-                        </article>
-                        <article class="status-card">
-                            <h2>{move || copy("gateway_status")}</h2>
-                            <div class="status-hero-icon gateway-icon">"⌁"</div>
-                            <span class="status-value">"本机 gateway"</span>
-                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.gateway.running))>
-                                {move || gateway_status_text.get()}
-                            </span>
-                        </article>
-                        <article class="status-card">
-                            <h2>{move || copy("active_provider")}</h2>
-                            <div class="status-dot"></div>
-                            <span class="status-value">{move || provider_name.get()}</span>
-                            <span class=move || status_pill_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or_else(|| selected_provider_id.get().map(|_| true)))>
-                                {move || selected_provider_id.get().unwrap_or_else(|| "no provider id".to_owned())}
-                            </span>
-                        </article>
-                    </section>
+                    <div class=move || desktop_warning_class(readiness_snapshot.get().as_ref())>
+                        <span>"!"</span>
+                        <strong>{move || readiness_issue_text(readiness_snapshot.get().as_ref())}</strong>
+                    </div>
 
-                    <section class="dashboard-actions" aria-label="Dashboard actions">
-                        <button class="primary-button action-tile" type="button" on:click=move |_| run_apply()>
-                            <span class="button-icon">"⚙"</span>
-                            <span>"配置 Desktop"</span>
-                        </button>
-                        <button class="success-button action-tile" type="button" on:click=start_gateway>
-                            <span class="button-icon">"▷"</span>
-                            <span>"启动"</span>
-                        </button>
-                        <button class="secondary-button action-tile" type="button" on:click=move |_| set_active_page.set(AppPage::Provider)>
-                            <span class="button-icon">"⇆"</span>
-                            <span>"切换提供商"</span>
-                        </button>
-                    </section>
+                    <div class="switch-board">
+                        <div class="switch-board-head">
+                            <div>
+                                <h1>"选择当前提供商"</h1>
+                                <p>"默认只把当前 Provider 的 claude-* safe route 写入 Claude Desktop。"</p>
+                            </div>
+                            <div class="switch-board-actions">
+                                <button class="secondary-button compact" type="button" on:click=refresh_providers>"刷新"</button>
+                                <button class="primary-button compact" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"添加提供商"</button>
+                            </div>
+                        </div>
 
-                    <section class="recent-panel" aria-label="Recent operations">
-                        <div class="recent-heading">
-                            <span class="recent-icon">"□"</span>
-                            <h2>"最近操作"</h2>
+                        <div class="provider-card-list">
+                            <For
+                                each=move || providers.get()
+                                key=|provider| provider.provider_id.clone()
+                                children=move |provider| {
+                                    let provider_id_for_class = provider.provider_id.clone();
+                                    let provider_id_for_select = provider.provider_id.clone();
+                                    let provider_id_for_apply = provider.provider_id.clone();
+                                    let edit_provider = provider.clone();
+                                    let logo = provider_initial(&provider.display_name);
+                                    view! {
+                                        <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
+                                            <span class="drag-handle">"⋮"</span>
+                                            <span class="provider-logo">{logo}</span>
+                                            <span class="provider-main">
+                                                <strong>{provider.display_name.clone()}</strong>
+                                                <span>{provider.base_url.clone()}</span>
+                                            </span>
+                                            <span class="provider-actions">
+                                                <button class="icon-action" type="button" title="Select" on:click=move |_| {
+                                                    set_selected_provider_id.set(Some(provider_id_for_select.clone()));
+                                                }>"✓"</button>
+                                                <button class="icon-action" type="button" title="Set active" on:click=move |_| {
+                                                    let provider_id = provider_id_for_apply.clone();
+                                                    set_selected_provider_id.set(Some(provider_id.clone()));
+                                                    set_result.set(format!("设置 active Provider 中: {provider_id}"));
+                                                    spawn_local(async move {
+                                                        match commands::set_active_provider(provider_id.clone()).await {
+                                                            Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
+                                                            Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                                                        }
+                                                    });
+                                                }>"★"</button>
+                                                <button class="icon-action" type="button" title="Edit" on:click=move |_| {
+                                                    set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                    set_provider_name.set(edit_provider.display_name.clone());
+                                                    set_base_url.set(edit_provider.base_url.clone());
+                                                    set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                    set_api_key.set(String::new());
+                                                    set_active_page.set(AppPage::ProvidersAdd);
+                                                }>"✎"</button>
+                                            </span>
+                                        </article>
+                                    }
+                                }
+                            />
+                            <div class="dashboard-preset-section">
+                                <div class="section-title-row compact">
+                                    <div>
+                                        <h2>"快捷预设"</h2>
+                                        <p>"预设只填表单，不直接进入 Claude Desktop 模型菜单。"</p>
+                                    </div>
+                                    <button class="provider-mapping-fetch" type="button" on:click=load_provider_presets>"读取预设"</button>
+                                </div>
+                                <div class="provider-preset-grid">
+                                    <button class="preset-card" type="button" on:click=move |_| {
+                                        set_provider_name.set("DeepSeek".to_owned());
+                                        set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
+                                        set_api_format.set("anthropic".to_owned());
+                                        set_api_key.set(String::new());
+                                        set_active_page.set(AppPage::ProvidersAdd);
+                                    }>
+                                        <span class="preset-plus">"+"</span>
+                                        <span class="preset-logo">"D"</span>
+                                        <span class="provider-main"><strong>"DeepSeek"</strong><span>"https://api.deepseek.com/anthropic"</span></span>
+                                    </button>
+                                    <button class="preset-card" type="button" on:click=move |_| {
+                                        set_provider_name.set("Kimi（月之暗面）".to_owned());
+                                        set_base_url.set("https://api.moonshot.cn/v1".to_owned());
+                                        set_api_format.set("openai_chat".to_owned());
+                                        set_api_key.set(String::new());
+                                        set_active_page.set(AppPage::ProvidersAdd);
+                                    }>
+                                        <span class="preset-plus">"+"</span>
+                                        <span class="preset-logo">"K"</span>
+                                        <span class="provider-main"><strong>"Kimi（月之暗面）"</strong><span>"https://api.moonshot.cn/v1"</span></span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <div class="button-row recent-actions">
-                            <button class="secondary-button compact" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
-                            <button class="secondary-button compact" type="button" on:click=move |_| run_copy_diagnostics_summary()>{move || copy("report_issue")}</button>
-                        </div>
-                        <div class="result-box compact-result" aria-live="polite">{move || readiness_summary_text(readiness_snapshot.get().as_ref())}</div>
-                    </section>
+                    </div>
                 </section>
 
-                <section class=move || page_section_class(active_page.get(), AppPage::Provider)>
-                    <div class="provider-layout">
-                    <article class="panel provider-form-card">
-                        <h2>{move || copy("provider_form")}</h2>
+                <section class=move || page_section_class(active_page.get(), AppPage::ProvidersAdd)>
+                    <div class="two-column provider-add-layout">
+                    <article class="panel form-panel">
                         <div class="form-grid">
                             <label class="field">
                                 <span>{move || copy("provider_name")}</span>
@@ -819,43 +955,88 @@ pub fn App() -> impl IntoView {
                                 />
                             </label>
                             <label class="field">
-                                <span>"API Base URL"</span>
+                                <span class="label-line">
+                                    <span>"API Base URL"</span>
+                                    <button class="link-action" type="button" on:click=run_provider_static_smoke>"管理与测速"</button>
+                                </span>
                                 <input
                                     value=move || base_url.get()
                                     on:input=move |event| set_base_url.set(event_target_value(&event))
                                 />
-                            </label>
-                            <label class="field">
-                                <span>"API Key"</span>
-                                <input
-                                    type="password"
-                                    placeholder="leave blank to keep saved key"
-                                    value=move || api_key.get()
-                                    on:input=move |event| set_api_key.set(event_target_value(&event))
-                                />
-                            </label>
-                            <label class="field">
-                                <span>"Auth Scheme *"</span>
-                                <select disabled=true>
-                                    <option value="bearer">"bearer"</option>
-                                </select>
+                                <small class="speed-result">{move || gateway_status_text.get()}</small>
                             </label>
                             <div class="field">
-                                <span>"API 格式 *"</span>
-                                <div class="segmented-control" role="group" aria-label="API format">
-                                    <button class=move || api_format_segment_class(api_format.get() == "anthropic") type="button" on:click=move |_| set_api_format.set("anthropic".to_owned())>"Anthropic"</button>
-                                    <button class=move || api_format_segment_class(api_format.get() == "openai_chat") type="button" on:click=move |_| set_api_format.set("openai_chat".to_owned())>"OpenAI"</button>
+                                <span>"API Key"</span>
+                                <div class="input-with-button">
+                                    <input
+                                        type=move || if show_api_key.get() { "text" } else { "password" }
+                                        placeholder="sk-..."
+                                        value=move || api_key.get()
+                                        on:input=move |event| set_api_key.set(event_target_value(&event))
+                                    />
+                                    <button class="input-icon" type="button" aria-label="Toggle API key" on:click=move |_| set_show_api_key.update(|value| *value = !*value)>
+                                        {move || if show_api_key.get() { "hide" } else { "show" }}
+                                    </button>
                                 </div>
                             </div>
-                            <div class="button-row">
-                                <button class="primary-button form-action" type="button" on:click=save_provider>{move || copy("save_provider")}</button>
+                            <label class="field">
+                                <span>"Auth Scheme *"</span>
+                                <button class="form-select auth-scheme-trigger" type="button" disabled=true><span>"bearer"</span><span>"⌄"</span></button>
+                            </label>
+
+                            <details class="advanced-provider-options" open=true>
+                                <summary><span>"高级：第三方兼容接口"</span><span class="compat-chevron">"⌄"</span></summary>
+                                <p>"默认使用 Anthropic 兼容接口。OpenAI Chat 属于实验适配，建议确认工具调用可用后再用于 Claude Code。"</p>
+                                <div class="format-choice" role="group" aria-label="API format">
+                                    <button class=move || format_choice_class(api_format.get() == "anthropic") type="button" on:click=move |_| set_api_format.set("anthropic".to_owned())>
+                                        <strong>"Anthropic 兼容"</strong>
+                                        <span>"推荐，稳定主流程"</span>
+                                    </button>
+                                    <button class=move || format_choice_class(api_format.get() == "openai_chat") type="button" on:click=move |_| set_api_format.set("openai_chat".to_owned())>
+                                        <strong>"OpenAI Chat 实验"</strong>
+                                        <span>"用于 new-api / CPA / OpenCode Go 等兼容端点"</span>
+                                    </button>
+                                </div>
+                                <div class="detect-format-row">
+                                    <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"识别协议类型"</button>
+                                    <span class="detect-format-status">"保存前仅做静态检查；真实连通在 smoke 中验证。"</span>
+                                </div>
+                            </details>
+
+                            <section class="provider-mapping-section">
+                                <div class="section-title-row">
+                                    <div>
+                                        <h2>{move || copy("model_mapping")}</h2>
+                                        <p>"把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。"</p>
+                                    </div>
+                                    <button class="provider-mapping-fetch" type="button" on:click=load_model_mappings>"读取映射"</button>
+                                </div>
+                                <div class="provider-mapping-card">
+                                    <textarea
+                                        class="json-input mapping-input"
+                                        prop:value=move || model_mapping_json.get()
+                                        on:input=move |event| set_model_mapping_json.set(event_target_value(&event))
+                                    ></textarea>
+                                    <div class="button-row mapping-actions">
+                                        <button class="secondary-button compact" type="button" on:click=save_model_mappings>"保存映射"</button>
+                                    </div>
+                                </div>
+                                <div class="apply-explain">
+                                    <span>"i"</span>
+                                    <p>"一键应用会保存供应商和模型映射，把它设为默认，并让 Claude 桌面版连接到本机 gateway。"</p>
+                                </div>
+                            </section>
+
+                            <div class="button-row provider-form-actions">
+                                <button class="primary-button form-action" type="button" on:click=apply_provider_to_desktop>"一键应用到 Claude 桌面版"</button>
+                                <button class="secondary-button form-action" type="button" on:click=save_provider>"仅保存"</button>
                                 <button class="secondary-button form-action" type="button" on:click=move |_| {
                                     set_provider_name.set("DeepSeek".to_owned());
                                     set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                     set_api_key.set(String::new());
                                     set_api_format.set("anthropic".to_owned());
+                                    set_active_page.set(AppPage::Providers);
                                 }>"取消"</button>
-                                <button class="secondary-button form-action" type="button" on:click=move |_| run_health_check()>{move || copy("check_health")}</button>
                             </div>
                         </div>
 
@@ -1013,7 +1194,125 @@ pub fn App() -> impl IntoView {
                     </div>
                 </section>
 
-                <section class=move || page_section_class(active_page.get(), AppPage::Diagnostics)>
+                <section class=move || page_section_class(active_page.get(), AppPage::Providers)>
+                    <div class="page-title with-action">
+                        <div>
+                            <h1>"提供商"</h1>
+                            <p>"管理已配置的 API 提供商。"</p>
+                        </div>
+                        <button class="primary-button" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"添加提供商"</button>
+                    </div>
+                    <article class="panel table-panel">
+                        <div class="provider-table-header">
+                            <span></span>
+                            <span>"提供商名称"</span>
+                            <span>"API Base URL"</span>
+                            <span>"模型映射"</span>
+                            <span>"状态"</span>
+                            <span>"操作"</span>
+                        </div>
+                        <div class="provider-card-list">
+                            <For
+                                each=move || providers.get()
+                                key=|provider| provider.provider_id.clone()
+                                children=move |provider| {
+                                    let edit_provider = provider.clone();
+                                    let select_provider = provider.clone();
+                                    let active_provider = provider.clone();
+                                    let provider_id_for_class = provider.provider_id.clone();
+                                    let logo = provider_initial(&provider.display_name);
+                                    view! {
+                                        <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
+                                            <span class="drag-handle">"⋮"</span>
+                                            <span class="provider-logo">{logo}</span>
+                                            <span class="provider-main">
+                                                <strong>{provider.display_name.clone()}</strong>
+                                                <span>{provider.base_url.clone()}</span>
+                                            </span>
+                                            <span class="provider-feedback">
+                                                <span class="speed-result inline">{format!("key={}", provider.has_api_key)}</span>
+                                            </span>
+                                            <span class="provider-actions">
+                                                <button class="icon-action" type="button" title="Select" on:click=move |_| {
+                                                    set_selected_provider_id.set(Some(select_provider.provider_id.clone()));
+                                                }>"✓"</button>
+                                                <button class="icon-action" type="button" title="Set active" on:click=move |_| {
+                                                    let provider_id = active_provider.provider_id.clone();
+                                                    set_selected_provider_id.set(Some(provider_id.clone()));
+                                                    set_result.set(format!("设置 active Provider 中: {provider_id}"));
+                                                    spawn_local(async move {
+                                                        match commands::set_active_provider(provider_id.clone()).await {
+                                                            Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
+                                                            Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                                                        }
+                                                    });
+                                                }>"★"</button>
+                                                <button class="icon-action" type="button" title="Edit" on:click=move |_| {
+                                                    set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                    set_provider_name.set(edit_provider.display_name.clone());
+                                                    set_base_url.set(edit_provider.base_url.clone());
+                                                    set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                    set_api_key.set(String::new());
+                                                    set_active_page.set(AppPage::ProvidersAdd);
+                                                }>"✎"</button>
+                                            </span>
+                                        </article>
+                                    }
+                                }
+                            />
+                        </div>
+                        <div class="button-row provider-list-toolbar">
+                            <button class="secondary-button compact" type="button" on:click=refresh_providers>"刷新"</button>
+                            <button class="secondary-button compact" type="button" on:click=set_selected_active>"设为默认"</button>
+                            <button class="secondary-button compact" type="button" on:click=move_selected_provider_first>"移到首位"</button>
+                            <button class="secondary-button compact danger-outline" type="button" on:click=delete_selected_provider>"删除"</button>
+                        </div>
+                    </article>
+                </section>
+
+                <section class=move || page_section_class(active_page.get(), AppPage::Desktop)>
+                    <div class="page-title title-with-back">
+                        <button class="square-button" type="button" aria-label="back" on:click=move |_| set_active_page.set(AppPage::Dashboard)>"←"</button>
+                        <div>
+                            <h1>"Claude 桌面版"</h1>
+                            <p>"一键让 Claude 桌面版使用当前供应商。"</p>
+                        </div>
+                    </div>
+                    <div class="two-column desktop-layout">
+                        <div>
+                            <article class="panel desktop-card">
+                                <h2>"Claude 桌面版配置"</h2>
+                                <div class="configured-row">
+                                    <span class="circle-check">"✓"</span>
+                                    <strong>{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</strong>
+                                </div>
+                                <div class="apply-explain desktop-explain">
+                                    <span>"i"</span>
+                                    <p>"Claude Desktop 先连接本机 gateway；本工具再把 claude-* safe route 翻译成当前供应商模型。"</p>
+                                </div>
+                                <button class="primary-button wide-button" type="button" on:click=apply>"应用到 Claude 桌面版"</button>
+                                <button class="secondary-button wide-button" type="button" on:click=probe_desktop_config>"读取配置详情"</button>
+                            </article>
+                            <article class="panel details-panel">
+                                <div class="panel-header">
+                                    <h2>"配置详情"</h2>
+                                </div>
+                                <pre class="code-block">{move || result.get()}</pre>
+                            </article>
+                        </div>
+
+                        <article class="panel guide-panel">
+                            <h2>"快速引导"</h2>
+                            <div class="mini-steps">
+                                <div class="mini-step"><span>"1"</span><strong>"点击应用"</strong><p>"把 Claude Desktop 连接到本工具。"</p></div>
+                                <div class="mini-step"><span>"2"</span><strong>"重启 Claude Desktop"</strong><p>"关闭并重新打开桌面版。"</p></div>
+                                <div class="mini-step"><span>"3"</span><strong>"开始使用"</strong><p>"在 Claude Desktop 里正常提问。"</p></div>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+
+                <section class=move || page_section_class(active_page.get(), AppPage::Proxy)>
                     <div class="work-grid">
                     <article class="panel">
                         <h2>"Gateway / Apply"</h2>
@@ -1093,6 +1392,22 @@ pub fn App() -> impl IntoView {
                         </article>
                     </div>
                 </section>
+
+                <section class=move || page_section_class(active_page.get(), AppPage::Guide)>
+                    <div class="guide-hero">
+                        <img src="app-icon.png" alt="CC Desktop Switch icon" />
+                        <div>
+                            <h1>"使用引导"</h1>
+                            <p>"添加供应商后，按下面 3 步完成接入。"</p>
+                        </div>
+                    </div>
+                    <div class="timeline">
+                        <article class="timeline-card"><span>"1"</span><strong>"添加提供商"</strong><p>"选择预设，填入 API Key，必要时调整模型映射。"</p></article>
+                        <article class="timeline-card"><span>"2"</span><strong>"一键应用"</strong><p>"保存 Provider、设为默认、启动 gateway 并写入 Claude Desktop。"</p></article>
+                        <article class="timeline-card"><span>"3"</span><strong>"重启 Claude Desktop"</strong><p>"重启后 Claude Desktop 只看到 claude-* safe route。"</p></article>
+                    </div>
+                    <button class="primary-button guide-start" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"开始使用"</button>
+                </section>
             </main>
         </div>
     }
@@ -1117,19 +1432,26 @@ fn route_tab_class(active: bool) -> &'static str {
     }
 }
 
+fn primary_route_active(active_page: AppPage, route: AppPage) -> bool {
+    match route {
+        AppPage::Providers => matches!(active_page, AppPage::Providers | AppPage::ProvidersAdd),
+        _ => active_page == route,
+    }
+}
+
 fn page_title_class(page: AppPage) -> &'static str {
-    if page == AppPage::Dashboard {
+    if matches!(page, AppPage::Dashboard | AppPage::Providers) {
         "page-title page-title-dashboard"
     } else {
         "page-title"
     }
 }
 
-fn api_format_segment_class(active: bool) -> &'static str {
+fn format_choice_class(active: bool) -> &'static str {
     if active {
-        "segment-button active"
+        "format-choice-button active"
     } else {
-        "segment-button"
+        "format-choice-button"
     }
 }
 
@@ -1139,6 +1461,32 @@ fn preset_card_class(active: bool) -> &'static str {
     } else {
         "preset-card"
     }
+}
+
+fn provider_switch_card_class(active: bool) -> &'static str {
+    if active {
+        "provider-switch-card active"
+    } else {
+        "provider-switch-card"
+    }
+}
+
+fn desktop_warning_class(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
+    if snapshot
+        .map(|snapshot| snapshot.issue_codes.is_empty())
+        .unwrap_or(true)
+    {
+        "desktop-warning hidden"
+    } else {
+        "desktop-warning"
+    }
+}
+
+fn provider_initial(name: &str) -> String {
+    name.chars()
+        .find(|character| !character.is_whitespace())
+        .map(|character| character.to_string())
+        .unwrap_or_else(|| "P".to_owned())
 }
 
 fn language_switch_label(language: &str) -> &'static str {
@@ -1161,17 +1509,26 @@ fn page_section_class(active_page: AppPage, page: AppPage) -> &'static str {
 fn page_title(page: AppPage, language: &str) -> &'static str {
     match (language, page) {
         ("en", AppPage::Dashboard) => "Dashboard",
-        ("en", AppPage::Provider) => "Add provider",
-        ("en", AppPage::Diagnostics) => "Diagnostics / Advanced",
+        ("en", AppPage::ProvidersAdd) => "Add provider",
+        ("en", AppPage::Providers) => "Providers",
+        ("en", AppPage::Desktop) => "Claude Desktop",
+        ("en", AppPage::Proxy) => "Forwarding",
         ("en", AppPage::Settings) => "Settings",
+        ("en", AppPage::Guide) => "Guide",
         ("ja", AppPage::Dashboard) => "ダッシュボード",
-        ("ja", AppPage::Provider) => "Provider 追加",
-        ("ja", AppPage::Diagnostics) => "診断 / 高度",
+        ("ja", AppPage::ProvidersAdd) => "Provider 追加",
+        ("ja", AppPage::Providers) => "Provider",
+        ("ja", AppPage::Desktop) => "Claude Desktop",
+        ("ja", AppPage::Proxy) => "転送",
         ("ja", AppPage::Settings) => "設定",
+        ("ja", AppPage::Guide) => "ガイド",
         (_, AppPage::Dashboard) => "仪表盘",
-        (_, AppPage::Provider) => "添加提供商",
-        (_, AppPage::Diagnostics) => "诊断 / 高级",
+        (_, AppPage::ProvidersAdd) => "添加提供商",
+        (_, AppPage::Providers) => "提供商",
+        (_, AppPage::Desktop) => "Claude 桌面版",
+        (_, AppPage::Proxy) => "转发状态",
         (_, AppPage::Settings) => "设置",
+        (_, AppPage::Guide) => "使用引导",
     }
 }
 
@@ -1180,17 +1537,26 @@ fn page_subtitle(page: AppPage, language: &str) -> &'static str {
         ("en", AppPage::Dashboard) => {
             "Save provider, check health, apply to Claude Desktop, and report issues."
         }
-        ("en", AppPage::Provider) => "Add a new API provider or choose a preset.",
-        ("en", AppPage::Diagnostics) => "Gateway, Apply, readiness, and redacted diagnostics.",
+        ("en", AppPage::ProvidersAdd) => "Add a new API provider or choose a preset.",
+        ("en", AppPage::Providers) => "Manage configured API providers.",
+        ("en", AppPage::Desktop) => "Apply the active provider to Claude Desktop.",
+        ("en", AppPage::Proxy) => "Gateway, Apply, readiness, and redacted diagnostics.",
         ("en", AppPage::Settings) => "Language, theme, and local gateway defaults.",
+        ("en", AppPage::Guide) => "Three steps to connect Claude Desktop.",
         ("ja", AppPage::Dashboard) => "Provider 保存、health、Apply、問題報告。",
-        ("ja", AppPage::Provider) => "新しい API Provider を追加するか preset を選択します。",
-        ("ja", AppPage::Diagnostics) => "Gateway、Apply、readiness、redacted diagnostics。",
+        ("ja", AppPage::ProvidersAdd) => "新しい API Provider を追加するか preset を選択します。",
+        ("ja", AppPage::Providers) => "設定済み API Provider を管理します。",
+        ("ja", AppPage::Desktop) => "active Provider を Claude Desktop に適用します。",
+        ("ja", AppPage::Proxy) => "Gateway、Apply、readiness、redacted diagnostics。",
         ("ja", AppPage::Settings) => "言語、テーマ、local gateway default。",
+        ("ja", AppPage::Guide) => "Claude Desktop 接続の 3 ステップ。",
         (_, AppPage::Dashboard) => "保存 Provider、健康检查、一键应用、报告问题。",
-        (_, AppPage::Provider) => "添加新的 API 提供商或选择预设。",
-        (_, AppPage::Diagnostics) => "Gateway、Apply、readiness 和脱敏诊断。",
+        (_, AppPage::ProvidersAdd) => "添加新的 API 提供商或选择预设。",
+        (_, AppPage::Providers) => "管理已配置的 API 提供商。",
+        (_, AppPage::Desktop) => "一键让 Claude 桌面版使用当前供应商。",
+        (_, AppPage::Proxy) => "Gateway、Apply、readiness 和脱敏诊断。",
         (_, AppPage::Settings) => "语言、主题和本机 gateway 默认项。",
+        (_, AppPage::Guide) => "按 3 步完成接入。",
     }
 }
 
@@ -1204,22 +1570,6 @@ fn desktop_status_value(
         Some(_) => "未配置".to_owned(),
         None if provider_saved => "待应用".to_owned(),
         None => "未配置".to_owned(),
-    }
-}
-
-fn status_pill_class(passed: Option<bool>) -> String {
-    match passed {
-        Some(true) => "status-pill success".to_owned(),
-        Some(false) => "status-pill danger".to_owned(),
-        None => "status-pill warning".to_owned(),
-    }
-}
-
-fn readiness_label(passed: Option<bool>, pending: &'static str) -> String {
-    match passed {
-        Some(true) => "通过".to_owned(),
-        Some(false) => "需处理".to_owned(),
-        None => pending.to_owned(),
     }
 }
 
@@ -1237,16 +1587,6 @@ fn readiness_badge_label(passed: Option<bool>) -> &'static str {
         Some(false) => "check",
         None => "pending",
     }
-}
-
-fn readiness_summary_text(snapshot: Option<&commands::ReadinessSnapshot>) -> String {
-    let Some(snapshot) = snapshot else {
-        return "Health has not run in this session.".to_owned();
-    };
-    if snapshot.issue_codes.is_empty() {
-        return "No readiness issue codes reported.".to_owned();
-    }
-    format!("Issues: {}", snapshot.issue_codes.join(", "))
 }
 
 fn readiness_issue_text(snapshot: Option<&commands::ReadinessSnapshot>) -> String {
@@ -1473,8 +1813,10 @@ fn text(language: &str, key: &str) -> &'static str {
     match (language, key) {
         ("en", "nav_dashboard") => "Dashboard",
         ("en", "nav_provider") => "Provider",
+        ("en", "nav_proxy") => "Forwarding",
         ("en", "nav_diagnostics") => "Diagnostics",
         ("en", "nav_settings") => "Settings",
+        ("en", "nav_guide") => "Guide",
         ("en", "dashboard_title") => "Local gateway workbench",
         ("en", "dashboard_subtitle") => {
             "Provider, gateway, apply, import/export, and diagnostics are wired through Rust commands."
@@ -1495,8 +1837,10 @@ fn text(language: &str, key: &str) -> &'static str {
         ("en", "readiness_layers") => "Readiness",
         ("ja", "nav_dashboard") => "ダッシュボード",
         ("ja", "nav_provider") => "プロバイダー",
+        ("ja", "nav_proxy") => "転送",
         ("ja", "nav_diagnostics") => "診断",
         ("ja", "nav_settings") => "設定",
+        ("ja", "nav_guide") => "ガイド",
         ("ja", "dashboard_title") => "ローカル gateway",
         ("ja", "dashboard_subtitle") => {
             "Provider、gateway、Apply、import/export、diagnostics を Rust command で接続しています。"
@@ -1517,8 +1861,10 @@ fn text(language: &str, key: &str) -> &'static str {
         ("ja", "readiness_layers") => "Readiness",
         (_, "nav_dashboard") => "仪表盘",
         (_, "nav_provider") => "提供商",
+        (_, "nav_proxy") => "转发",
         (_, "nav_diagnostics") => "诊断",
         (_, "nav_settings") => "设置",
+        (_, "nav_guide") => "引导",
         (_, "dashboard_title") => "本机 gateway 工作台",
         (_, "dashboard_subtitle") => {
             "Provider、gateway、Apply、import/export 和 diagnostics 已通过 Rust command 串起。"
