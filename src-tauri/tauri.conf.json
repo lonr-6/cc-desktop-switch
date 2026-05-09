@@ -30,6 +30,7 @@
     "targets": "all",
     "icon": [
       "../frontend/assets/app-icon.png",
+      "../frontend/assets/app-icon.icns",
       "../frontend/assets/app-icon.ico"
     ]
   }
