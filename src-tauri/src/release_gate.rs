@@ -584,6 +584,7 @@ mod tests {
     use rsa::traits::PublicKeyParts;
     use rsa::{RsaPrivateKey, RsaPublicKey};
     use std::path::PathBuf;
+    #[cfg(windows)]
     use std::process::Command;
     use std::sync::OnceLock;
     use std::time::{SystemTime, UNIX_EPOCH};
