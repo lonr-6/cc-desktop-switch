@@ -23,8 +23,8 @@ pub fn App() -> impl IntoView {
     let (theme, set_theme) = signal("light".to_owned());
     let (providers, set_providers) = signal(Vec::<ProviderSummary>::new());
     let (selected_provider_id, set_selected_provider_id) = signal(None::<String>);
-    let (provider_name, set_provider_name) = signal("DeepSeek".to_owned());
-    let (base_url, set_base_url) = signal("https://api.deepseek.com/anthropic".to_owned());
+    let (provider_name, set_provider_name) = signal(String::new());
+    let (base_url, set_base_url) = signal(String::new());
     let (api_key, set_api_key) = signal(String::new());
     let (show_api_key, set_show_api_key) = signal(false);
     let (api_format, set_api_format) = signal("anthropic".to_owned());
@@ -32,18 +32,17 @@ pub fn App() -> impl IntoView {
     let (import_preview_text, set_import_preview_text) =
         signal("Provider import preview has not run.".to_owned());
     let (provider_presets, set_provider_presets) = signal(Vec::<ProviderPreset>::new());
-    let (selected_preset_id, set_selected_preset_id) = signal("deepseek".to_owned());
+    let (selected_preset_id, set_selected_preset_id) = signal(String::new());
     let (preset_api_key, set_preset_api_key) = signal(String::new());
     let (model_mapping_json, set_model_mapping_json) = signal(default_model_mapping_json());
     let (backup_file_name, set_backup_file_name) = signal(String::new());
     let (result, set_result) = signal("尚未执行 command。".to_owned());
     let (diagnostics_text, set_diagnostics_text) = signal("尚未生成 diagnostics。".to_owned());
     let (provider_saved, set_provider_saved) = signal(false);
-    let (gateway_status_text, set_gateway_status_text) = signal("计划 :18080".to_owned());
+    let (_gateway_status_text, set_gateway_status_text) = signal(String::new());
     let (readiness_snapshot, set_readiness_snapshot) = signal(None::<commands::ReadinessSnapshot>);
 
     let copy = move |key: &'static str| text(&language.get(), key);
-    let theme_label = move || if theme.get() == "dark" { "☀" } else { "☾" };
 
     let refresh_providers = move |_| {
         set_result.set("刷新 Provider 列表中...".to_owned());
@@ -775,47 +774,67 @@ pub fn App() -> impl IntoView {
         });
     };
 
+    spawn_local(async move {
+        if let Ok(next_providers) = commands::list_providers().await {
+            if selected_provider_id.get_untracked().is_none() {
+                if let Some(provider) = next_providers.first() {
+                    set_selected_provider_id.set(Some(provider.provider_id.clone()));
+                }
+            }
+            set_providers.set(next_providers);
+        }
+        if let Ok(presets) = commands::list_provider_presets().await {
+            set_provider_presets.set(presets);
+        }
+        if let Ok(snapshot) = commands::health().await {
+            set_gateway_status_text.set(format_gateway_health(&snapshot.gateway));
+            set_readiness_snapshot.set(Some(snapshot));
+        }
+    });
+
     view! {
         <div class="app-shell" data-theme=move || theme.get()>
             <header class="app-header">
                 <div class="header-actions-left">
                     <button class="dashboard-feedback-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>
-                        <span class="button-icon">"◌"</span><span>{move || copy("report_issue")}</span>
+                        <span class="button-icon icon-svg icon-chat" aria-hidden="true"></span><span>{move || copy("report_issue")}</span>
                     </button>
                     <button class="dashboard-import-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
-                        <span class="button-icon">"⇩"</span><span>"导入 CC Switch 配置"</span>
+                        <span class="button-icon icon-svg icon-import" aria-hidden="true"></span><span>"导入 CC Switch 配置"</span>
                     </button>
                     <button class="dashboard-clear-button" type="button" on:click=move |_| set_active_page.set(AppPage::Desktop)>
-                        <span class="button-icon">"⌫"</span><span>"清除桌面版配置"</span>
+                        <span class="button-icon icon-svg icon-trash" aria-hidden="true"></span><span>"清除桌面版配置"</span>
                     </button>
                 </div>
 
                 <nav class="route-tabs" aria-label="Primary navigation">
                     <button title="Dashboard" class=move || route_tab_class(active_page.get() == AppPage::Dashboard) type="button" on:click=move |_| set_active_page.set(AppPage::Dashboard)>
-                        <span class="tab-icon">"⌂"</span>
+                        <span class="tab-icon icon-svg icon-dashboard" aria-hidden="true"></span>
                         <span>{move || copy("nav_dashboard")}</span>
                     </button>
                     <button title="Providers" class=move || route_tab_class(primary_route_active(active_page.get(), AppPage::Providers)) type="button" on:click=move |_| set_active_page.set(AppPage::Providers)>
-                        <span class="tab-icon">"⌁"</span>
+                        <span class="tab-icon icon-svg icon-plug" aria-hidden="true"></span>
                         <span>{move || copy("nav_provider")}</span>
                     </button>
                     <button title="Forwarding" class=move || route_tab_class(active_page.get() == AppPage::Proxy) type="button" on:click=move |_| set_active_page.set(AppPage::Proxy)>
-                        <span class="tab-icon">"◎"</span>
+                        <span class="tab-icon icon-svg icon-broadcast" aria-hidden="true"></span>
                         <span>{move || copy("nav_proxy")}</span>
                     </button>
                     <button title="Settings" class=move || route_tab_class(active_page.get() == AppPage::Settings) type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
-                        <span class="tab-icon">"⚙"</span>
+                        <span class="tab-icon icon-svg icon-gear" aria-hidden="true"></span>
                         <span>{move || copy("nav_settings")}</span>
                     </button>
                     <button title="Guide" class=move || route_tab_class(active_page.get() == AppPage::Guide) type="button" on:click=move |_| set_active_page.set(AppPage::Guide)>
-                        <span class="tab-icon">"?"</span>
+                        <span class="tab-icon icon-svg icon-book" aria-hidden="true"></span>
                         <span>{move || copy("nav_guide")}</span>
                     </button>
                 </nav>
 
                 <div class="header-actions">
                     <button class="update-badge" type="button" hidden=true>"有新版本"</button>
-                    <button class="theme-btn" type="button" aria-label="Settings" on:click=move |_| set_active_page.set(AppPage::Settings)>"⚙"</button>
+                    <button class="theme-btn" type="button" aria-label="Settings" on:click=move |_| set_active_page.set(AppPage::Settings)>
+                        <span class="icon-svg icon-gear" aria-hidden="true"></span>
+                    </button>
                     <button class="language-toggle" type="button" on:click=move |_| {
                         set_language.update(|value| {
                             *value = if value == "zh" {
@@ -831,8 +850,12 @@ pub fn App() -> impl IntoView {
                         set_theme.update(|value| {
                             *value = if value == "dark" { "light".to_owned() } else { "dark".to_owned() };
                         });
-                    }>{theme_label}</button>
-                    <button class="round-add" type="button" aria-label="Add provider" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"+"</button>
+                    }>
+                        <span class=move || if theme.get() == "dark" { "icon-svg icon-sun" } else { "icon-svg icon-moon" } aria-hidden="true"></span>
+                    </button>
+                    <button class="round-add" type="button" aria-label="Add provider" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>
+                        <span class="icon-svg icon-plus" aria-hidden="true"></span>
+                    </button>
                 </div>
             </header>
 
@@ -849,96 +872,193 @@ pub fn App() -> impl IntoView {
                     </div>
 
                     <div class="switch-board">
-                        <div class="switch-board-head">
-                            <div>
-                                <h1>"选择当前提供商"</h1>
-                                <p>"默认只把当前 Provider 的 claude-* safe route 写入 Claude Desktop。"</p>
-                            </div>
-                            <div class="switch-board-actions">
-                                <button class="secondary-button compact" type="button" on:click=refresh_providers>"刷新"</button>
-                                <button class="primary-button compact" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"添加提供商"</button>
-                            </div>
-                        </div>
-
                         <div class="provider-card-list">
-                            <For
-                                each=move || providers.get()
-                                key=|provider| provider.provider_id.clone()
-                                children=move |provider| {
-                                    let provider_id_for_class = provider.provider_id.clone();
-                                    let provider_id_for_select = provider.provider_id.clone();
-                                    let provider_id_for_apply = provider.provider_id.clone();
-                                    let edit_provider = provider.clone();
-                                    let logo = provider_initial(&provider.display_name);
-                                    view! {
-                                        <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
-                                            <span class="drag-handle">"⋮"</span>
-                                            <span class="provider-logo">{logo}</span>
-                                            <span class="provider-main">
-                                                <strong>{provider.display_name.clone()}</strong>
-                                                <span>{provider.base_url.clone()}</span>
-                                            </span>
-                                            <span class="provider-actions">
-                                                <button class="icon-action" type="button" title="Select" on:click=move |_| {
-                                                    set_selected_provider_id.set(Some(provider_id_for_select.clone()));
-                                                }>"✓"</button>
-                                                <button class="icon-action" type="button" title="Set active" on:click=move |_| {
-                                                    let provider_id = provider_id_for_apply.clone();
-                                                    set_selected_provider_id.set(Some(provider_id.clone()));
-                                                    set_result.set(format!("设置 active Provider 中: {provider_id}"));
-                                                    spawn_local(async move {
-                                                        match commands::set_active_provider(provider_id.clone()).await {
-                                                            Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
-                                                            Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                            <div class=move || configured_provider_list_class(!providers.get().is_empty())>
+                                <For
+                                    each=move || providers.get()
+                                    key=|provider| provider.provider_id.clone()
+                                    children=move |provider| {
+                                        let provider_id_for_card_class = provider.provider_id.clone();
+                                        let provider_id_for_button_class = provider.provider_id.clone();
+                                        let provider_id_for_button_label = provider.provider_id.clone();
+                                        let provider_id_for_disabled = provider.provider_id.clone();
+                                        let provider_id_for_apply = provider.provider_id.clone();
+                                        let provider_id_for_test = provider.provider_id.clone();
+                                        let provider_id_for_copy = provider.provider_id.clone();
+                                        let edit_provider = provider.clone();
+                                        let logo_src = provider_logo_src(&provider.display_name);
+                                        view! {
+                                            <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_card_class.as_str()))>
+                                                <span class="drag-handle"><span class="icon-svg icon-grip" aria-hidden="true"></span></span>
+                                                <span class="provider-logo"><img src=logo_src alt="" /></span>
+                                                <span class="provider-main">
+                                                    <strong>{provider.display_name.clone()}</strong>
+                                                    <span>{provider.base_url.clone()}</span>
+                                                </span>
+                                                <span class="provider-actions">
+                                                    <button
+                                                        class=move || compact_enable_class(selected_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
+                                                        type="button"
+                                                        disabled=move || selected_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
+                                                        on:click=move |_| {
+                                                            let provider_id = provider_id_for_apply.clone();
+                                                            set_selected_provider_id.set(Some(provider_id.clone()));
+                                                            set_result.set(format!("设置 active Provider 中: {provider_id}"));
+                                                            spawn_local(async move {
+                                                                match commands::set_active_provider(provider_id.clone()).await {
+                                                                    Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
+                                                                    Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                                                                }
+                                                            });
                                                         }
-                                                    });
-                                                }>"★"</button>
-                                                <button class="icon-action" type="button" title="Edit" on:click=move |_| {
-                                                    set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
-                                                    set_provider_name.set(edit_provider.display_name.clone());
-                                                    set_base_url.set(edit_provider.base_url.clone());
-                                                    set_api_format.set(api_format_value(&edit_provider.api_format));
-                                                    set_api_key.set(String::new());
-                                                    set_active_page.set(AppPage::ProvidersAdd);
-                                                }>"✎"</button>
-                                            </span>
-                                        </article>
+                                                    >
+                                                        <span class="icon-svg icon-play" aria-hidden="true"></span>
+                                                        <span>{move || if selected_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
+                                                    </button>
+                                                    <button class="icon-action" type="button" title="Test speed" on:click=move |_| set_result.set(format!("provider test selected: {provider_id_for_test}"))>
+                                                        <span class="icon-svg icon-lightning" aria-hidden="true"></span>
+                                                    </button>
+                                                    <button class="icon-action" type="button" title="Copy URL" on:click=move |_| set_result.set(format!("copy provider url: {provider_id_for_copy}"))>
+                                                        <span class="icon-svg icon-copy" aria-hidden="true"></span>
+                                                    </button>
+                                                    <button class="icon-action" type="button" title="Edit" on:click=move |_| {
+                                                        set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                        set_provider_name.set(edit_provider.display_name.clone());
+                                                        set_base_url.set(edit_provider.base_url.clone());
+                                                        set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                        set_api_key.set(String::new());
+                                                        set_selected_preset_id.set(String::new());
+                                                        set_active_page.set(AppPage::ProvidersAdd);
+                                                    }>
+                                                        <span class="icon-svg icon-edit" aria-hidden="true"></span>
+                                                    </button>
+                                                    <button class="icon-action" type="button" title="Forwarding" on:click=move |_| set_active_page.set(AppPage::Proxy)>
+                                                        <span class="icon-svg icon-terminal" aria-hidden="true"></span>
+                                                    </button>
+                                                </span>
+                                            </article>
+                                        }
                                     }
-                                }
-                            />
-                            <div class="dashboard-preset-section">
+                                />
+                            </div>
+
+                            <div class=move || dashboard_empty_preset_grid_class(providers.get().is_empty())>
+                                <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_selected_preset_id.set("deepseek".to_owned());
+                                    set_provider_name.set("DeepSeek".to_owned());
+                                    set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
+                                    set_api_format.set("anthropic".to_owned());
+                                    set_api_key.set(String::new());
+                                    set_active_page.set(AppPage::ProvidersAdd);
+                                }>
+                                    <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                    <span class="provider-logo"><img src="deepseek.ico" alt="" /></span>
+                                    <span class="provider-main"><strong>"DeepSeek"</strong><span>"https://api.deepseek.com/anthropic"</span></span>
+                                    <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                </button>
+                                <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_selected_preset_id.set("kimi".to_owned());
+                                    set_provider_name.set("Kimi（月之暗面）".to_owned());
+                                    set_base_url.set("https://api.moonshot.cn/v1".to_owned());
+                                    set_api_format.set("openai_chat".to_owned());
+                                    set_api_key.set(String::new());
+                                    set_active_page.set(AppPage::ProvidersAdd);
+                                }>
+                                    <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                    <span class="provider-logo"><img src="kimi.ico" alt="" /></span>
+                                    <span class="provider-main"><strong>"Kimi（月之暗面）"</strong><span>"https://api.moonshot.cn/v1"</span></span>
+                                    <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                </button>
+                                <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_selected_preset_id.set("qiniu".to_owned());
+                                    set_provider_name.set("七牛云 AI".to_owned());
+                                    set_base_url.set("https://api.qnaigc.com/v1".to_owned());
+                                    set_api_format.set("openai_chat".to_owned());
+                                    set_api_key.set(String::new());
+                                    set_active_page.set(AppPage::ProvidersAdd);
+                                }>
+                                    <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                    <span class="provider-logo"><img src="qiniu.ico" alt="" /></span>
+                                    <span class="provider-main"><strong>"七牛云 AI"</strong><span>"https://api.qnaigc.com/v1"</span></span>
+                                    <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                </button>
+                                <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_selected_preset_id.set("zhipu".to_owned());
+                                    set_provider_name.set("智谱 GLM".to_owned());
+                                    set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
+                                    set_api_format.set("openai_chat".to_owned());
+                                    set_api_key.set(String::new());
+                                    set_active_page.set(AppPage::ProvidersAdd);
+                                }>
+                                    <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                    <span class="provider-logo"><img src="zhipu.png" alt="" /></span>
+                                    <span class="provider-main"><strong>"智谱 GLM"</strong><span>"https://open.bigmodel.cn/api/paas/v4/"</span></span>
+                                    <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                </button>
+                            </div>
+
+                            <section class=move || dashboard_preset_section_class(!providers.get().is_empty()) aria-label="继续添加提供商">
                                 <div class="section-title-row compact">
                                     <div>
-                                        <h2>"快捷预设"</h2>
-                                        <p>"预设只填表单，不直接进入 Claude Desktop 模型菜单。"</p>
+                                        <h2>"继续添加提供商"</h2>
+                                        <p>"这里会一直保留还没添加的厂商，点一个就能带着预设进入添加页。"</p>
                                     </div>
-                                    <button class="provider-mapping-fetch" type="button" on:click=load_provider_presets>"读取预设"</button>
                                 </div>
                                 <div class="provider-preset-grid">
-                                    <button class="preset-card" type="button" on:click=move |_| {
+                                    <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_selected_preset_id.set("deepseek".to_owned());
                                         set_provider_name.set("DeepSeek".to_owned());
                                         set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                         set_api_format.set("anthropic".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
-                                        <span class="preset-plus">"+"</span>
-                                        <span class="preset-logo">"D"</span>
+                                        <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                        <span class="provider-logo"><img src="deepseek.ico" alt="" /></span>
                                         <span class="provider-main"><strong>"DeepSeek"</strong><span>"https://api.deepseek.com/anthropic"</span></span>
+                                        <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                     </button>
-                                    <button class="preset-card" type="button" on:click=move |_| {
+                                    <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_selected_preset_id.set("kimi".to_owned());
                                         set_provider_name.set("Kimi（月之暗面）".to_owned());
                                         set_base_url.set("https://api.moonshot.cn/v1".to_owned());
                                         set_api_format.set("openai_chat".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
-                                        <span class="preset-plus">"+"</span>
-                                        <span class="preset-logo">"K"</span>
+                                        <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                        <span class="provider-logo"><img src="kimi.ico" alt="" /></span>
                                         <span class="provider-main"><strong>"Kimi（月之暗面）"</strong><span>"https://api.moonshot.cn/v1"</span></span>
+                                        <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                    </button>
+                                    <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_selected_preset_id.set("qiniu".to_owned());
+                                        set_provider_name.set("七牛云 AI".to_owned());
+                                        set_base_url.set("https://api.qnaigc.com/v1".to_owned());
+                                        set_api_format.set("openai_chat".to_owned());
+                                        set_api_key.set(String::new());
+                                        set_active_page.set(AppPage::ProvidersAdd);
+                                    }>
+                                        <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                        <span class="provider-logo"><img src="qiniu.ico" alt="" /></span>
+                                        <span class="provider-main"><strong>"七牛云 AI"</strong><span>"https://api.qnaigc.com/v1"</span></span>
+                                        <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
+                                    </button>
+                                    <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_selected_preset_id.set("zhipu".to_owned());
+                                        set_provider_name.set("智谱 GLM".to_owned());
+                                        set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
+                                        set_api_format.set("openai_chat".to_owned());
+                                        set_api_key.set(String::new());
+                                        set_active_page.set(AppPage::ProvidersAdd);
+                                    }>
+                                        <span class="drag-handle preset-plus"><span class="icon-svg icon-plus" aria-hidden="true"></span></span>
+                                        <span class="provider-logo"><img src="zhipu.png" alt="" /></span>
+                                        <span class="provider-main"><strong>"智谱 GLM"</strong><span>"https://open.bigmodel.cn/api/paas/v4/"</span></span>
+                                        <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                     </button>
                                 </div>
-                            </div>
+                            </section>
                         </div>
                     </div>
                 </section>
@@ -957,13 +1077,15 @@ pub fn App() -> impl IntoView {
                             <label class="field">
                                 <span class="label-line">
                                     <span>"API Base URL"</span>
-                                    <button class="link-action" type="button" on:click=run_provider_static_smoke>"管理与测速"</button>
+                                    <button class="link-action" type="button" on:click=run_provider_static_smoke>
+                                        <span class="icon-svg icon-lightning" aria-hidden="true"></span><span>"管理与测速"</span>
+                                    </button>
                                 </span>
                                 <input
                                     value=move || base_url.get()
                                     on:input=move |event| set_base_url.set(event_target_value(&event))
                                 />
-                                <small class="speed-result">{move || gateway_status_text.get()}</small>
+                                <small class="speed-result"></small>
                             </label>
                             <div class="field">
                                 <span>"API Key"</span>
@@ -975,17 +1097,17 @@ pub fn App() -> impl IntoView {
                                         on:input=move |event| set_api_key.set(event_target_value(&event))
                                     />
                                     <button class="input-icon" type="button" aria-label="Toggle API key" on:click=move |_| set_show_api_key.update(|value| *value = !*value)>
-                                        {move || if show_api_key.get() { "hide" } else { "show" }}
+                                        <span class=move || if show_api_key.get() { "icon-svg icon-eye-off" } else { "icon-svg icon-eye" } aria-hidden="true"></span>
                                     </button>
                                 </div>
                             </div>
                             <label class="field">
                                 <span>"Auth Scheme *"</span>
-                                <button class="form-select auth-scheme-trigger" type="button" disabled=true><span>"bearer"</span><span>"⌄"</span></button>
+                                <button class="form-select auth-scheme-trigger" type="button" disabled=true><span>"bearer"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                             </label>
 
                             <details class="advanced-provider-options" open=true>
-                                <summary><span>"高级：第三方兼容接口"</span><span class="compat-chevron">"⌄"</span></summary>
+                                <summary><span class="icon-svg icon-sliders" aria-hidden="true"></span><span>"高级：第三方兼容接口"</span><span class="compat-chevron icon-svg icon-chevron-down" aria-hidden="true"></span></summary>
                                 <p>"默认使用 Anthropic 兼容接口。OpenAI Chat 属于实验适配，建议确认工具调用可用后再用于 Claude Code。"</p>
                                 <div class="format-choice" role="group" aria-label="API format">
                                     <button class=move || format_choice_class(api_format.get() == "anthropic") type="button" on:click=move |_| set_api_format.set("anthropic".to_owned())>
@@ -998,7 +1120,9 @@ pub fn App() -> impl IntoView {
                                     </button>
                                 </div>
                                 <div class="detect-format-row">
-                                    <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"识别协议类型"</button>
+                                    <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>
+                                        <span class="icon-svg icon-search" aria-hidden="true"></span><span>"识别协议类型"</span>
+                                    </button>
                                     <span class="detect-format-status">"保存前仅做静态检查；真实连通在 smoke 中验证。"</span>
                                 </div>
                             </details>
@@ -1009,32 +1133,62 @@ pub fn App() -> impl IntoView {
                                         <h2>{move || copy("model_mapping")}</h2>
                                         <p>"把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。"</p>
                                     </div>
-                                    <button class="provider-mapping-fetch" type="button" on:click=load_model_mappings>"读取映射"</button>
+                                    <button class="provider-mapping-fetch" type="button" on:click=load_model_mappings>
+                                        <span class="icon-svg icon-download" aria-hidden="true"></span><span>"读取映射"</span>
+                                    </button>
                                 </div>
                                 <div class="provider-mapping-card">
-                                    <textarea
-                                        class="json-input mapping-input"
-                                        prop:value=move || model_mapping_json.get()
-                                        on:input=move |event| set_model_mapping_json.set(event_target_value(&event))
-                                    ></textarea>
-                                    <div class="button-row mapping-actions">
-                                        <button class="secondary-button compact" type="button" on:click=save_model_mappings>"保存映射"</button>
+                                    <div class="provider-mapping-list">
+                                        <article class="form-mapping-row">
+                                            <div class="form-mapping-left">
+                                                <div class="mapping-select-wrap">
+                                                    <span class="mapping-icon">"S"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Sonnet"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-right">
+                                                <div class="provider-model-input-wrap">
+                                                    <input class="provider-model-input" value="deepseek-v4-pro" on:input=move |_| {} />
+                                                    <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-actions"><span class="mapping-check-placeholder" aria-hidden="true"></span></div>
+                                        </article>
+                                        <article class="form-mapping-row">
+                                            <div class="form-mapping-left">
+                                                <div class="mapping-select-wrap">
+                                                    <span class="mapping-icon">"H"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Haiku"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-right">
+                                                <div class="provider-model-input-wrap">
+                                                    <input class="provider-model-input" value="deepseek-v3" on:input=move |_| {} />
+                                                    <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-actions"><span class="mapping-check-placeholder" aria-hidden="true"></span></div>
+                                        </article>
+                                    </div>
+                                    <div class="provider-mapping-footer">
+                                        <button class="secondary-button compact" type="button" on:click=save_model_mappings><span class="icon-svg icon-save" aria-hidden="true"></span><span>"保存映射"</span></button>
                                     </div>
                                 </div>
                                 <div class="apply-explain">
-                                    <span>"i"</span>
+                                    <span class="icon-svg icon-info" aria-hidden="true"></span>
                                     <p>"一键应用会保存供应商和模型映射，把它设为默认，并让 Claude 桌面版连接到本机 gateway。"</p>
                                 </div>
                             </section>
 
                             <div class="button-row provider-form-actions">
-                                <button class="primary-button form-action" type="button" on:click=apply_provider_to_desktop>"一键应用到 Claude 桌面版"</button>
-                                <button class="secondary-button form-action" type="button" on:click=save_provider>"仅保存"</button>
+                                <button class="primary-button form-action" type="button" on:click=apply_provider_to_desktop><span class="icon-svg icon-magic" aria-hidden="true"></span><span>"一键应用到 Claude 桌面版"</span></button>
+                                <button class="secondary-button form-action" type="button" on:click=save_provider><span class="icon-svg icon-save" aria-hidden="true"></span><span>"仅保存"</span></button>
                                 <button class="secondary-button form-action" type="button" on:click=move |_| {
-                                    set_provider_name.set("DeepSeek".to_owned());
-                                    set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
+                                    set_provider_name.set(String::new());
+                                    set_base_url.set(String::new());
                                     set_api_key.set(String::new());
                                     set_api_format.set("anthropic".to_owned());
+                                    set_selected_preset_id.set(String::new());
                                     set_active_page.set(AppPage::Providers);
                                 }>"取消"</button>
                             </div>
@@ -1079,53 +1233,56 @@ pub fn App() -> impl IntoView {
                         </div>
                     </article>
 
-                    <aside class="panel quick-preset-panel">
+                    <aside class="panel preset-panel quick-preset-panel">
                         <h2>"快捷预设"</h2>
-                        <div class="preset-card-list">
-                            <button class=move || preset_card_class(selected_preset_id.get() == "deepseek") type="button" on:click=move |_| {
+                        <p class="preset-help">"选择后会自动填入 API 地址和推荐模型，API Key 仍由你自己填写。"</p>
+                        <div class="preset-list">
+                            <button class=move || preset_item_class(selected_preset_id.get() == "deepseek") type="button" on:click=move |_| {
                                 set_selected_preset_id.set("deepseek".to_owned());
                                 set_provider_name.set("DeepSeek".to_owned());
                                 set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                 set_api_format.set("anthropic".to_owned());
                                 set_api_key.set(String::new());
                             }>
-                                <span class="preset-mark">"↯"</span>
-                                <span><strong>"DeepSeek"</strong><small>"https://api.deepseek.com/anthropic"</small></span>
-                                <b>"›"</b>
+                                <span class="preset-logo"><img src="deepseek.ico" alt="" /></span>
+                                <span><strong>"DeepSeek"</strong><span>"https://api.deepseek.com/anthropic"</span></span>
+                                <span class=move || if selected_preset_id.get() == "deepseek" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
-                            <button class=move || preset_card_class(selected_preset_id.get() == "kimi") type="button" on:click=move |_| {
+                            <button class=move || preset_item_class(selected_preset_id.get() == "kimi") type="button" on:click=move |_| {
                                 set_selected_preset_id.set("kimi".to_owned());
                                 set_provider_name.set("Kimi（月之暗面）".to_owned());
                                 set_base_url.set("https://api.moonshot.cn/v1".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
                                 set_api_key.set(String::new());
                             }>
-                                <span class="preset-mark">"K"</span>
-                                <span><strong>"Kimi（月之暗面）"</strong><small>"https://api.moonshot.cn/v1"</small></span>
-                                <b>"›"</b>
+                                <span class="preset-logo"><img src="kimi.ico" alt="" /></span>
+                                <span><strong>"Kimi（月之暗面）"</strong><span>"https://api.moonshot.cn/v1"</span></span>
+                                <span class=move || if selected_preset_id.get() == "kimi" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
-                            <button class="preset-card" type="button" on:click=move |_| {
+                            <button class=move || preset_item_class(selected_preset_id.get() == "qiniu") type="button" on:click=move |_| {
+                                set_selected_preset_id.set("qiniu".to_owned());
                                 set_provider_name.set("七牛云 AI".to_owned());
                                 set_base_url.set("https://api.qnaigc.com/v1".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
                                 set_api_key.set(String::new());
                             }>
-                                <span class="preset-mark">"☁"</span>
-                                <span><strong>"七牛云 AI"</strong><small>"https://api.qnaigc.com/v1"</small></span>
-                                <b>"›"</b>
+                                <span class="preset-logo"><img src="qiniu.ico" alt="" /></span>
+                                <span><strong>"七牛云 AI"</strong><span>"https://api.qnaigc.com/v1"</span></span>
+                                <span class=move || if selected_preset_id.get() == "qiniu" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
-                            <button class="preset-card" type="button" on:click=move |_| {
+                            <button class=move || preset_item_class(selected_preset_id.get() == "zhipu") type="button" on:click=move |_| {
+                                set_selected_preset_id.set("zhipu".to_owned());
                                 set_provider_name.set("智谱 GLM".to_owned());
                                 set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
                                 set_api_key.set(String::new());
                             }>
-                                <span class="preset-mark">"▣"</span>
-                                <span><strong>"智谱 GLM"</strong><small>"https://open.bigmodel.cn/api/paas/v4/"</small></span>
-                                <b>"›"</b>
+                                <span class="preset-logo"><img src="zhipu.png" alt="" /></span>
+                                <span><strong>"智谱 GLM"</strong><span>"https://open.bigmodel.cn/api/paas/v4/"</span></span>
+                                <span class=move || if selected_preset_id.get() == "zhipu" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
                         </div>
-                        <div class="preset-import-box">
+                        <div class="preset-import-box hidden" aria-hidden="true">
                             <p class="preset-count">{move || format!("Loaded presets: {}", provider_presets.get().len())}</p>
                             <label class="field">
                                 <span>"内置 preset API Key"</span>
@@ -1220,11 +1377,14 @@ pub fn App() -> impl IntoView {
                                     let select_provider = provider.clone();
                                     let active_provider = provider.clone();
                                     let provider_id_for_class = provider.provider_id.clone();
-                                    let logo = provider_initial(&provider.display_name);
+                                    let provider_id_for_button_class = provider.provider_id.clone();
+                                    let provider_id_for_button_label = provider.provider_id.clone();
+                                    let provider_id_for_disabled = provider.provider_id.clone();
+                                    let logo_src = provider_logo_src(&provider.display_name);
                                     view! {
                                         <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
-                                            <span class="drag-handle">"⋮"</span>
-                                            <span class="provider-logo">{logo}</span>
+                                            <span class="drag-handle"><span class="icon-svg icon-grip" aria-hidden="true"></span></span>
+                                            <span class="provider-logo"><img src=logo_src alt="" /></span>
                                             <span class="provider-main">
                                                 <strong>{provider.display_name.clone()}</strong>
                                                 <span>{provider.base_url.clone()}</span>
@@ -1233,9 +1393,18 @@ pub fn App() -> impl IntoView {
                                                 <span class="speed-result inline">{format!("key={}", provider.has_api_key)}</span>
                                             </span>
                                             <span class="provider-actions">
-                                                <button class="icon-action" type="button" title="Select" on:click=move |_| {
-                                                    set_selected_provider_id.set(Some(select_provider.provider_id.clone()));
-                                                }>"✓"</button>
+                                                <button
+                                                    class=move || compact_enable_class(selected_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
+                                                    type="button"
+                                                    disabled=move || selected_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
+                                                    on:click=move |_| {
+                                                        let provider_id = select_provider.provider_id.clone();
+                                                        set_selected_provider_id.set(Some(provider_id.clone()));
+                                                    }
+                                                >
+                                                    <span class="icon-svg icon-play" aria-hidden="true"></span>
+                                                    <span>{move || if selected_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
+                                                </button>
                                                 <button class="icon-action" type="button" title="Set active" on:click=move |_| {
                                                     let provider_id = active_provider.provider_id.clone();
                                                     set_selected_provider_id.set(Some(provider_id.clone()));
@@ -1246,7 +1415,9 @@ pub fn App() -> impl IntoView {
                                                             Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
                                                         }
                                                     });
-                                                }>"★"</button>
+                                                }>
+                                                    <span class="icon-svg icon-lightning" aria-hidden="true"></span>
+                                                </button>
                                                 <button class="icon-action" type="button" title="Edit" on:click=move |_| {
                                                     set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
                                                     set_provider_name.set(edit_provider.display_name.clone());
@@ -1254,7 +1425,9 @@ pub fn App() -> impl IntoView {
                                                     set_api_format.set(api_format_value(&edit_provider.api_format));
                                                     set_api_key.set(String::new());
                                                     set_active_page.set(AppPage::ProvidersAdd);
-                                                }>"✎"</button>
+                                                }>
+                                                    <span class="icon-svg icon-edit" aria-hidden="true"></span>
+                                                </button>
                                             </span>
                                         </article>
                                     }
@@ -1262,10 +1435,10 @@ pub fn App() -> impl IntoView {
                             />
                         </div>
                         <div class="button-row provider-list-toolbar">
-                            <button class="secondary-button compact" type="button" on:click=refresh_providers>"刷新"</button>
-                            <button class="secondary-button compact" type="button" on:click=set_selected_active>"设为默认"</button>
-                            <button class="secondary-button compact" type="button" on:click=move_selected_provider_first>"移到首位"</button>
-                            <button class="secondary-button compact danger-outline" type="button" on:click=delete_selected_provider>"删除"</button>
+                            <button class="secondary-button compact" type="button" on:click=refresh_providers><span class="icon-svg icon-refresh" aria-hidden="true"></span><span>"刷新"</span></button>
+                            <button class="secondary-button compact" type="button" on:click=set_selected_active><span class="icon-svg icon-play" aria-hidden="true"></span><span>"设为默认"</span></button>
+                            <button class="secondary-button compact" type="button" on:click=move_selected_provider_first><span class="icon-svg icon-arrow-up" aria-hidden="true"></span><span>"移到首位"</span></button>
+                            <button class="secondary-button compact danger-outline" type="button" on:click=delete_selected_provider><span class="icon-svg icon-trash" aria-hidden="true"></span><span>"删除"</span></button>
                         </div>
                     </article>
                 </section>
@@ -1455,11 +1628,11 @@ fn format_choice_class(active: bool) -> &'static str {
     }
 }
 
-fn preset_card_class(active: bool) -> &'static str {
+fn preset_item_class(active: bool) -> &'static str {
     if active {
-        "preset-card active"
+        "preset-item active"
     } else {
-        "preset-card"
+        "preset-item"
     }
 }
 
@@ -1468,6 +1641,38 @@ fn provider_switch_card_class(active: bool) -> &'static str {
         "provider-switch-card active"
     } else {
         "provider-switch-card"
+    }
+}
+
+fn configured_provider_list_class(visible: bool) -> &'static str {
+    if visible {
+        "provider-configured-list"
+    } else {
+        "provider-configured-list hidden"
+    }
+}
+
+fn dashboard_empty_preset_grid_class(visible: bool) -> &'static str {
+    if visible {
+        "provider-preset-grid"
+    } else {
+        "provider-preset-grid hidden"
+    }
+}
+
+fn dashboard_preset_section_class(visible: bool) -> &'static str {
+    if visible {
+        "dashboard-preset-section"
+    } else {
+        "dashboard-preset-section hidden"
+    }
+}
+
+fn compact_enable_class(active: bool) -> &'static str {
+    if active {
+        "primary-button compact-enable"
+    } else {
+        "compact-enable ghost"
     }
 }
 
@@ -1482,11 +1687,19 @@ fn desktop_warning_class(snapshot: Option<&commands::ReadinessSnapshot>) -> &'st
     }
 }
 
-fn provider_initial(name: &str) -> String {
-    name.chars()
-        .find(|character| !character.is_whitespace())
-        .map(|character| character.to_string())
-        .unwrap_or_else(|| "P".to_owned())
+fn provider_logo_src(name: &str) -> &'static str {
+    let normalized = name.to_ascii_lowercase();
+    if normalized.contains("deepseek") {
+        "deepseek.ico"
+    } else if normalized.contains("kimi") || name.contains("月之暗面") {
+        "kimi.ico"
+    } else if normalized.contains("qiniu") || name.contains("七牛") {
+        "qiniu.ico"
+    } else if normalized.contains("zhipu") || name.contains("智谱") {
+        "zhipu.png"
+    } else {
+        "app-icon.png"
+    }
 }
 
 fn language_switch_label(language: &str) -> &'static str {
