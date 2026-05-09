@@ -162,10 +162,10 @@ artifact_x64: $($x64.ExpectedArtifact)
 
 ## Verified Gates
 
-- Both workflow artifacts include `## Result` / `Pass`.
-- Both workflow artifacts include `platform.macos_arm64_x64_smoke_path`.
-- arm64 evidence uses `macos-14` and `actual_uname: arm64`.
-- x64 evidence uses `macos-15-intel` and `actual_uname: x86_64`.
+- Both workflow artifacts include ## Result / Pass.
+- Both workflow artifacts include platform.macos_arm64_x64_smoke_path.
+- arm64 evidence uses macos-14 and actual_uname: arm64.
+- x64 evidence uses macos-15-intel and actual_uname: x86_64.
 - Both workflow artifacts include Rust, UI, Tauri, DMG, and PKG smoke markers.
 
 ## Notes

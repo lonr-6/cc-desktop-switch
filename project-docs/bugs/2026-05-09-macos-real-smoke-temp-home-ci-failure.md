@@ -27,3 +27,7 @@ The workflow intentionally sets `HOME` to a temporary directory so the smoke use
 
 - `cargo xtask verify --stage rc-readiness` must still recognize the real-smoke workflow command and artifact path.
 - The next `Rust Mainline Platform Smoke` run should either pass both macOS real-smoke jobs or upload enough evidence/logs to identify the next concrete blocker.
+
+## Resolution
+
+Run `25599626985` passed both macOS arm64 and macOS x64 jobs. The downloaded artifacts were validated by both macOS collectors, and `cargo xtask verify --stage rc-readiness` passed.
