@@ -7,6 +7,16 @@ on:
         description: "Artifact version label, defaults to workspace version"
         required: false
         type: string
+  push:
+    branches:
+      - "codex/**"
+    paths:
+      - ".github/workflows/rust-mainline-platform-smoke.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src-tauri/**"
+      - "ui/**"
+      - "xtask/**"
   pull_request:
     paths:
       - ".github/workflows/rust-mainline-platform-smoke.yml"

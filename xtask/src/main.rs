@@ -203,6 +203,8 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
                 .join("rust-mainline-platform-smoke.yml"),
             &[
                 "workflow_dispatch",
+                "push:",
+                "codex/**",
                 "expected_uname: arm64",
                 "expected_uname: x86_64",
                 "uname -m",
