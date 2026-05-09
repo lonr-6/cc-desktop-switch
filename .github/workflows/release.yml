@@ -265,7 +265,7 @@ jobs:
             "-Version", $env:RELEASE_VERSION,
             "-StagingDir", "release-staging",
             "-Repository", $env:GITHUB_REPOSITORY,
-            "-RequiredPlatforms", "windows-x64", "macos-arm64"
+            "-RequiredPlatforms", "windows-x64", "macos-arm64", "macos-x64"
           )
           if (Test-Path -LiteralPath $notesPath) {
             $args += @("-NotesFile", $notesPath)

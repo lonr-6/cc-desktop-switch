@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.05.08.1",
+  "skills": [
+    {
+      "name": "ccds-rust-mainline-task",
+      "category": "implementation",
+      "status": "active",
+      "core": true
+    },
+    {
+      "name": "ccds-issue-triage",
+      "category": "triage",
+      "status": "active",
+      "core": true
+    },
+    {
+      "name": "ccds-release-gate",
+      "category": "release",
+      "status": "active",
+      "core": true
+    },
+    {
+      "name": "ccds-review-pass",
+      "category": "review",
+      "status": "active",
+      "core": true
+    }
+  ]
+}

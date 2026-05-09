@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CC Desktop Switch",
+  "version": "1.1.0",
+  "identifier": "app.ccdesktopswitch.mainline",
+  "build": {
+    "beforeDevCommand": "cd ui && trunk serve",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "cd ui && trunk build --release",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "CC Desktop Switch",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 680,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "../frontend/assets/app-icon.png",
+      "../frontend/assets/app-icon.ico"
+    ]
+  }
+}

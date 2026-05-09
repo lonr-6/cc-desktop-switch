@@ -1,0 +1,37 @@
+[package]
+name = "cc-desktop-switch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "cc_desktop_switch_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "cc-desktop-switch"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+futures-util = "0.3"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rsa = { version = "0.9", features = ["sha2"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+thiserror.workspace = true
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+rand = "0.8"
+tower = { version = "0.5", features = ["util"] }

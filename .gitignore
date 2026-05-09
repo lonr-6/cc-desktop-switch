@@ -13,6 +13,9 @@ __pycache__/
 *.log
 .pytest_cache/
 .ruff_cache/
+target/
+ui/dist/
+src-tauri/gen/schemas/
 
 build/
 dist/

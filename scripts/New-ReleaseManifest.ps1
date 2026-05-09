@@ -4,7 +4,7 @@ param(
     [string]$Repository = $env:GITHUB_REPOSITORY,
     [string]$Notes,
     [string]$NotesFile,
-    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64"),
+    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64", "macos-x64"),
     [string]$KeyDir
 )
 
@@ -182,13 +182,18 @@ foreach ($pattern in @("*.sha256", "*.sig", "latest.json", "CC-Desktop-Switch-re
         Remove-Item -Force
 }
 
-$requiredAssetNames = @(
-    "CC-Desktop-Switch-v$Version-Windows-x64.exe",
-    "CC-Desktop-Switch-v$Version-Windows-Portable.zip",
-    "CC-Desktop-Switch-v$Version-Windows-Setup.exe",
-    "CC-Desktop-Switch-v$Version-macOS-arm64.pkg",
-    "CC-Desktop-Switch-v$Version-macOS-arm64.dmg"
-)
+$requiredAssetNames = [System.Collections.Generic.List[string]]::new()
+if ($RequiredPlatforms -contains "windows-x64") {
+    $requiredAssetNames.Add("CC-Desktop-Switch-v$Version-Windows-x64.exe")
+    $requiredAssetNames.Add("CC-Desktop-Switch-v$Version-Windows-Portable.zip")
+    $requiredAssetNames.Add("CC-Desktop-Switch-v$Version-Windows-Setup.exe")
+}
+foreach ($platform in $RequiredPlatforms) {
+    if ($platform -match "^macos-(?<arch>arm64|x64)$") {
+        $requiredAssetNames.Add("CC-Desktop-Switch-v$Version-macOS-$($Matches["arch"]).pkg")
+        $requiredAssetNames.Add("CC-Desktop-Switch-v$Version-macOS-$($Matches["arch"]).dmg")
+    }
+}
 
 foreach ($assetName in $requiredAssetNames) {
     if (-not (Test-Path -LiteralPath (Join-Path $releaseDir $assetName))) {

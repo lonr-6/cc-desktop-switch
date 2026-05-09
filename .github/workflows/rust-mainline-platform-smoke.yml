@@ -1,0 +1,204 @@
+name: Rust Mainline Platform Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Artifact version label, defaults to workspace version"
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - ".github/workflows/rust-mainline-platform-smoke.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src-tauri/**"
+      - "ui/**"
+      - "xtask/**"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }} Rust/Tauri smoke
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            expected_uname: arm64
+          - arch: x64
+            runner: macos-15-intel
+            expected_uname: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          actual="$(uname -m)"
+          expected="${{ matrix.expected_uname }}"
+          echo "runner=$(sw_vers -productVersion) arch=$actual expected=$expected"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Expected runner arch $expected, got $actual" >&2
+            exit 1
+          fi
+
+      - name: Install Rust UI and Tauri tools
+        shell: bash
+        run: |
+          rustup component add rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+          cargo install trunk --locked
+          cargo install tauri-cli --version "^2" --locked
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version || '' }}
+        run: |
+          version="$INPUT_VERSION"
+          if [[ -z "$version" ]]; then
+            version="$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          print(data["workspace"]["package"]["version"])
+          PY
+          )"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Rust workspace gate
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build Leptos UI
+        shell: bash
+        working-directory: ui
+        run: trunk build --release
+
+      - name: Build Tauri app
+        shell: bash
+        run: cargo tauri build
+
+      - name: Bundle smoke and create pkg
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          RUNNER_LABEL: ${{ matrix.runner }}
+          EXPECTED_UNAME: ${{ matrix.expected_uname }}
+        run: |
+          actual_uname="$(uname -m)"
+          os_version="$(sw_vers -productVersion)"
+          app_path="$(find target/release/bundle -type d -name "CC Desktop Switch.app" -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo "CC Desktop Switch.app was not produced" >&2
+            find target/release/bundle -maxdepth 4 -print >&2 || true
+            exit 1
+          fi
+
+          info_plist="$app_path/Contents/Info.plist"
+          macos_dir="$app_path/Contents/MacOS"
+          plutil -lint "$info_plist"
+          executable_count="$(find "$macos_dir" -type f -perm -111 | wc -l | tr -d ' ')"
+          if [[ "$executable_count" -lt 1 ]]; then
+            echo "No executable file found under $macos_dir" >&2
+            exit 1
+          fi
+
+          dmg_source="$(find target/release/bundle -type f -name "*.dmg" -print -quit)"
+          if [[ -z "$dmg_source" ]]; then
+            echo "No DMG was produced" >&2
+            find target/release/bundle -maxdepth 4 -print >&2 || true
+            exit 1
+          fi
+          hdiutil verify "$dmg_source"
+
+          staging="dist/platform-smoke/macos-${ARCH}"
+          mkdir -p "$staging"
+          pkg_path="$staging/CC-Desktop-Switch-v${VERSION}-macOS-${ARCH}.pkg"
+          dmg_path="$staging/CC-Desktop-Switch-v${VERSION}-macOS-${ARCH}.dmg"
+          pkgbuild --install-location /Applications --component "$app_path" "$pkg_path"
+          pkgutil --expand "$pkg_path" "$RUNNER_TEMP/pkg-expanded"
+          cp "$dmg_source" "$dmg_path"
+
+          evidence_path="$staging/platform-smoke-evidence.md"
+          cat > "$evidence_path" <<EOF
+          # macOS Platform Smoke Evidence
+
+          ## Result
+
+          Pass
+
+          fingerprint: platform.macos_arm64_x64_smoke_path
+          platform: macOS ${ARCH}
+          runner: ${RUNNER_LABEL}
+          expected_uname: ${EXPECTED_UNAME}
+          actual_uname: ${actual_uname}
+          macos_version: ${os_version}
+          version: ${VERSION}
+          workflow_run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          commit: ${GITHUB_SHA}
+
+          ## Verified Gates
+
+          - runner architecture matched expected uname
+          - cargo fmt --all -- --check
+          - cargo test --workspace
+          - cargo clippy --workspace --all-targets -- -D warnings
+          - trunk build --release
+          - cargo tauri build
+          - CC Desktop Switch.app exists
+          - Contents/Info.plist passed plutil -lint
+          - Contents/MacOS contains at least one executable
+          - DMG passed hdiutil verify
+          - PKG was created with pkgbuild
+          - PKG expanded with pkgutil --expand
+
+          ## Artifacts
+
+          - app: ${app_path}
+          - pkg: ${pkg_path}
+          - dmg: ${dmg_path}
+          EOF
+
+          echo "app=$app_path"
+          echo "pkg=$pkg_path"
+          echo "dmg=$dmg_path"
+          echo "evidence=$evidence_path"
+
+      - name: Run macOS real Desktop local config smoke
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          REAL_SMOKE_HOME: ${{ runner.temp }}/ccds-real-smoke-home
+        run: |
+          mkdir -p "$REAL_SMOKE_HOME"
+          export HOME="$REAL_SMOKE_HOME"
+
+          scripts/macos/run-real-desktop-smoke.sh --mode run --allow-real-desktop-write
+
+          real_smoke_staging="dist/platform-smoke/macos-${ARCH}/real-desktop-smoke"
+          mkdir -p "$real_smoke_staging"
+          cp target/real-desktop-smoke/macos-real-desktop-smoke-evidence.md "$real_smoke_staging/"
+          cp target/real-desktop-smoke/macos-real-desktop-smoke-*.log "$real_smoke_staging/"
+
+      - name: Upload macOS smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-mainline-macos-${{ matrix.arch }}
+          path: dist/platform-smoke/macos-${{ matrix.arch }}/*
+          if-no-files-found: error
+          retention-days: 7
