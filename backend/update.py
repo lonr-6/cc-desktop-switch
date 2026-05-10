@@ -6,6 +6,7 @@ import hashlib
 import os
 import platform as platform_module
 import re
+import base64
 import sys
 import tempfile
 from pathlib import Path
@@ -153,6 +154,40 @@ def install_after_quit_command(path: str, platform: str, wait_for_pid: int) -> l
     """返回等待当前进程退出后再启动安装器的命令。"""
     if wait_for_pid <= 0:
         raise UpdateCheckError("等待退出的进程 ID 无效")
+    if platform.startswith("windows-"):
+        escaped_path = str(path).replace("'", "''")
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            f"$pidToWait = {int(wait_for_pid)}; "
+            f"$installer = '{escaped_path}'; "
+            "$logDir = Join-Path $env:TEMP 'CC-Desktop-Switch\\updates'; "
+            "New-Item -ItemType Directory -Force -Path $logDir | Out-Null; "
+            "$log = Join-Path $logDir 'update-helper.log'; "
+            "Add-Content -LiteralPath $log -Value (\"{0} helper started pid={1} installer={2}\" -f (Get-Date).ToString('o'), $pidToWait, $installer); "
+            "try { "
+            "Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue; "
+            "Add-Content -LiteralPath $log -Value (\"{0} app wait finished\" -f (Get-Date).ToString('o')); "
+            "} catch { "
+            "Add-Content -LiteralPath $log -Value (\"{0} app wait skipped: {1}\" -f (Get-Date).ToString('o'), $_.Exception.Message); "
+            "}; "
+            "try { "
+            "Start-Process -FilePath $installer -WindowStyle Normal; "
+            "Add-Content -LiteralPath $log -Value (\"{0} installer launched\" -f (Get-Date).ToString('o')); "
+            "} catch { "
+            "Add-Content -LiteralPath $log -Value (\"{0} installer launch failed: {1}\" -f (Get-Date).ToString('o'), $_.Exception.Message); "
+            "}"
+        )
+        encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        return [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-EncodedCommand",
+            encoded_script,
+        ]
     if platform.startswith("macos-"):
         return [
             "/bin/sh",

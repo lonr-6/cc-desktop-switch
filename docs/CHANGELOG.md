@@ -7,6 +7,16 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+## v1.0.23
+
+Release notes: [docs/release-notes-v1.0.23.md](release-notes-v1.0.23.md)
+
+- Fixed Windows in-app update installs where the package downloaded and the app exited but the installer did not appear.
+- Added update helper logging under `%TEMP%\CC-Desktop-Switch\updates\update-helper.log`.
+- Reduced startup blank-screen time by bundling Bootstrap, Bootstrap Icons, and font dependencies locally.
+- Hid the macOS Dock icon and added a native menu bar status item for show/quit actions.
+- Kept local update-test manifests out of the release asset set.
+
 ## v1.0.22
 
 Release notes: [docs/release-notes-v1.0.22.md](release-notes-v1.0.22.md)

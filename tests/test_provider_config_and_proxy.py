@@ -1,5 +1,6 @@
 import copy
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -1027,6 +1028,26 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(queued[0], "/bin/sh")
         self.assertIn('kill -0 "$pid"', queued[2])
         self.assertEqual(queued[-2:], ["4321", "/tmp/app.pkg"])
+
+        windows_queued = updater.install_after_quit_command(
+            r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe",
+            "windows-x64",
+            4321,
+        )
+        self.assertEqual(windows_queued[:4], [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+        ])
+        self.assertIn("-EncodedCommand", windows_queued)
+        encoded_index = windows_queued.index("-EncodedCommand") + 1
+        windows_helper = base64.b64decode(windows_queued[encoded_index]).decode("utf-16le")
+        self.assertIn("Wait-Process", windows_helper)
+        self.assertIn("Start-Process", windows_helper)
+        self.assertIn("update-helper.log", windows_helper)
+        self.assertIn("4321", windows_helper)
+        self.assertIn(r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe", windows_helper)
 
     def test_reorder_providers_persists_order_and_sort_index(self):
         first = cfg.add_provider({
@@ -2187,9 +2208,48 @@ class AdminApiTests(unittest.TestCase):
             detached=True,
         )
 
+    def test_update_install_waits_for_windows_quit_before_opening_installer(self):
+        async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
+            return {
+                "success": True,
+                "updateAvailable": True,
+                "currentVersion": current_version,
+                "latestVersion": "1.0.11",
+                "platform": platform,
+                "assets": [],
+                "downloaded": True,
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe",
+            }
+
+        with patch("backend.main.updater.current_platform", return_value="windows-x64"):
+            with patch("backend.main.updater.download_update", fake_download_update):
+                with patch("backend.main._get_update_quit_handler", return_value=lambda: None):
+                    with patch("backend.main._schedule_update_quit_for_install", return_value=True):
+                        with patch("backend.main.os.getpid", return_value=4321):
+                            with patch("backend.main._popen_hidden") as popen:
+                                response = self.client.post(
+                                    "/api/update/install",
+                                    headers=admin_headers(),
+                                    json={},
+                                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["installerStarted"])
+        self.assertTrue(response.json()["quitRequested"])
+        self.assertEqual(response.json()["platform"], "windows-x64")
+        self.assertIn("即将退出并启动安装器", response.json()["message"])
+        popen.assert_called_once_with(
+            updater.install_after_quit_command(
+                r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe",
+                "windows-x64",
+                4321,
+            ),
+            detached=False,
+        )
+
 
 class ReleaseManifestTests(unittest.TestCase):
-    VERSION = "1.0.22"
+    VERSION = "1.0.23"
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -3630,6 +3690,16 @@ class StaticFrontendTests(unittest.TestCase):
         i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
 
         self.assertIn('id="dashboardUpdateBadge"', html)
+        self.assertIn('href="vendor/bootstrap/bootstrap.min.css"', html)
+        self.assertIn('href="vendor/bootstrap-icons/bootstrap-icons.min.css"', html)
+        self.assertIn('src="vendor/bootstrap/bootstrap.bundle.min.js"', html)
+        self.assertNotIn("cdn.jsdelivr.net", html)
+        self.assertNotIn("@import url(", css)
+        self.assertNotIn("fonts.googleapis.com", css)
+        self.assertTrue((self.root / "frontend" / "vendor" / "bootstrap" / "bootstrap.min.css").exists())
+        self.assertTrue((self.root / "frontend" / "vendor" / "bootstrap" / "bootstrap.bundle.min.js").exists())
+        self.assertTrue((self.root / "frontend" / "vendor" / "bootstrap-icons" / "bootstrap-icons.min.css").exists())
+        self.assertTrue((self.root / "frontend" / "vendor" / "bootstrap-icons" / "fonts" / "bootstrap-icons.woff2").exists())
         self.assertIn('id="dashboardDesktopWarning"', html)
         self.assertIn('id="desktopPageWarning"', html)
         self.assertIn("provider-preset-grid", app_js + css)
@@ -3678,6 +3748,15 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('data-action="toggle-model-menu-mode"', html)
         self.assertIn("renderModelMenuModeState", app_js)
         self.assertIn("providers.showAllModels", i18n)
+
+    def test_macos_build_hides_dock_and_uses_native_status_item(self):
+        main_py = (self.root / "main.py").read_text(encoding="utf-8")
+        macos_spec = (self.root / "macos" / "build-macos.spec").read_text(encoding="utf-8")
+
+        self.assertIn("NSStatusBar.systemStatusBar", main_py)
+        self.assertIn("showApp_", main_py)
+        self.assertIn("quitApp_", main_py)
+        self.assertIn('"LSUIElement": True', macos_spec)
 
     def test_diagnostics_ui_and_api_hooks_exist(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")

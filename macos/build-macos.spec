@@ -152,6 +152,7 @@ app = BUNDLE(
         "CFBundleVersion": APP_VERSION,
         "CFBundleGetInfoString": f"{APP_NAME} {APP_VERSION}",
         "CFBundlePackageType": "APPL",
+        "LSUIElement": True,
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
     },

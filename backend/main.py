@@ -131,11 +131,16 @@ def _schedule_update_quit_for_install(handler: Callable[[], None], delay: float 
 
 
 def _launch_update_installer(installer_path: str, platform: str) -> bool:
-    """启动安装器；macOS 上优先等待当前应用退出后再打开安装包。"""
-    quit_handler = _get_update_quit_handler() if platform.startswith("macos-") else None
-    if platform.startswith("macos-") and quit_handler:
+    """启动安装器；桌面模式下先退出主程序，再由独立 helper 打开安装包。"""
+    should_wait_for_quit = platform.startswith(("windows-", "macos-"))
+    quit_handler = _get_update_quit_handler() if should_wait_for_quit else None
+    if should_wait_for_quit and quit_handler:
         command = updater.install_after_quit_command(installer_path, platform, os.getpid())
-        _popen_hidden(command, detached=True)
+        # Windows PowerShell can skip the encoded helper when launched with
+        # DETACHED_PROCESS from the packaged app. Keep the window hidden, but
+        # do not detach here; the helper waits until this app exits before
+        # launching the installer.
+        _popen_hidden(command, detached=not platform.startswith("windows-"))
         return _schedule_update_quit_for_install(quit_handler)
 
     command = updater.install_command(installer_path, platform)
@@ -806,7 +811,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.22")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.23")
 
     @app.middleware("http")
     async def require_local_admin_auth(request: Request, call_next):
@@ -1378,20 +1383,21 @@ def create_admin_app() -> FastAPI:
             resolved_platform = result.get("platform") or platform
             quit_requested = _launch_update_installer(installer_path, resolved_platform)
             is_macos = resolved_platform.startswith("macos-")
+            is_windows = resolved_platform.startswith("windows-")
+            if quit_requested:
+                install_message = "更新包已下载，应用即将退出并启动安装器。"
+            elif is_macos:
+                install_message = "更新包已下载并打开。请先退出当前应用，再按 macOS 提示完成安装。"
+            elif is_windows:
+                install_message = "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。"
+            else:
+                install_message = "更新包已下载并打开。"
             return {
                 **result,
                 "success": True,
                 "installerStarted": True,
                 "quitRequested": quit_requested,
-                "message": (
-                    (
-                        "更新包已下载，应用即将退出并启动安装器。"
-                        if quit_requested
-                        else "更新包已下载并打开。请先退出当前应用，再按 macOS 提示完成安装。"
-                    )
-                    if is_macos
-                    else "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。"
-                ),
+                "message": install_message,
             }
         except updater.UpdateCheckError as exc:
             return JSONResponse(

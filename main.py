@@ -29,10 +29,12 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.22"
+APP_VERSION = "1.0.23"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
+_macos_status_item = None
+_macos_status_delegate = None
 _single_instance_mutex = None
 MB_OK = 0x00000000
 MB_ICONINFORMATION = 0x00000040
@@ -264,7 +266,7 @@ def _macos_should_quit_from_close_event() -> bool:
 
 
 def _install_macos_reopen_handler(window, controller):
-    """Install a Cocoa app delegate that restores the hidden Dock app window."""
+    """Install Cocoa hooks for reopen and menu-bar status item behavior."""
     if sys.platform != "darwin":
         return
 
@@ -296,12 +298,55 @@ def _install_macos_reopen_handler(window, controller):
                 controller.show_window()
             return Foundation.YES
 
+    class CCDesktopSwitchStatusDelegate(AppKit.NSObject):
+        def showApp_(self, sender):
+            controller.show_window()
+
+        def quitApp_(self, sender):
+            controller.quit_app()
+
     delegate = CCDesktopSwitchAppDelegate.alloc().init().retain()
+    status_delegate = CCDesktopSwitchStatusDelegate.alloc().init().retain()
 
     def set_delegate():
-        global _macos_app_delegate
+        global _macos_app_delegate, _macos_status_item, _macos_status_delegate
         _macos_app_delegate = delegate
+        _macos_status_delegate = status_delegate
         AppKit.NSApplication.sharedApplication().setDelegate_(delegate)
+        try:
+            status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
+                AppKit.NSVariableStatusItemLength
+            )
+            button = status_item.button()
+            if button is not None:
+                image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(controller.icon_path))
+                if image is not None:
+                    image.setSize_(Foundation.NSMakeSize(18, 18))
+                    button.setImage_(image)
+                else:
+                    button.setTitle_("CCDS")
+                button.setToolTip_(APP_NAME)
+
+            menu = AppKit.NSMenu.alloc().init()
+            show_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Show CC Desktop Switch",
+                "showApp:",
+                "",
+            )
+            show_item.setTarget_(status_delegate)
+            menu.addItem_(show_item)
+            menu.addItem_(AppKit.NSMenuItem.separatorItem())
+            quit_item = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "Quit CC Desktop Switch",
+                "quitApp:",
+                "",
+            )
+            quit_item.setTarget_(status_delegate)
+            menu.addItem_(quit_item)
+            status_item.setMenu_(menu)
+            _macos_status_item = status_item
+        except Exception as exc:
+            safe_print(f"macOS status item unavailable: {exc}")
 
     AppHelper.callAfter(set_delegate)
 
@@ -465,6 +510,12 @@ class DesktopTrayController:
         try:
             self.window.show()
             self.window.restore()
+            if sys.platform == "darwin":
+                try:
+                    import AppKit
+                    AppKit.NSApp.activateIgnoringOtherApps_(True)
+                except Exception:
+                    pass
             self.window_hidden = False
         except Exception as exc:
             safe_print(f"show window failed: {exc}")

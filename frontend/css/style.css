@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700;800&display=swap");
-
 :root {
   --app-bg: #f6f8fb;
   --surface: #ffffff;
@@ -44,7 +42,7 @@ body {
   overflow: hidden;
   background: var(--app-bg);
   color: var(--text);
-  font-family: "Fira Sans", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   letter-spacing: 0;
 }
 
@@ -1787,7 +1785,7 @@ label[for],
 
 body {
   background: var(--app-bg);
-  font-family: "Fira Sans", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   font-size: 14px;
 }
 

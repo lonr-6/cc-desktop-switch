@@ -109,4 +109,4 @@ Then verify:
 - PyInstaller is not a cross-compiler. Build macOS assets on macOS.
 - Prefer the onedir `.app` bundle for macOS distribution. Onefile app bundles add startup overhead and are a poor fit for signed distribution.
 - Public distribution should use Developer ID signing and Apple notarization.
-- The first macOS package intentionally disables the `pystray` tray icon. Its AppKit backend calls `NSApplication.run`, which must stay on the main thread while pywebview owns the macOS UI loop. Window close is handled by the Dock app lifecycle instead of a tray icon.
+- The macOS package uses a native AppKit status-bar menu and hides the Dock icon with `LSUIElement`. `pystray` remains disabled on macOS because it would compete with pywebview for the AppKit main loop.
