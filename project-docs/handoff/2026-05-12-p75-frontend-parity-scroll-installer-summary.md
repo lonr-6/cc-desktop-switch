@@ -47,6 +47,10 @@ P75 is a root-cause correction pass after manual feedback that P74 still did not
 - `cargo check --workspace`: pass
 - `cargo clippy --workspace --all-targets -- -D warnings`: pass
 - `cargo test --workspace`: pass, 111 passed, 2 ignored real Desktop smoke tests
+- Post-push macOS run `25722210583` exposed a flaky arm64-only test assumption in `apply_flow_fixture_blocks_port_conflict_before_write`; the follow-up fix now checks that Desktop config files were not written instead of requiring the temp directory itself to be absent.
+- `cargo test -p cc-desktop-switch --lib apply_flow_fixture_blocks_port_conflict_before_write -- --nocapture`: pass
+- Follow-up `cargo test --workspace`: pass, 111 passed, 2 ignored real Desktop smoke tests
+- Follow-up `cargo clippy --workspace --all-targets -- -D warnings`: pass
 - Playwright mocked desktop UI smoke: pass, no console errors, scroll verified on Settings and Add Provider
 - `cargo tauri build`: pass, produced Windows MSI and NSIS bundles
 - `cargo xtask verify --stage rc-readiness`: pass

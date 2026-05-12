@@ -47,6 +47,13 @@
 - NSIS inheritance now builds and contains the scan logic, but the actual old-directory preselection still needs Windows in-place GUI installer smoke.
 - Final UI parity still needs a full old-frontend action-by-action checklist pass, not only the first P75 repair slice.
 
+## Post-Push CI Finding
+
+- GitHub macOS run `25722210583` failed on arm64 during `cargo test --workspace`.
+- Failure: `state::tests::apply_flow_fixture_blocks_port_conflict_before_write` asserted that the Desktop root directory did not exist.
+- Root cause: the test used the same timestamp-based name for the config parent and Desktop root. On a fast runner they can be created in the same millisecond, making the directory existence assertion flaky.
+- Fix: use a distinct Desktop temp root and assert the actual Desktop config files (`_meta.json` and `cc-desktop-switch-local-gateway.json`) were not written. This keeps the Apply behavior check strict without depending on directory nonexistence.
+
 ## Regression
 
 - `trunk build --release`
@@ -56,6 +63,7 @@
   - console errors: `0`
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test -p cc-desktop-switch --lib apply_flow_fixture_blocks_port_conflict_before_write -- --nocapture`
 - `cargo test --workspace`
 - `cargo tauri build`
 - `cargo xtask verify --stage rc-readiness`

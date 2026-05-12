@@ -1740,7 +1740,7 @@ mod tests {
         let blocker = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = blocker.local_addr().unwrap().port();
         let (path, state) = state_with_provider("apply-flow-port-conflict", port);
-        let desktop_root = temp_dir("apply-flow-port-conflict");
+        let desktop_root = temp_dir("apply-flow-port-conflict-desktop");
 
         let result = state.apply_to_local_config_library(&desktop_root);
 
@@ -1751,9 +1751,15 @@ mod tests {
             .unwrap()
             .contains("gateway.port_in_use"));
         assert!(result.write.is_none());
-        assert!(!desktop_root.exists());
+        assert!(!desktop_root.join("_meta.json").exists());
+        assert!(!desktop_root
+            .join("cc-desktop-switch-local-gateway.json")
+            .exists());
 
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        if desktop_root.exists() {
+            fs::remove_dir_all(desktop_root).unwrap();
+        }
     }
 
     #[test]
