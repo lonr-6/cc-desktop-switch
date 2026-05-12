@@ -51,6 +51,10 @@ P75 is a root-cause correction pass after manual feedback that P74 still did not
 - `cargo test -p cc-desktop-switch --lib apply_flow_fixture_blocks_port_conflict_before_write -- --nocapture`: pass
 - Follow-up `cargo test --workspace`: pass, 111 passed, 2 ignored real Desktop smoke tests
 - Follow-up `cargo clippy --workspace --all-targets -- -D warnings`: pass
+- Follow-up macOS workflow run `25724455576`: pass on arm64 and x64, including Rust workspace gate, Leptos build, Tauri build, DMG/PKG smoke, macOS real Desktop local config smoke, and artifact upload
+- `scripts/macos/Collect-PlatformSmokeEvidence.ps1`: pass, wrote `project-docs/handoff/2026-05-12-p75-macos-platform-smoke-evidence-summary.md`
+- `scripts/macos/Collect-RealDesktopSmokeEvidence.ps1`: pass, wrote `project-docs/handoff/2026-05-12-p75-macos-real-desktop-smoke-evidence-summary.md`
+- Follow-up `cargo xtask verify --stage rc-readiness`: pass, recognized the P75 macOS platform and real Desktop smoke handoff evidence
 - Playwright mocked desktop UI smoke: pass, no console errors, scroll verified on Settings and Add Provider
 - `cargo tauri build`: pass, produced Windows MSI and NSIS bundles
 - `cargo xtask verify --stage rc-readiness`: pass
