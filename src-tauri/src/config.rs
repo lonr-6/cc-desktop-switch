@@ -1293,6 +1293,31 @@ pub fn backup_then_save_config(
     Ok(backup)
 }
 
+pub fn create_config_backup(path: &Path) -> Result<Option<ConfigBackupSummary>, ConfigError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let backup = create_backup(path)?;
+    let metadata = fs::metadata(&backup.path)?;
+    let modified_unix_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis());
+    Ok(Some(ConfigBackupSummary {
+        file_name: backup
+            .path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("config-backup.json")
+            .to_owned(),
+        path: backup.path.display().to_string(),
+        size: metadata.len(),
+        modified_unix_ms,
+    }))
+}
+
 pub fn list_config_backups(path: &Path) -> Result<Vec<ConfigBackupSummary>, ConfigError> {
     let backup_dir = backup_dir_for_config(path);
     if !backup_dir.exists() {

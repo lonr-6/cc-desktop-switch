@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::apply_flow::{DesktopApplyResult, DesktopApplyStepStatus};
 use crate::config::{
-    backup_then_save_config, list_config_backups, provider_presets, read_config_backup, AppConfig,
-    BackupMeta, ConfigBackupSummary, ConfigError, ConfigProvider, ModelMappingDraft,
-    ModelMappingSummary, ProviderExportPackage, ProviderImportApplyResult, ProviderImportPreview,
-    ProviderPreset,
+    backup_then_save_config, create_config_backup, list_config_backups, provider_presets,
+    read_config_backup, AppConfig, BackupMeta, ConfigBackupSummary, ConfigError, ConfigProvider,
+    ConfigSettings, ModelMappingDraft, ModelMappingSummary, ProviderExportPackage,
+    ProviderImportApplyResult, ProviderImportPreview, ProviderPreset,
 };
 use crate::desktop::build_desktop_plan;
 use crate::desktop_writer::{write_local_config_library, DesktopConfigProbe};
@@ -249,6 +249,11 @@ impl AppState {
         Ok(list_config_backups(&self.config_path)?)
     }
 
+    pub fn create_config_backup(&self) -> Result<Option<ConfigBackupSummary>, StateError> {
+        let _lock = self.lock.lock().map_err(map_lock)?;
+        Ok(create_config_backup(&self.config_path)?)
+    }
+
     pub fn read_config_backup(&self, file_name: &str) -> Result<String, StateError> {
         let _lock = self.lock.lock().map_err(map_lock)?;
         let raw = read_config_backup(&self.config_path, file_name)?;
@@ -282,6 +287,27 @@ impl AppState {
     pub fn runtime_logs(&self) -> Result<Vec<DiagnosticsLogEntry>, StateError> {
         let logs = self.logs.lock().map_err(map_lock)?;
         Ok(logs.clone())
+    }
+
+    pub fn clear_runtime_logs(&self) -> Result<bool, StateError> {
+        let mut logs = self.logs.lock().map_err(map_lock)?;
+        let had_logs = !logs.is_empty();
+        logs.clear();
+        Ok(had_logs)
+    }
+
+    pub fn settings(&self) -> Result<ConfigSettings, StateError> {
+        let _lock = self.lock.lock().map_err(map_lock)?;
+        let config = self.load_config_unlocked()?;
+        Ok(config.settings)
+    }
+
+    pub fn update_settings(&self, settings: ConfigSettings) -> Result<ConfigSettings, StateError> {
+        let _lock = self.lock.lock().map_err(map_lock)?;
+        let mut config = self.load_config_unlocked()?;
+        config.settings = settings;
+        self.save_config_unlocked(&config)?;
+        Ok(config.settings)
     }
 
     pub fn diagnostics_package(

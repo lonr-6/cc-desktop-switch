@@ -12,18 +12,64 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::apply_flow::{ApplyLocalConfigRequest, DesktopApplyResult};
 use crate::config::{
-    ConfigBackupSummary, ModelMappingDraft, ModelMappingSummary, ProviderExportPackage,
-    ProviderImportApplyResult, ProviderImportPreview, ProviderPreset,
+    AppConfig, ConfigBackupSummary, ConfigSettings, ModelMappingDraft, ModelMappingSummary,
+    ProviderExportPackage, ProviderImportApplyResult, ProviderImportPreview, ProviderPreset,
 };
 use crate::desktop::{build_apply_dry_run, ApplyDryRun};
 use crate::desktop_writer::{probe_current_desktop_config, DesktopConfigProbe};
 use crate::diagnostics::{
-    readiness_snapshot, DiagnosticsIssueDraft, DiagnosticsPackage, ReadinessSnapshot,
-    SmokeCheckResult,
+    readiness_snapshot, DiagnosticsIssueDraft, DiagnosticsLogEntry, DiagnosticsPackage,
+    ReadinessSnapshot, SmokeCheckResult,
 };
 use crate::gateway::GatewayHealth;
 use crate::provider::{ProviderDraft, ProviderSummary};
 use crate::state::{AppState, StateError};
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSnapshot {
+    pub schema_version: u32,
+    pub version: String,
+    pub active_provider: Option<String>,
+    pub gateway_api_key_present: bool,
+    pub providers: Vec<ProviderSummary>,
+    pub settings: ConfigSettings,
+}
+
+impl From<AppConfig> for ConfigSnapshot {
+    fn from(config: AppConfig) -> Self {
+        Self {
+            schema_version: config.schema_version,
+            version: config.version,
+            active_provider: config.active_provider,
+            gateway_api_key_present: config.gateway_api_key.is_some(),
+            providers: config
+                .providers
+                .iter()
+                .map(crate::config::ConfigProvider::summary)
+                .collect(),
+            settings: config.settings,
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyStats {
+    pub total: u64,
+    pub success: u64,
+    pub failed: u64,
+    pub today: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyStatus {
+    pub running: bool,
+    pub port: u16,
+    pub base_url: String,
+    pub stats: ProxyStats,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -230,6 +276,34 @@ pub fn read_config_backup(
 }
 
 #[tauri::command]
+pub fn create_config_backup(
+    state: State<'_, AppState>,
+) -> Result<Option<ConfigBackupSummary>, CommandError> {
+    state.create_config_backup().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_config_snapshot(state: State<'_, AppState>) -> Result<ConfigSnapshot, CommandError> {
+    state
+        .load_config()
+        .map(ConfigSnapshot::from)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<ConfigSettings, CommandError> {
+    state.settings().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn update_settings(
+    settings: ConfigSettings,
+    state: State<'_, AppState>,
+) -> Result<ConfigSettings, CommandError> {
+    state.update_settings(settings).map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub fn health(state: State<'_, AppState>) -> Result<ReadinessSnapshot, CommandError> {
     let snapshot = state.snapshot().map_err(CommandError::from)?;
     let gateway = state.gateway_status().map_err(CommandError::from)?;
@@ -247,13 +321,57 @@ pub fn gateway_status(state: State<'_, AppState>) -> Result<GatewayHealth, Comma
 }
 
 #[tauri::command]
+pub fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus, CommandError> {
+    let health = state.gateway_status().map_err(CommandError::from)?;
+    let port = health
+        .base_url
+        .rsplit(':')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(18080);
+    Ok(ProxyStatus {
+        running: health.running,
+        port,
+        base_url: health.base_url,
+        stats: ProxyStats {
+            total: 0,
+            success: 0,
+            failed: 0,
+            today: 0,
+        },
+    })
+}
+
+#[tauri::command]
 pub fn start_gateway(state: State<'_, AppState>) -> Result<GatewayHealth, CommandError> {
+    state.start_gateway().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn start_proxy_listener(state: State<'_, AppState>) -> Result<GatewayHealth, CommandError> {
     state.start_gateway().map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub fn stop_gateway(state: State<'_, AppState>) -> Result<GatewayHealth, CommandError> {
     state.stop_gateway().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn stop_proxy_listener(state: State<'_, AppState>) -> Result<GatewayHealth, CommandError> {
+    state.stop_gateway().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_proxy_logs(
+    state: State<'_, AppState>,
+) -> Result<Vec<DiagnosticsLogEntry>, CommandError> {
+    state.runtime_logs().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn clear_proxy_logs(state: State<'_, AppState>) -> Result<bool, CommandError> {
+    state.clear_runtime_logs().map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -289,6 +407,12 @@ pub fn copy_diagnostics_summary_to_clipboard(
         .map_err(CommandError::from)?;
     copy_text_to_clipboard(&summary).map_err(CommandError::State)?;
     Ok(summary)
+}
+
+#[tauri::command]
+pub fn copy_text_to_clipboard_command(text: String) -> Result<bool, CommandError> {
+    copy_text_to_clipboard(&text).map_err(CommandError::State)?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -388,6 +512,11 @@ pub fn apply_detected_local_config(
     let probe =
         probe_current_desktop_config().map_err(|error| CommandError::State(error.to_string()))?;
     Ok(state.apply_to_desktop_config_probe(&probe))
+}
+
+#[tauri::command]
+pub fn configure_desktop(state: State<'_, AppState>) -> Result<DesktopApplyResult, CommandError> {
+    apply_detected_local_config(state)
 }
 
 impl From<StateError> for CommandError {

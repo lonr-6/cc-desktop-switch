@@ -89,6 +89,26 @@ pub struct ConfigBackupSummary {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigSettings {
+    pub theme: String,
+    pub language: String,
+    pub proxy_port: u16,
+    pub update_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSnapshot {
+    pub schema_version: u32,
+    pub version: String,
+    pub active_provider: Option<String>,
+    pub gateway_api_key_present: bool,
+    pub providers: Vec<ProviderSummary>,
+    pub settings: ConfigSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderPreset {
     pub preset_id: String,
     pub display_name: String,
@@ -103,6 +123,24 @@ pub struct GatewayHealth {
     pub mode: GatewayMode,
     pub running: bool,
     pub base_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyStats {
+    pub total: u64,
+    pub success: u64,
+    pub failed: u64,
+    pub today: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyStatus {
+    pub running: bool,
+    pub port: u16,
+    pub base_url: String,
+    pub stats: ProxyStats,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -257,6 +295,15 @@ pub struct SmokeCheckResult {
     pub detail: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsLogEntry {
+    pub timestamp_unix_ms: u128,
+    pub level: String,
+    pub code: String,
+    pub message: String,
+}
+
 pub async fn save_provider(request: ProviderDraft) -> Result<ProviderSummary, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "request": request }))
         .map_err(|error| error.to_string())?;
@@ -406,13 +453,35 @@ pub async fn read_config_backup(file_name: String) -> Result<String, String> {
     serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
 }
 
+pub async fn create_config_backup() -> Result<Option<ConfigBackupSummary>, String> {
+    let value = invoke_without_args("create_config_backup").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn get_config_snapshot() -> Result<ConfigSnapshot, String> {
+    let value = invoke_without_args("get_config_snapshot").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn get_settings() -> Result<ConfigSettings, String> {
+    let value = invoke_without_args("get_settings").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn update_settings(settings: ConfigSettings) -> Result<ConfigSettings, String> {
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "settings": settings }))
+        .map_err(|error| error.to_string())?;
+    let value = invoke_with_args("update_settings", args).await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
 pub async fn health() -> Result<ReadinessSnapshot, String> {
     let value = invoke_without_args("health").await;
     serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
 }
 
-pub async fn gateway_status() -> Result<GatewayHealth, String> {
-    let value = invoke_without_args("gateway_status").await;
+pub async fn get_proxy_status() -> Result<ProxyStatus, String> {
+    let value = invoke_without_args("get_proxy_status").await;
     serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
 }
 
@@ -423,6 +492,16 @@ pub async fn start_gateway() -> Result<GatewayHealth, String> {
 
 pub async fn stop_gateway() -> Result<GatewayHealth, String> {
     let value = invoke_without_args("stop_gateway").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn get_proxy_logs() -> Result<Vec<DiagnosticsLogEntry>, String> {
+    let value = invoke_without_args("get_proxy_logs").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn clear_proxy_logs() -> Result<bool, String> {
+    let value = invoke_without_args("clear_proxy_logs").await;
     serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
 }
 
@@ -448,6 +527,13 @@ pub async fn copy_diagnostics_summary() -> Result<String, String> {
 
 pub async fn copy_diagnostics_summary_to_clipboard() -> Result<String, String> {
     let value = invoke_without_args("copy_diagnostics_summary_to_clipboard").await;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "text": text }))
+        .map_err(|error| error.to_string())?;
+    let value = invoke_with_args("copy_text_to_clipboard_command", args).await;
     serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
 }
 

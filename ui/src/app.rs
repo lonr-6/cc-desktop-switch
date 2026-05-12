@@ -2,7 +2,8 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::commands::{
-    self, ApiFormat, AuthScheme, ModelMappingDraft, ProviderDraft, ProviderPreset, ProviderSummary,
+    self, ApiFormat, AuthScheme, ConfigSettings, ModelMappingDraft, ModelSlot, ProviderDraft,
+    ProviderPreset, ProviderSummary,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,14 @@ pub fn App() -> impl IntoView {
     let (selected_preset_id, set_selected_preset_id) = signal(String::new());
     let (preset_api_key, set_preset_api_key) = signal(String::new());
     let (model_mapping_json, set_model_mapping_json) = signal(default_model_mapping_json());
+    let (mapping_default, set_mapping_default) = signal("deepseek-v4-pro".to_owned());
+    let (mapping_opus, set_mapping_opus) = signal("deepseek-v4-pro".to_owned());
+    let (mapping_sonnet, set_mapping_sonnet) = signal("deepseek-v4-pro".to_owned());
+    let (mapping_haiku, set_mapping_haiku) = signal("deepseek-v4-flash".to_owned());
     let (backup_file_name, set_backup_file_name) = signal(String::new());
+    let (proxy_port, set_proxy_port) = signal("18080".to_owned());
+    let (update_url, set_update_url) = signal(String::new());
+    let (proxy_logs_text, set_proxy_logs_text) = signal("尚未读取日志。".to_owned());
     let (result, set_result) = signal("尚未执行 command。".to_owned());
     let (diagnostics_text, set_diagnostics_text) = signal("尚未生成 diagnostics。".to_owned());
     let (provider_saved, set_provider_saved) = signal(false);
@@ -332,6 +340,22 @@ pub fn App() -> impl IntoView {
             match commands::list_model_mappings(provider_id).await {
                 Ok(mappings) => match serde_json::to_string_pretty(&mappings) {
                     Ok(raw) => {
+                        for mapping in &mappings {
+                            match &mapping.slot {
+                                ModelSlot::Default => {
+                                    set_mapping_default.set(mapping.upstream_model.clone());
+                                }
+                                ModelSlot::Opus => {
+                                    set_mapping_opus.set(mapping.upstream_model.clone());
+                                }
+                                ModelSlot::Sonnet => {
+                                    set_mapping_sonnet.set(mapping.upstream_model.clone());
+                                }
+                                ModelSlot::Haiku => {
+                                    set_mapping_haiku.set(mapping.upstream_model.clone());
+                                }
+                            }
+                        }
                         set_model_mapping_json.set(raw.clone());
                         set_result.set(raw);
                     }
@@ -347,14 +371,12 @@ pub fn App() -> impl IntoView {
             set_result.set("update_model_mappings skipped: no provider selected".to_owned());
             return;
         };
-        let raw = model_mapping_json.get_untracked();
-        let mappings = match serde_json::from_str::<Vec<ModelMappingDraft>>(&raw) {
-            Ok(mappings) => mappings,
-            Err(error) => {
-                set_result.set(format!("parse model mappings failed: {error}"));
-                return;
-            }
-        };
+        let mappings = visible_model_mapping_drafts(
+            mapping_default.get_untracked(),
+            mapping_opus.get_untracked(),
+            mapping_sonnet.get_untracked(),
+            mapping_haiku.get_untracked(),
+        );
         set_result.set(format!("保存模型映射中: {provider_id}"));
         spawn_local(async move {
             match commands::update_model_mappings(provider_id, mappings).await {
@@ -400,6 +422,76 @@ pub fn App() -> impl IntoView {
         });
     };
 
+    let create_backup_now = move |_| {
+        set_result.set("创建 config backup 中...".to_owned());
+        spawn_local(async move {
+            match commands::create_config_backup().await {
+                Ok(Some(backup)) => {
+                    set_backup_file_name.set(backup.file_name.clone());
+                    set_result.set(format!(
+                        "create_config_backup ok\n{} | {} bytes",
+                        backup.file_name, backup.size
+                    ));
+                }
+                Ok(None) => {
+                    set_result.set("create_config_backup skipped: config file not found".to_owned())
+                }
+                Err(error) => set_result.set(format!("create_config_backup failed: {error}")),
+            }
+        });
+    };
+
+    let save_settings = move |_| {
+        let settings = ConfigSettings {
+            theme: theme.get_untracked(),
+            language: language.get_untracked(),
+            proxy_port: parse_proxy_port(&proxy_port.get_untracked()),
+            update_url: update_url_or_default(&update_url.get_untracked()),
+        };
+        set_result.set("保存 settings 中...".to_owned());
+        spawn_local(async move {
+            match commands::update_settings(settings).await {
+                Ok(saved) => {
+                    set_proxy_port.set(saved.proxy_port.to_string());
+                    set_update_url.set(saved.update_url.clone());
+                    set_result.set(format!(
+                        "update_settings ok\ntheme={}\nlanguage={}\nproxyPort={}\nupdateUrl={}",
+                        saved.theme, saved.language, saved.proxy_port, saved.update_url
+                    ));
+                }
+                Err(error) => set_result.set(format!("update_settings failed: {error}")),
+            }
+        });
+    };
+
+    let read_proxy_logs = move |_| {
+        set_proxy_logs_text.set("读取 gateway logs 中...".to_owned());
+        spawn_local(async move {
+            match commands::get_proxy_logs().await {
+                Ok(logs) => {
+                    let text = format_proxy_logs(&logs);
+                    set_proxy_logs_text.set(text.clone());
+                    set_result.set(text);
+                }
+                Err(error) => set_proxy_logs_text.set(format!("get_proxy_logs failed: {error}")),
+            }
+        });
+    };
+
+    let clear_proxy_logs = move |_| {
+        set_proxy_logs_text.set("清除 gateway logs 中...".to_owned());
+        spawn_local(async move {
+            match commands::clear_proxy_logs().await {
+                Ok(changed) => {
+                    let text = format!("clear_proxy_logs changed={changed}");
+                    set_proxy_logs_text.set(text.clone());
+                    set_result.set(text);
+                }
+                Err(error) => set_proxy_logs_text.set(format!("clear_proxy_logs failed: {error}")),
+            }
+        });
+    };
+
     let run_health_check = move || {
         set_result.set("读取 health 中...".to_owned());
         spawn_local(async move {
@@ -424,23 +516,21 @@ pub fn App() -> impl IntoView {
     };
     let check_health = move |_| run_health_check();
 
-    let check_gateway_status = move |_| {
-        set_result.set("读取 gateway status 中...".to_owned());
-        spawn_local(async move {
-            match commands::gateway_status().await {
-                Ok(health) => {
-                    let formatted = format_gateway_health(&health);
-                    set_gateway_status_text.set(formatted.clone());
-                    set_result.set(format!("gateway: {formatted}"));
-                }
-                Err(error) => set_result.set(format!("gateway_status failed: {error}")),
-            }
-        });
-    };
-
     let start_gateway = move |_| {
+        let settings = ConfigSettings {
+            theme: theme.get_untracked(),
+            language: language.get_untracked(),
+            proxy_port: parse_proxy_port(&proxy_port.get_untracked()),
+            update_url: update_url_or_default(&update_url.get_untracked()),
+        };
         set_result.set("启动 gateway 中...".to_owned());
         spawn_local(async move {
+            if let Err(error) = commands::update_settings(settings).await {
+                set_result.set(format!(
+                    "update_settings failed before start_gateway: {error}"
+                ));
+                return;
+            }
             match commands::start_gateway().await {
                 Ok(health) => {
                     let formatted = format_gateway_health(&health);
@@ -780,6 +870,36 @@ pub fn App() -> impl IntoView {
     };
 
     spawn_local(async move {
+        if let Ok(snapshot) = commands::get_config_snapshot().await {
+            if snapshot.settings.language == "zh" || snapshot.settings.language == "en" {
+                set_language.set(snapshot.settings.language.clone());
+            }
+            if snapshot.settings.theme == "dark" || snapshot.settings.theme == "light" {
+                set_theme.set(snapshot.settings.theme.clone());
+            }
+            set_proxy_port.set(snapshot.settings.proxy_port.to_string());
+            set_update_url.set(snapshot.settings.update_url.clone());
+            set_selected_provider_id.set(snapshot.active_provider.clone().or_else(|| {
+                snapshot
+                    .providers
+                    .first()
+                    .map(|provider| provider.provider_id.clone())
+            }));
+            set_providers.set(snapshot.providers);
+        }
+        if let Ok(proxy) = commands::get_proxy_status().await {
+            set_proxy_port.set(proxy.port.to_string());
+        }
+        if let Ok(settings) = commands::get_settings().await {
+            if settings.language == "zh" || settings.language == "en" {
+                set_language.set(settings.language.clone());
+            }
+            if settings.theme == "dark" || settings.theme == "light" {
+                set_theme.set(settings.theme.clone());
+            }
+            set_proxy_port.set(settings.proxy_port.to_string());
+            set_update_url.set(settings.update_url);
+        }
         if let Ok(next_providers) = commands::list_providers().await {
             if selected_provider_id.get_untracked().is_none() {
                 if let Some(provider) = next_providers.first() {
@@ -887,6 +1007,8 @@ pub fn App() -> impl IntoView {
                                         let provider_id_for_apply = provider.provider_id.clone();
                                         let provider_id_for_test = provider.provider_id.clone();
                                         let provider_id_for_copy = provider.provider_id.clone();
+                                        let provider_url_for_copy = provider.base_url.clone();
+                                        let provider_id_for_delete = provider.provider_id.clone();
                                         let edit_provider = provider.clone();
                                         let logo_src = provider_logo_src(&provider.display_name);
                                         view! {
@@ -917,10 +1039,34 @@ pub fn App() -> impl IntoView {
                                                         <span class="icon-svg icon-play" aria-hidden="true"></span>
                                                         <span>{move || if selected_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
                                                     </button>
-                                                    <button class="icon-action" type="button" title="Test speed" on:click=move |_| set_result.set(format!("provider test selected: {provider_id_for_test}"))>
+                                                    <button class="icon-action" type="button" title="Test speed" on:click=move |_| {
+                                                        let provider_id = provider_id_for_test.clone();
+                                                        if selected_provider_id.get_untracked().as_deref() != Some(provider_id.as_str()) {
+                                                            set_selected_provider_id.set(Some(provider_id.clone()));
+                                                            set_result.set(format!("已选择 {provider_id}；如需真实测速，先启用后再检测。"));
+                                                            return;
+                                                        }
+                                                        set_result.set(format!("运行 provider real smoke: {provider_id}"));
+                                                        spawn_local(async move {
+                                                            match commands::provider_real_smoke().await {
+                                                                Ok(smoke) => set_result.set(format_smoke_result(&smoke)),
+                                                                Err(error) => set_result.set(format!("provider_real_smoke failed: {error}")),
+                                                            }
+                                                        });
+                                                    }>
                                                         <span class="icon-svg icon-lightning" aria-hidden="true"></span>
                                                     </button>
-                                                    <button class="icon-action" type="button" title="Copy URL" on:click=move |_| set_result.set(format!("copy provider url: {provider_id_for_copy}"))>
+                                                    <button class="icon-action" type="button" title="Copy URL" on:click=move |_| {
+                                                        let provider_id = provider_id_for_copy.clone();
+                                                        let url = provider_url_for_copy.clone();
+                                                        set_result.set(format!("copy provider url: {provider_id}"));
+                                                        spawn_local(async move {
+                                                            match commands::copy_text_to_clipboard(url).await {
+                                                                Ok(_) => set_result.set(format!("copied provider url: {provider_id}")),
+                                                                Err(error) => set_result.set(format!("copy provider url failed: {error}")),
+                                                            }
+                                                        });
+                                                    }>
                                                         <span class="icon-svg icon-copy" aria-hidden="true"></span>
                                                     </button>
                                                     <button class="icon-action" type="button" title="Edit" on:click=move |_| {
@@ -937,6 +1083,25 @@ pub fn App() -> impl IntoView {
                                                     </button>
                                                     <button class="icon-action" type="button" title="Forwarding" on:click=move |_| set_active_page.set(AppPage::Proxy)>
                                                         <span class="icon-svg icon-terminal" aria-hidden="true"></span>
+                                                    </button>
+                                                    <button class="icon-action danger-icon" type="button" title="Delete" on:click=move |_| {
+                                                        let provider_id = provider_id_for_delete.clone();
+                                                        set_result.set(format!("删除 Provider 中: {provider_id}"));
+                                                        spawn_local(async move {
+                                                            match commands::delete_provider(provider_id.clone()).await {
+                                                                Ok(changed) => match commands::list_providers().await {
+                                                                    Ok(next_providers) => {
+                                                                        set_selected_provider_id.set(next_providers.first().map(|provider| provider.provider_id.clone()));
+                                                                        set_providers.set(next_providers.clone());
+                                                                        set_result.set(format!("delete_provider changed={changed}\n{}", format_provider_list(&next_providers)));
+                                                                    }
+                                                                    Err(error) => set_result.set(format!("delete_provider changed={changed}\nlist_providers failed: {error}")),
+                                                                },
+                                                                Err(error) => set_result.set(format!("delete_provider failed: {error}")),
+                                                            }
+                                                        });
+                                                    }>
+                                                        <span class="icon-svg icon-trash" aria-hidden="true"></span>
                                                     </button>
                                                 </span>
                                             </article>
@@ -1173,13 +1338,13 @@ pub fn App() -> impl IntoView {
                                         <article class="form-mapping-row">
                                             <div class="form-mapping-left">
                                                 <div class="mapping-select-wrap">
-                                                    <span class="mapping-icon">"S"</span>
-                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Sonnet"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                    <span class="mapping-icon">"D"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Default"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
                                             <div class="form-mapping-right">
                                                 <div class="provider-model-input-wrap">
-                                                    <input class="provider-model-input" value="deepseek-v4-pro" on:input=move |_| {} />
+                                                    <input class="provider-model-input" prop:value=move || mapping_default.get() on:input=move |event| set_mapping_default.set(event_target_value(&event)) />
                                                     <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
@@ -1188,17 +1353,47 @@ pub fn App() -> impl IntoView {
                                         <article class="form-mapping-row">
                                             <div class="form-mapping-left">
                                                 <div class="mapping-select-wrap">
-                                                    <span class="mapping-icon">"H"</span>
-                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Haiku"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                    <span class="mapping-icon">"O"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Opus 4.7"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
                                             <div class="form-mapping-right">
                                                 <div class="provider-model-input-wrap">
-                                                    <input class="provider-model-input" value="deepseek-v3" on:input=move |_| {} />
+                                                    <input class="provider-model-input" prop:value=move || mapping_opus.get() on:input=move |event| set_mapping_opus.set(event_target_value(&event)) />
                                                     <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
-                                            <div class="form-mapping-actions"><span class="mapping-check-placeholder" aria-hidden="true"></span></div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
+                                        </article>
+                                        <article class="form-mapping-row">
+                                            <div class="form-mapping-left">
+                                                <div class="mapping-select-wrap">
+                                                    <span class="mapping-icon">"S"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Sonnet 4.6"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-right">
+                                                <div class="provider-model-input-wrap">
+                                                    <input class="provider-model-input" prop:value=move || mapping_sonnet.get() on:input=move |event| set_mapping_sonnet.set(event_target_value(&event)) />
+                                                    <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
+                                        </article>
+                                        <article class="form-mapping-row">
+                                            <div class="form-mapping-left">
+                                                <div class="mapping-select-wrap">
+                                                    <span class="mapping-icon">"H"</span>
+                                                    <button class="form-select mapping-slot-trigger" type="button" disabled=true><span>"Haiku 4.5"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-right">
+                                                <div class="provider-model-input-wrap">
+                                                    <input class="provider-model-input" prop:value=move || mapping_haiku.get() on:input=move |event| set_mapping_haiku.set(event_target_value(&event)) />
+                                                    <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                                </div>
+                                            </div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
                                         </article>
                                     </div>
                                     <div class="provider-mapping-footer">
@@ -1413,6 +1608,8 @@ pub fn App() -> impl IntoView {
                                     let edit_provider = provider.clone();
                                     let select_provider = provider.clone();
                                     let active_provider = provider.clone();
+                                    let copy_provider = provider.clone();
+                                    let delete_provider = provider.clone();
                                     let provider_id_for_class = provider.provider_id.clone();
                                     let provider_id_for_button_class = provider.provider_id.clone();
                                     let provider_id_for_button_label = provider.provider_id.clone();
@@ -1465,6 +1662,41 @@ pub fn App() -> impl IntoView {
                                                     set_active_page.set(AppPage::ProvidersAdd);
                                                 }>
                                                     <span class="icon-svg icon-edit" aria-hidden="true"></span>
+                                                </button>
+                                                <button class="icon-action" type="button" title="Copy URL" on:click=move |_| {
+                                                    let provider_id = copy_provider.provider_id.clone();
+                                                    let url = copy_provider.base_url.clone();
+                                                    set_result.set(format!("copy provider url: {provider_id}"));
+                                                    spawn_local(async move {
+                                                        match commands::copy_text_to_clipboard(url).await {
+                                                            Ok(_) => set_result.set(format!("copied provider url: {provider_id}")),
+                                                            Err(error) => set_result.set(format!("copy provider url failed: {error}")),
+                                                        }
+                                                    });
+                                                }>
+                                                    <span class="icon-svg icon-copy" aria-hidden="true"></span>
+                                                </button>
+                                                <button class="icon-action" type="button" title="Forwarding" on:click=move |_| set_active_page.set(AppPage::Proxy)>
+                                                    <span class="icon-svg icon-terminal" aria-hidden="true"></span>
+                                                </button>
+                                                <button class="icon-action danger-icon" type="button" title="Delete" on:click=move |_| {
+                                                    let provider_id = delete_provider.provider_id.clone();
+                                                    set_result.set(format!("删除 Provider 中: {provider_id}"));
+                                                    spawn_local(async move {
+                                                        match commands::delete_provider(provider_id.clone()).await {
+                                                            Ok(changed) => match commands::list_providers().await {
+                                                                Ok(next_providers) => {
+                                                                    set_selected_provider_id.set(next_providers.first().map(|provider| provider.provider_id.clone()));
+                                                                    set_providers.set(next_providers.clone());
+                                                                    set_result.set(format!("delete_provider changed={changed}\n{}", format_provider_list(&next_providers)));
+                                                                }
+                                                                Err(error) => set_result.set(format!("delete_provider changed={changed}\nlist_providers failed: {error}")),
+                                                            },
+                                                            Err(error) => set_result.set(format!("delete_provider failed: {error}")),
+                                                        }
+                                                    });
+                                                }>
+                                                    <span class="icon-svg icon-trash" aria-hidden="true"></span>
                                                 </button>
                                             </span>
                                         </article>
@@ -1532,7 +1764,7 @@ pub fn App() -> impl IntoView {
                         </div>
                         <div class="proxy-status-controls">
                             <label>"转发端口"</label>
-                            <input value="18080" readonly=true />
+                            <input prop:value=move || proxy_port.get() on:input=move |event| set_proxy_port.set(event_target_value(&event)) />
                             <button class="secondary-button" type="button" on:click=start_gateway><span class="icon-svg icon-play" aria-hidden="true"></span><span>"启动转发"</span></button>
                             <button class="danger-button" type="button" on:click=stop_gateway><span>"■"</span><span>"停止转发"</span></button>
                         </div>
@@ -1540,13 +1772,14 @@ pub fn App() -> impl IntoView {
 
                     <article class="proxy-log-panel">
                         <div class="proxy-toolbar">
-                            <button class="dark-toolbar-button" type="button" on:click=check_gateway_status><span class="icon-svg icon-trash" aria-hidden="true"></span><span>"清除日志"</span></button>
+                            <button class="dark-toolbar-button" type="button" on:click=clear_proxy_logs><span class="icon-svg icon-trash" aria-hidden="true"></span><span>"清除日志"</span></button>
+                            <button class="dark-toolbar-button" type="button" on:click=read_proxy_logs><span class="icon-svg icon-refresh" aria-hidden="true"></span><span>"刷新日志"</span></button>
                             <button class="dark-toolbar-button" type="button" on:click=check_health><span>"⌁"</span><span>"运行诊断"</span></button>
                             <button class="dark-toolbar-button" type="button" on:click=dry_run><span class="icon-svg icon-magic" aria-hidden="true"></span><span>"Dry-run"</span></button>
                             <button class="dark-toolbar-button" type="button" on:click=export_diagnostics_package><span class="icon-svg icon-info" aria-hidden="true"></span><span>"导出诊断包"</span></button>
                             <label class="auto-scroll-toggle"><span>"自动滚动"</span><input type="checkbox" checked=true /></label>
                         </div>
-                        <pre class="proxy-log-body">{move || result.get()}</pre>
+                        <pre class="proxy-log-body">{move || proxy_logs_text.get()}</pre>
                     </article>
 
                     <div class="proxy-metrics-grid">
@@ -1579,7 +1812,7 @@ pub fn App() -> impl IntoView {
                         </div>
                         <div class="settings-row">
                             <label>"转发端口"</label>
-                            <input value="18080" />
+                            <input prop:value=move || proxy_port.get() on:input=move |event| set_proxy_port.set(event_target_value(&event)) />
                         </div>
                         <div class="settings-row">
                             <label>"管理端口"</label>
@@ -1591,7 +1824,7 @@ pub fn App() -> impl IntoView {
                         </div>
                         <div class="settings-row">
                             <label>"更新地址"</label>
-                            <input value="http://127.0.0.1:18925/latest-local-next.json" />
+                            <input prop:value=move || update_url.get() on:input=move |event| set_update_url.set(event_target_value(&event)) />
                         </div>
                         <div class="settings-row settings-proxy-row">
                             <label>"上游代理"</label>
@@ -1631,9 +1864,11 @@ pub fn App() -> impl IntoView {
                             <label>"配置备份"</label>
                             <div>
                                 <div class="button-row">
-                                    <button class="secondary-button compact" type="button" on:click=list_config_backups><span class="icon-svg icon-info" aria-hidden="true"></span><span>"立即备份"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=create_backup_now><span class="icon-svg icon-info" aria-hidden="true"></span><span>"立即备份"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=list_config_backups><span class="icon-svg icon-refresh" aria-hidden="true"></span><span>"备份列表"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=save_provider_export_as><span class="icon-svg icon-download" aria-hidden="true"></span><span>"导出配置"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=move |_| preview_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入配置"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=save_settings><span class="icon-svg icon-save" aria-hidden="true"></span><span>"保存设置"</span></button>
                                 </div>
                                 <textarea class="json-input settings-import-json" placeholder="粘贴 CC Switch / CC Desktop Switch 配置 JSON" prop:value=move || import_json.get() on:input=move |event| set_import_json.set(event_target_value(&event))></textarea>
                                 <pre class="settings-result">{move || import_preview_text.get()}</pre>
@@ -1697,6 +1932,42 @@ fn auth_scheme_value(auth_scheme: &commands::AuthScheme) -> String {
 
 fn format_gateway_health(health: &commands::GatewayHealth) -> String {
     format!("{} running={}", health.base_url, health.running)
+}
+
+fn parse_proxy_port(value: &str) -> u16 {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+        .unwrap_or(18080)
+}
+
+fn update_url_or_default(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
+            .to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
+fn format_proxy_logs(logs: &[commands::DiagnosticsLogEntry]) -> String {
+    if logs.is_empty() {
+        return "gateway logs: none".to_owned();
+    }
+    logs.iter()
+        .rev()
+        .take(80)
+        .map(|entry| {
+            format!(
+                "{} [{}] {}: {}",
+                entry.timestamp_unix_ms, entry.level, entry.code, entry.message
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn route_tab_class(active: bool) -> &'static str {
@@ -2156,6 +2427,44 @@ fn default_model_mapping_json() -> String {
         }
     ]))
     .unwrap_or_else(|_| "[]".to_owned())
+}
+
+fn visible_model_mapping_drafts(
+    default_model: String,
+    opus_model: String,
+    sonnet_model: String,
+    haiku_model: String,
+) -> Vec<ModelMappingDraft> {
+    vec![
+        ModelMappingDraft {
+            slot: ModelSlot::Default,
+            upstream_model: default_model,
+            route_id: None,
+            supports_1m: false,
+            supports_max: false,
+        },
+        ModelMappingDraft {
+            slot: ModelSlot::Opus,
+            upstream_model: opus_model,
+            route_id: None,
+            supports_1m: true,
+            supports_max: false,
+        },
+        ModelMappingDraft {
+            slot: ModelSlot::Sonnet,
+            upstream_model: sonnet_model,
+            route_id: None,
+            supports_1m: true,
+            supports_max: false,
+        },
+        ModelMappingDraft {
+            slot: ModelSlot::Haiku,
+            upstream_model: haiku_model,
+            route_id: None,
+            supports_1m: false,
+            supports_max: false,
+        },
+    ]
 }
 
 fn text(language: &str, key: &str) -> &'static str {

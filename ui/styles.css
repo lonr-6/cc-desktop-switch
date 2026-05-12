@@ -73,14 +73,16 @@ button:disabled {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-rows: 104px 1fr;
+  display: flex;
+  flex-direction: column;
   min-width: 1120px;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   background: var(--app-bg);
 }
 
 .app-header {
+  flex: 0 0 104px;
   display: grid;
   grid-template-columns: minmax(300px, 1fr) auto minmax(230px, 1fr);
   align-items: center;
@@ -114,6 +116,7 @@ button:disabled {
 }
 
 .app-main {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 0 32px 34px;
@@ -420,6 +423,10 @@ button:disabled {
   border-radius: 8px;
   background: transparent;
   color: #59677f;
+}
+
+.provider-actions .danger-icon {
+  color: var(--danger);
 }
 
 .provider-preset-grid.dashboard-empty-state {

@@ -99,14 +99,24 @@ pub fn run() {
             commands::update_model_mappings,
             commands::list_config_backups,
             commands::read_config_backup,
+            commands::create_config_backup,
+            commands::get_config_snapshot,
+            commands::get_settings,
+            commands::update_settings,
             commands::health,
             commands::gateway_status,
+            commands::get_proxy_status,
             commands::start_gateway,
+            commands::start_proxy_listener,
             commands::stop_gateway,
+            commands::stop_proxy_listener,
+            commands::get_proxy_logs,
+            commands::clear_proxy_logs,
             commands::desktop_config_probe,
             commands::export_diagnostics_package,
             commands::copy_diagnostics_summary,
             commands::copy_diagnostics_summary_to_clipboard,
+            commands::copy_text_to_clipboard_command,
             commands::save_diagnostics_package,
             commands::save_diagnostics_package_as,
             commands::diagnostics_issue_draft,
@@ -116,7 +126,8 @@ pub fn run() {
             commands::provider_real_smoke,
             commands::apply_dry_run,
             commands::apply_local_config,
-            commands::apply_detected_local_config
+            commands::apply_detected_local_config,
+            commands::configure_desktop
         ])
         .build(tauri::generate_context!())
         .expect("failed to build CC Desktop Switch")

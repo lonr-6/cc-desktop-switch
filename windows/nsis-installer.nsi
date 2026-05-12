@@ -892,18 +892,93 @@ SectionEnd
 
 Function RestorePreviousInstallLocation
   ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+  Call NormalizeInstallLocation
+  StrCmp $4 "" 0 restore_done
+  ReadRegStr $4 SHCTX "${UNINSTKEY}" "InstallLocation"
+  Call NormalizeInstallLocation
+  StrCmp $4 "" 0 restore_done
+  ReadRegStr $5 SHCTX "${UNINSTKEY}" "UninstallString"
+  Call InstallLocationFromUninstallString
   StrCmp $4 "" 0 restore_done
   ; Migration from the v1.0.x Python/NSIS installer.
   ; That line stored InstallLocation under HKLM uninstall metadata instead of MANUPRODUCTKEY.
   ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\CC Desktop Switch" "InstallLocation"
+  Call NormalizeInstallLocation
   StrCmp $4 "" 0 restore_done
   ReadRegStr $5 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\CC Desktop Switch" "UninstallString"
-  ${If} $5 != ""
-    ${GetParent} $5 $4
-  ${EndIf}
+  Call InstallLocationFromUninstallString
+  StrCmp $4 "" 0 restore_done
+  ; MSI installers usually use a GUID uninstall key. Scan DisplayName entries so the
+  ; NSIS directory page can still inherit an MSI-installed location before the user sees it.
+  Call FindPreviousInstallLocation
 restore_done:
   StrCmp $4 "" +2 0
     StrCpy $INSTDIR $4
+FunctionEnd
+
+Function NormalizeInstallLocation
+  StrCmp $4 "" normalize_done
+  StrCpy $6 $4 1
+  StrCmp $6 '"' 0 +2
+    StrCpy $4 $4 "" 1
+  StrCpy $6 $4 1 -1
+  StrCmp $6 '"' 0 normalize_done
+    StrCpy $4 $4 -1
+normalize_done:
+FunctionEnd
+
+Function InstallLocationFromUninstallString
+  StrCpy $4 ""
+  StrCmp $5 "" install_location_from_uninstall_done
+  StrCpy $4 $5
+  Call NormalizeInstallLocation
+  ${GetParent} $4 $4
+  Call NormalizeInstallLocation
+install_location_from_uninstall_done:
+FunctionEnd
+
+Function FindPreviousInstallLocation
+  StrCpy $4 ""
+  Call FindPreviousInstallLocationHKLM
+  StrCmp $4 "" 0 find_previous_install_done
+  Call FindPreviousInstallLocationHKCU
+find_previous_install_done:
+FunctionEnd
+
+Function FindPreviousInstallLocationHKLM
+  StrCpy $0 0
+find_previous_install_hklm_loop:
+  EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $0
+  StrCmp $1 "" find_previous_install_hklm_done
+  IntOp $0 $0 + 1
+  ReadRegStr $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayName"
+  StrCmp $2 "${PRODUCTNAME}" 0 find_previous_install_hklm_loop
+  ReadRegStr $4 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "InstallLocation"
+  Call NormalizeInstallLocation
+  StrCmp $4 "" 0 find_previous_install_hklm_done
+  ReadRegStr $5 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
+  Call InstallLocationFromUninstallString
+  StrCmp $4 "" 0 find_previous_install_hklm_done
+  Goto find_previous_install_hklm_loop
+find_previous_install_hklm_done:
+FunctionEnd
+
+Function FindPreviousInstallLocationHKCU
+  StrCpy $0 0
+find_previous_install_hkcu_loop:
+  EnumRegKey $1 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $0
+  StrCmp $1 "" find_previous_install_hkcu_done
+  IntOp $0 $0 + 1
+  ReadRegStr $2 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayName"
+  StrCmp $2 "${PRODUCTNAME}" 0 find_previous_install_hkcu_loop
+  ReadRegStr $4 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "InstallLocation"
+  Call NormalizeInstallLocation
+  StrCmp $4 "" 0 find_previous_install_hkcu_done
+  ReadRegStr $5 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
+  Call InstallLocationFromUninstallString
+  StrCmp $4 "" 0 find_previous_install_hkcu_done
+  Goto find_previous_install_hkcu_loop
+find_previous_install_hkcu_done:
 FunctionEnd
 
 Function Skip
