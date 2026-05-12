@@ -7,6 +7,8 @@ pub struct ProviderDraft {
     pub provider_id: Option<String>,
     pub display_name: String,
     pub base_url: String,
+    #[serde(default)]
+    pub auth_scheme: AuthScheme,
     pub api_key: String,
     pub api_format: ApiFormat,
 }
@@ -17,6 +19,7 @@ pub struct Provider {
     pub provider_id: String,
     pub display_name: String,
     pub base_url: String,
+    pub auth_scheme: AuthScheme,
     pub api_format: ApiFormat,
     pub api_key: String,
 }
@@ -28,12 +31,22 @@ pub enum ApiFormat {
     OpenAiChat,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthScheme {
+    #[default]
+    Bearer,
+    XApiKey,
+    None,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSummary {
     pub provider_id: String,
     pub display_name: String,
     pub base_url: String,
+    pub auth_scheme: AuthScheme,
     pub api_format: ApiFormat,
     pub has_api_key: bool,
 }
@@ -64,6 +77,7 @@ impl ProviderDraft {
             provider_id,
             display_name,
             base_url,
+            auth_scheme: self.auth_scheme,
             api_format: self.api_format,
             api_key,
         })
@@ -76,6 +90,7 @@ impl Provider {
             provider_id: self.provider_id.clone(),
             display_name: self.display_name.clone(),
             base_url: self.base_url.clone(),
+            auth_scheme: self.auth_scheme.clone(),
             api_format: self.api_format.clone(),
             has_api_key: !self.api_key.is_empty(),
         }
@@ -115,6 +130,7 @@ mod tests {
             provider_id: None,
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic/".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_key: "sk-secret".to_owned(),
             api_format: ApiFormat::Anthropic,
         }

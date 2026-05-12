@@ -144,6 +144,27 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
             &["ui/src/main.rs", "ui/src/app.rs"],
             "Restore Leptos UI source files and keep product UI logic in Rust.",
         ),
+        check_file_contains(
+            "Tauri app identity, Windows installer inheritance, and tray icon binding match stable-line continuity",
+            &root.join("src-tauri").join("tauri.conf.json"),
+            &[
+                "\"identifier\": \"io.github.lonr6.ccdesktopswitch\"",
+                "\"installMode\": \"perMachine\"",
+                "\"template\": \"../windows/nsis-installer.nsi\"",
+                "\"installerHooks\": \"../windows/nsis-hooks.nsh\"",
+            ],
+            "Restore the stable bundle identifier and NSIS inheritance hooks so Windows upgrades can reuse the old install location.",
+        ),
+        check_file_contains(
+            "Tauri tray uses a stable id, tooltip, and bundled default icon",
+            &root.join("src-tauri").join("src").join("lib.rs"),
+            &[
+                "TrayIconBuilder::with_id(\"cc-desktop-switch\")",
+                ".tooltip(\"CC Desktop Switch\")",
+                "app.default_window_icon().cloned()",
+            ],
+            "Bind the tray icon to the bundled application icon instead of relying on platform defaults.",
+        ),
         RcReadinessCheck {
             requirement: "No hand-written JavaScript business logic under ui/src",
             passed: !contains_extension(&root.join("ui").join("src"), "js"),

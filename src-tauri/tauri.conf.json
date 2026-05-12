@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CC Desktop Switch",
   "version": "1.1.0",
-  "identifier": "app.ccdesktopswitch.mainline",
+  "identifier": "io.github.lonr6.ccdesktopswitch",
   "build": {
     "beforeDevCommand": "cd ui && trunk serve",
     "devUrl": "http://localhost:1420",
@@ -13,11 +13,13 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "CC Desktop Switch",
-        "width": 1180,
+        "width": 1240,
         "height": 820,
         "minWidth": 980,
         "minHeight": 680,
+        "center": true,
         "resizable": true
       }
     ],
@@ -28,10 +30,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Claude Desktop provider switcher",
+    "longDescription": "A desktop utility for configuring third-party Claude Desktop providers.",
     "icon": [
       "../frontend/assets/app-icon.png",
       "../frontend/assets/app-icon.icns",
       "../frontend/assets/app-icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "template": "../windows/nsis-installer.nsi",
+        "installerHooks": "../windows/nsis-hooks.nsh"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

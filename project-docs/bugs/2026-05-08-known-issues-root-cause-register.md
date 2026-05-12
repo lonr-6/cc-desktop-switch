@@ -32,6 +32,10 @@ This register turns historical bugs and GitHub issues into Rust mainline require
 | `desktop.one_million_not_written` | 1M route missing supports1m | Health compares expected route supports1m to actual config |
 | `update.latest_json_404` | latest.json points to missing asset | Release gate verifies fixed and latest URLs before publish |
 | `installer.old_dir_not_detected` | Installer defaults to new directory | NSIS directory detection must happen before directory picker |
+| `installer.identity_mismatch` | New build cannot inherit old install path or upgrade identity | Tauri `identifier` must stay `io.github.lonr6.ccdesktopswitch`, and Windows NSIS must keep old per-machine template/hooks |
+| `provider.auth_scheme_lost` | Imported old Provider works in UI but fails at runtime because auth header changes | Provider `authScheme` must roundtrip through config migration, UI summary/save, and gateway upstream headers |
+| `app.tray_default_icon_missing` | Taskbar/tray thumbnail appears blank or transparent | Tray builder must use stable id/tooltip and app default icon from bundled resources |
+| `ui.current_frontend_drift` | Rust UI looks unlike the latest CC Desktop Switch/CC Switch screenshots | UI contract must be the current desktop screenshots and frontend code, not accumulated style overrides or mobile-first variants |
 
 ## Required Issue Fingerprints
 
@@ -50,6 +54,9 @@ The Rust diagnostics module must emit stable codes:
 - `provider.max_not_supported`
 - `provider.copilot_subscription_not_endpoint`
 - `provider.api_format_mismatch`
+- `provider.auth_scheme_lost`
+- `app.tray_default_icon_missing`
+- `ui.current_frontend_drift`
 - `update.installer_launch_failed`
 - `release.missing_platform_assets`
 

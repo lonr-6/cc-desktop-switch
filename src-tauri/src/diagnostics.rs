@@ -387,7 +387,7 @@ fn percent_encode(input: &str) -> String {
 mod tests {
     use super::*;
     use crate::config::{AppConfig, ConfigProvider};
-    use crate::provider::ApiFormat;
+    use crate::provider::{ApiFormat, AuthScheme};
 
     #[test]
     fn readiness_uses_configured_gateway_port() {
@@ -433,6 +433,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: String::new(),
         };
@@ -491,6 +492,7 @@ upstream body: {"error":"sk-upstream-secret"}
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-provider-secret".to_owned(),
         };

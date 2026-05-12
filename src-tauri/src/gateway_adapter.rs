@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 use crate::diagnostics::redact_diagnostics_text;
 use crate::model_catalog::RouteResolution;
-use crate::provider::{ApiFormat, Provider};
+use crate::provider::{ApiFormat, AuthScheme, Provider};
 
 const MAX_ERROR_PREVIEW_CHARS: usize = 512;
 
@@ -642,16 +642,23 @@ fn object_body(body: Value) -> Result<Map<String, Value>, UpstreamError> {
 }
 
 fn auth_headers(provider: &Provider) -> Vec<UpstreamHeader> {
-    vec![
-        UpstreamHeader {
+    let mut headers = Vec::new();
+    match provider.auth_scheme {
+        AuthScheme::Bearer => headers.push(UpstreamHeader {
             name: "authorization".to_owned(),
             value: format!("Bearer {}", provider.api_key),
-        },
-        UpstreamHeader {
-            name: "content-type".to_owned(),
-            value: "application/json".to_owned(),
-        },
-    ]
+        }),
+        AuthScheme::XApiKey => headers.push(UpstreamHeader {
+            name: "x-api-key".to_owned(),
+            value: provider.api_key.clone(),
+        }),
+        AuthScheme::None => {}
+    }
+    headers.push(UpstreamHeader {
+        name: "content-type".to_owned(),
+        value: "application/json".to_owned(),
+    });
+    headers
 }
 
 fn messages_url(provider: &Provider) -> String {
@@ -740,6 +747,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url,
+            auth_scheme: AuthScheme::Bearer,
             api_format,
             api_key: "sk-provider-secret".to_owned(),
         }
@@ -795,6 +803,23 @@ mod tests {
             .headers
             .iter()
             .any(|header| header.name == "authorization"));
+    }
+
+    #[test]
+    fn auth_headers_follow_provider_auth_scheme() {
+        let mut provider = provider(ApiFormat::Anthropic);
+        provider.auth_scheme = AuthScheme::XApiKey;
+        let headers = auth_headers(&provider);
+        assert!(headers
+            .iter()
+            .any(|header| header.name == "x-api-key" && header.value == "sk-provider-secret"));
+        assert!(!headers.iter().any(|header| header.name == "authorization"));
+
+        provider.auth_scheme = AuthScheme::None;
+        let headers = auth_headers(&provider);
+        assert!(!headers.iter().any(|header| header.name == "x-api-key"));
+        assert!(!headers.iter().any(|header| header.name == "authorization"));
+        assert!(headers.iter().any(|header| header.name == "content-type"));
     }
 
     #[test]

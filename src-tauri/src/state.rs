@@ -922,7 +922,7 @@ mod tests {
         probe_current_desktop_config, DesktopPlatform, ManagedConfigEvidence,
     };
     use crate::model_catalog::ModelSlot;
-    use crate::provider::ApiFormat;
+    use crate::provider::{ApiFormat, AuthScheme};
 
     use super::*;
 
@@ -949,6 +949,7 @@ mod tests {
             provider_id: None,
             display_name: display_name.to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_key: "sk-secret".to_owned(),
             api_format: ApiFormat::Anthropic,
         }
@@ -1302,6 +1303,7 @@ mod tests {
                 provider_id: Some(kimi.provider_id.clone()),
                 display_name: "Kimi Updated".to_owned(),
                 base_url: "https://api.moonshot.cn/anthropic/".to_owned(),
+                auth_scheme: AuthScheme::Bearer,
                 api_key: "sk-new-secret".to_owned(),
                 api_format: ApiFormat::Anthropic,
             })
@@ -1367,6 +1369,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-secret".to_owned(),
         };
@@ -1389,6 +1392,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-secret".to_owned(),
         };
@@ -1555,6 +1559,7 @@ mod tests {
                 provider_id: None,
                 display_name: "DeepSeek".to_owned(),
                 base_url: "https://api.deepseek.com/anthropic".to_owned(),
+                auth_scheme: AuthScheme::Bearer,
                 api_key: String::new(),
                 api_format: ApiFormat::Anthropic,
             })
@@ -1633,6 +1638,7 @@ mod tests {
                 provider_id: Some("provider-deepseek".to_owned()),
                 display_name: "DeepSeek Updated".to_owned(),
                 base_url: "https://api.deepseek.com/anthropic".to_owned(),
+                auth_scheme: AuthScheme::Bearer,
                 api_key: "sk-new-secret".to_owned(),
                 api_format: ApiFormat::Anthropic,
             })

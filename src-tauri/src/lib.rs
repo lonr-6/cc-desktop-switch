@@ -36,7 +36,8 @@ fn install_app_shell(app: &mut tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
-    TrayIconBuilder::new()
+    let mut tray = TrayIconBuilder::with_id("cc-desktop-switch")
+        .tooltip("CC Desktop Switch")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -53,8 +54,11 @@ fn install_app_shell(app: &mut tauri::App) -> tauri::Result<()> {
             {
                 show_main_window(tray.app_handle());
             }
-        })
-        .build(app)?;
+        });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+    tray.build(app)?;
 
     Ok(())
 }

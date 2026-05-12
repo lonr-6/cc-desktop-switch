@@ -467,7 +467,7 @@ mod tests {
 
     use crate::desktop::build_desktop_plan;
     use crate::model_catalog::{ModelMapping, ModelSlot, RouteCapabilities};
-    use crate::provider::{ApiFormat, Provider, ProviderDraft};
+    use crate::provider::{ApiFormat, AuthScheme, Provider, ProviderDraft};
 
     use super::*;
 
@@ -484,6 +484,7 @@ mod tests {
             provider_id: Some("provider-deepseek".to_owned()),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_key: "sk-test".to_owned(),
             api_format: ApiFormat::Anthropic,
         }

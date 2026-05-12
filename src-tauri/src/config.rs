@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::model_catalog::{route_for_model, ModelMapping, ModelSlot, RouteCapabilities};
-use crate::provider::{ApiFormat, Provider, ProviderSummary};
+use crate::provider::{ApiFormat, AuthScheme, Provider, ProviderSummary};
 
 pub const RUST_SCHEMA_VERSION: u32 = 1;
 pub const PROVIDER_EXPORT_KIND: &str = "ccds.providerExport";
@@ -47,14 +47,6 @@ pub struct ConfigProvider {
     pub api_key: String,
     pub model_mappings: Vec<ModelMapping>,
     pub sort_index: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthScheme {
-    Bearer,
-    XApiKey,
-    None,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -618,6 +610,7 @@ impl ConfigProvider {
             provider_id: self.provider_id.clone(),
             display_name: self.display_name.clone(),
             base_url: self.base_url.clone(),
+            auth_scheme: self.auth_scheme.clone(),
             api_format: self.api_format.clone(),
             api_key: self.api_key.clone(),
         }
@@ -629,7 +622,7 @@ impl ConfigProvider {
             provider_id: provider.provider_id.clone(),
             display_name: provider.display_name.clone(),
             base_url: provider.base_url.clone(),
-            auth_scheme: AuthScheme::Bearer,
+            auth_scheme: provider.auth_scheme.clone(),
             api_format: provider.api_format.clone(),
             api_key: provider.api_key.clone(),
             model_mappings,
@@ -737,6 +730,7 @@ fn config_from_provider_template_package(
             provider_id: provider_id_from_template(&template.template_id, &display_name),
             display_name,
             base_url,
+            auth_scheme: AuthScheme::Bearer,
             api_format: template.api_format,
             api_key: String::new(),
         };
@@ -1458,6 +1452,7 @@ fn migrate_python_provider(value: &Value, sort_index: u32) -> Option<ConfigProvi
         provider_id: provider_id.clone(),
         display_name: display_name.clone(),
         base_url: base_url.clone(),
+        auth_scheme: auth_scheme.clone(),
         api_format: api_format.clone(),
         api_key: api_key.clone(),
     };
@@ -1823,6 +1818,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-old".to_owned(),
         };
@@ -1854,6 +1850,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-old".to_owned(),
         };
@@ -1879,6 +1876,7 @@ mod tests {
                 provider_id: stable_provider_id(Some(name)),
                 display_name: name.to_owned(),
                 base_url: "https://api.example.test".to_owned(),
+                auth_scheme: AuthScheme::Bearer,
                 api_format: ApiFormat::Anthropic,
                 api_key: "sk-secret".to_owned(),
             };
@@ -1906,6 +1904,7 @@ mod tests {
                 provider_id: stable_provider_id(Some(name)),
                 display_name: name.to_owned(),
                 base_url: "https://api.example.test".to_owned(),
+                auth_scheme: AuthScheme::Bearer,
                 api_format: ApiFormat::Anthropic,
                 api_key: "sk-secret".to_owned(),
             };
@@ -1972,6 +1971,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-old".to_owned(),
         };
@@ -2010,6 +2010,7 @@ mod tests {
             provider_id: "provider-deepseek".to_owned(),
             display_name: "DeepSeek".to_owned(),
             base_url: "https://api.deepseek.com/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-old".to_owned(),
         };
@@ -2025,6 +2026,7 @@ mod tests {
             provider_id: "provider-kimi".to_owned(),
             display_name: "Kimi".to_owned(),
             base_url: "https://api.moonshot.cn/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-kimi".to_owned(),
         };
@@ -2519,6 +2521,7 @@ mod tests {
             provider_id: "provider-kimi".to_owned(),
             display_name: "Kimi".to_owned(),
             base_url: "https://api.moonshot.cn/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-secret".to_owned(),
         };
@@ -2572,6 +2575,7 @@ mod tests {
             provider_id: "provider-kimi".to_owned(),
             display_name: "Kimi".to_owned(),
             base_url: "https://api.moonshot.cn/anthropic".to_owned(),
+            auth_scheme: AuthScheme::Bearer,
             api_format: ApiFormat::Anthropic,
             api_key: "sk-secret".to_owned(),
         };

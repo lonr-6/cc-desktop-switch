@@ -46,6 +46,20 @@ The spike passes only if all items below are true:
 
 P1 conclusion: Leptos + Trunk remains the selected pure Rust UI path. The failed items are scoped follow-ups, not reasons to switch UI stacks.
 
+## P74 Desktop UI Status - 2026-05-12
+
+| Area | Status | Evidence |
+|---|---|---|
+| Tauri commands | Pass | UI command bridge still calls provider save/list, health, gateway/apply, diagnostics, and config commands without hand-written JS business logic. |
+| State management | Pass | Provider edit form, quick presets, auth scheme, API format, and model mapping rows update through Leptos signals. |
+| i18n | Partial | Existing language controls remain visible; full copy parity across all rebuilt P74 text still needs a translation pass. |
+| Theme | Partial | Theme controls and light styling remain; dark/system visual parity needs a separate screenshot pass. |
+| Layout | Pass | P74 screenshots under `target/ui-smoke/p74/` cover Dashboard, Provider, Add Provider, Proxy, Settings, and Guide against the current desktop UI baseline; mobile is not an acceptance target. |
+| Packaging | Pass on Windows, refresh needed on macOS | `cargo tauri build` produced Windows MSI/NSIS; P74 changed artifacts after prior macOS workflow evidence, so macOS arm64/x64 workflow must be rerun. |
+| Dev loop | Pass | `trunk build --release` and mocked browser smoke passed. |
+| Bundle | Partial | Windows package builds; formal startup time and bundle-size budget remain follow-up. |
+| Accessibility | Partial | Controls are native buttons/inputs/selects; full keyboard walkthrough for apply/check/report still needs manual audit. |
+
 ## Failure Criteria
 
 If Leptos cannot satisfy the exit criteria without heavy custom glue, document the failure and choose a different Rust UI stack before implementing product features.

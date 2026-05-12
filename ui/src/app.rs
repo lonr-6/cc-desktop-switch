@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::commands::{
-    self, ApiFormat, ModelMappingDraft, ProviderDraft, ProviderPreset, ProviderSummary,
+    self, ApiFormat, AuthScheme, ModelMappingDraft, ProviderDraft, ProviderPreset, ProviderSummary,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub fn App() -> impl IntoView {
     let (api_key, set_api_key) = signal(String::new());
     let (show_api_key, set_show_api_key) = signal(false);
     let (api_format, set_api_format) = signal("anthropic".to_owned());
+    let (auth_scheme, set_auth_scheme) = signal("bearer".to_owned());
     let (import_json, set_import_json) = signal(String::new());
     let (import_preview_text, set_import_preview_text) =
         signal("Provider import preview has not run.".to_owned());
@@ -67,6 +68,7 @@ pub fn App() -> impl IntoView {
             provider_id: selected_provider_id.get_untracked(),
             display_name: provider_name.get_untracked(),
             base_url: base_url.get_untracked(),
+            auth_scheme: auth_scheme_from_value(&auth_scheme.get_untracked()),
             api_key: api_key.get_untracked(),
             api_format: if api_format.get_untracked() == "openai_chat" {
                 ApiFormat::OpenAiChat
@@ -502,7 +504,9 @@ pub fn App() -> impl IntoView {
             }
         });
     };
-    let copy_diagnostics_summary = move |_| run_copy_diagnostics_summary();
+    let copy_diagnostics_summary = move |_: leptos::ev::MouseEvent| {
+        run_copy_diagnostics_summary();
+    };
 
     let export_diagnostics_package = move |_| {
         set_diagnostics_text.set("生成 diagnostics package 中...".to_owned());
@@ -545,7 +549,7 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    let save_diagnostics_package_as = move |_| {
+    let save_diagnostics_package_as = move |_: leptos::ev::MouseEvent| {
         set_diagnostics_text.set("选择 diagnostics package 保存位置中...".to_owned());
         spawn_local(async move {
             match commands::save_diagnostics_package_as().await {
@@ -562,7 +566,7 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    let preview_issue_draft = move |_| {
+    let preview_issue_draft = move |_: leptos::ev::MouseEvent| {
         set_diagnostics_text.set("生成 GitHub Issue draft 中...".to_owned());
         spawn_local(async move {
             match commands::diagnostics_issue_draft().await {
@@ -577,7 +581,7 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    let open_issue = move |_| {
+    let open_issue = move |_: leptos::ev::MouseEvent| {
         set_diagnostics_text.set("打开 GitHub Issue 中...".to_owned());
         spawn_local(async move {
             match commands::open_diagnostics_issue().await {
@@ -622,7 +626,7 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    let dry_run = move |_| {
+    let dry_run = move |_: leptos::ev::MouseEvent| {
         set_result.set("生成 apply dry-run 中...".to_owned());
         spawn_local(async move {
             match commands::apply_dry_run().await {
@@ -706,6 +710,7 @@ pub fn App() -> impl IntoView {
             provider_id: selected_provider_id.get_untracked(),
             display_name: provider_name.get_untracked(),
             base_url: base_url.get_untracked(),
+            auth_scheme: auth_scheme_from_value(&auth_scheme.get_untracked()),
             api_key: api_key.get_untracked(),
             api_format: if api_format.get_untracked() == "openai_chat" {
                 ApiFormat::OpenAiChat
@@ -796,9 +801,6 @@ pub fn App() -> impl IntoView {
         <div class="app-shell" data-theme=move || theme.get()>
             <header class="app-header">
                 <div class="header-actions-left">
-                    <button class="dashboard-feedback-button" type="button" on:click=move |_| run_copy_diagnostics_summary()>
-                        <span class="button-icon icon-svg icon-chat" aria-hidden="true"></span><span>{move || copy("report_issue")}</span>
-                    </button>
                     <button class="dashboard-import-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
                         <span class="button-icon icon-svg icon-import" aria-hidden="true"></span><span>"导入 CC Switch 配置"</span>
                     </button>
@@ -926,6 +928,7 @@ pub fn App() -> impl IntoView {
                                                         set_provider_name.set(edit_provider.display_name.clone());
                                                         set_base_url.set(edit_provider.base_url.clone());
                                                         set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                        set_auth_scheme.set(auth_scheme_value(&edit_provider.auth_scheme));
                                                         set_api_key.set(String::new());
                                                         set_selected_preset_id.set(String::new());
                                                         set_active_page.set(AppPage::ProvidersAdd);
@@ -943,11 +946,25 @@ pub fn App() -> impl IntoView {
                             </div>
 
                             <div class=move || dashboard_empty_preset_grid_class(providers.get().is_empty())>
+                                <div class="cc-switch-empty-state">
+                                    <span class="empty-state-icon"><span class="icon-svg icon-users" aria-hidden="true"></span></span>
+                                    <h2>"还没有添加任何供应商"</h2>
+                                    <p>"如果你已有配置，请点击“导入当前配置”；所有数据将安全保存在 default 供应商中。"</p>
+                                    <div class="empty-state-actions">
+                                        <button class="primary-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
+                                            <span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入当前配置"</span>
+                                        </button>
+                                        <button class="secondary-button" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>
+                                            <span>"添加供应商"</span>
+                                        </button>
+                                    </div>
+                                </div>
                                 <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
                                     set_selected_preset_id.set("deepseek".to_owned());
                                     set_provider_name.set("DeepSeek".to_owned());
                                     set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                     set_api_format.set("anthropic".to_owned());
+                                    set_auth_scheme.set("bearer".to_owned());
                                     set_api_key.set(String::new());
                                     set_active_page.set(AppPage::ProvidersAdd);
                                 }>
@@ -961,6 +978,7 @@ pub fn App() -> impl IntoView {
                                     set_provider_name.set("Kimi（月之暗面）".to_owned());
                                     set_base_url.set("https://api.moonshot.cn/v1".to_owned());
                                     set_api_format.set("openai_chat".to_owned());
+                                    set_auth_scheme.set("bearer".to_owned());
                                     set_api_key.set(String::new());
                                     set_active_page.set(AppPage::ProvidersAdd);
                                 }>
@@ -974,6 +992,7 @@ pub fn App() -> impl IntoView {
                                     set_provider_name.set("七牛云 AI".to_owned());
                                     set_base_url.set("https://api.qnaigc.com/v1".to_owned());
                                     set_api_format.set("openai_chat".to_owned());
+                                    set_auth_scheme.set("bearer".to_owned());
                                     set_api_key.set(String::new());
                                     set_active_page.set(AppPage::ProvidersAdd);
                                 }>
@@ -987,6 +1006,7 @@ pub fn App() -> impl IntoView {
                                     set_provider_name.set("智谱 GLM".to_owned());
                                     set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
                                     set_api_format.set("openai_chat".to_owned());
+                                    set_auth_scheme.set("bearer".to_owned());
                                     set_api_key.set(String::new());
                                     set_active_page.set(AppPage::ProvidersAdd);
                                 }>
@@ -1010,6 +1030,7 @@ pub fn App() -> impl IntoView {
                                         set_provider_name.set("DeepSeek".to_owned());
                                         set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                         set_api_format.set("anthropic".to_owned());
+                                        set_auth_scheme.set("bearer".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
@@ -1023,6 +1044,7 @@ pub fn App() -> impl IntoView {
                                         set_provider_name.set("Kimi（月之暗面）".to_owned());
                                         set_base_url.set("https://api.moonshot.cn/v1".to_owned());
                                         set_api_format.set("openai_chat".to_owned());
+                                        set_auth_scheme.set("bearer".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
@@ -1036,6 +1058,7 @@ pub fn App() -> impl IntoView {
                                         set_provider_name.set("七牛云 AI".to_owned());
                                         set_base_url.set("https://api.qnaigc.com/v1".to_owned());
                                         set_api_format.set("openai_chat".to_owned());
+                                        set_auth_scheme.set("bearer".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
@@ -1049,6 +1072,7 @@ pub fn App() -> impl IntoView {
                                         set_provider_name.set("智谱 GLM".to_owned());
                                         set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
                                         set_api_format.set("openai_chat".to_owned());
+                                        set_auth_scheme.set("bearer".to_owned());
                                         set_api_key.set(String::new());
                                         set_active_page.set(AppPage::ProvidersAdd);
                                     }>
@@ -1103,7 +1127,14 @@ pub fn App() -> impl IntoView {
                             </div>
                             <label class="field">
                                 <span>"Auth Scheme *"</span>
-                                <button class="form-select auth-scheme-trigger" type="button" disabled=true><span>"bearer"</span><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
+                                <select
+                                    class="form-select auth-scheme-trigger"
+                                    on:change=move |event| set_auth_scheme.set(event_target_value(&event))
+                                >
+                                    <option value="bearer" selected=move || auth_scheme.get() == "bearer">"bearer"</option>
+                                    <option value="x_api_key" selected=move || auth_scheme.get() == "x_api_key">"x-api-key"</option>
+                                    <option value="none" selected=move || auth_scheme.get() == "none">"none"</option>
+                                </select>
                             </label>
 
                             <details class="advanced-provider-options" open=true>
@@ -1188,6 +1219,7 @@ pub fn App() -> impl IntoView {
                                     set_base_url.set(String::new());
                                     set_api_key.set(String::new());
                                     set_api_format.set("anthropic".to_owned());
+                                    set_auth_scheme.set("bearer".to_owned());
                                     set_selected_preset_id.set(String::new());
                                     set_active_page.set(AppPage::Providers);
                                 }>"取消"</button>
@@ -1220,6 +1252,7 @@ pub fn App() -> impl IntoView {
                                                     set_provider_name.set(edit_provider.display_name.clone());
                                                     set_base_url.set(edit_provider.base_url.clone());
                                                     set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                    set_auth_scheme.set(auth_scheme_value(&edit_provider.auth_scheme));
                                                     set_api_key.set(String::new());
                                                 }>"Edit"</button>
                                                 <button class="secondary-button compact" type="button" on:click=move |_| {
@@ -1242,6 +1275,7 @@ pub fn App() -> impl IntoView {
                                 set_provider_name.set("DeepSeek".to_owned());
                                 set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
                                 set_api_format.set("anthropic".to_owned());
+                                set_auth_scheme.set("bearer".to_owned());
                                 set_api_key.set(String::new());
                             }>
                                 <span class="preset-logo"><img src="deepseek.ico" alt="" /></span>
@@ -1253,6 +1287,7 @@ pub fn App() -> impl IntoView {
                                 set_provider_name.set("Kimi（月之暗面）".to_owned());
                                 set_base_url.set("https://api.moonshot.cn/v1".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
+                                set_auth_scheme.set("bearer".to_owned());
                                 set_api_key.set(String::new());
                             }>
                                 <span class="preset-logo"><img src="kimi.ico" alt="" /></span>
@@ -1264,6 +1299,7 @@ pub fn App() -> impl IntoView {
                                 set_provider_name.set("七牛云 AI".to_owned());
                                 set_base_url.set("https://api.qnaigc.com/v1".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
+                                set_auth_scheme.set("bearer".to_owned());
                                 set_api_key.set(String::new());
                             }>
                                 <span class="preset-logo"><img src="qiniu.ico" alt="" /></span>
@@ -1275,6 +1311,7 @@ pub fn App() -> impl IntoView {
                                 set_provider_name.set("智谱 GLM".to_owned());
                                 set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
                                 set_api_format.set("openai_chat".to_owned());
+                                set_auth_scheme.set("bearer".to_owned());
                                 set_api_key.set(String::new());
                             }>
                                 <span class="preset-logo"><img src="zhipu.png" alt="" /></span>
@@ -1423,6 +1460,7 @@ pub fn App() -> impl IntoView {
                                                     set_provider_name.set(edit_provider.display_name.clone());
                                                     set_base_url.set(edit_provider.base_url.clone());
                                                     set_api_format.set(api_format_value(&edit_provider.api_format));
+                                                    set_auth_scheme.set(auth_scheme_value(&edit_provider.auth_scheme));
                                                     set_api_key.set(String::new());
                                                     set_active_page.set(AppPage::ProvidersAdd);
                                                 }>
@@ -1486,84 +1524,132 @@ pub fn App() -> impl IntoView {
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Proxy)>
-                    <div class="work-grid">
-                    <article class="panel">
-                        <h2>"Gateway / Apply"</h2>
-                        <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=check_health>{move || copy("check_health")}</button>
-                            <button class="secondary-button" type="button" on:click=check_gateway_status>"Gateway"</button>
-                            <button class="secondary-button" type="button" on:click=start_gateway>"Start"</button>
-                            <button class="secondary-button" type="button" on:click=stop_gateway>"Stop"</button>
-                            <button class="secondary-button" type="button" on:click=run_provider_static_smoke>"Static smoke"</button>
-                            <button class="secondary-button" type="button" on:click=run_gateway_smoke>"Gateway smoke"</button>
-                            <button class="secondary-button" type="button" on:click=run_provider_real_smoke>"Provider smoke"</button>
-                            <button class="secondary-button" type="button" on:click=probe_desktop_config>"Config"</button>
-                            <button class="secondary-button" type="button" on:click=dry_run>{move || copy("apply_dry_run")}</button>
-                            <button class="primary-button" type="button" on:click=apply>"Apply"</button>
+                    <article class="proxy-status-card">
+                        <div class="proxy-status-left">
+                            <span class=move || gateway_status_dot_class(readiness_snapshot.get().as_ref())></span>
+                            <strong>{move || gateway_status_label(readiness_snapshot.get().as_ref())}</strong>
+                            <span>"本机监听"</span>
                         </div>
-                        <div class="result-box" aria-live="polite">{move || result.get()}</div>
+                        <div class="proxy-status-controls">
+                            <label>"转发端口"</label>
+                            <input value="18080" readonly=true />
+                            <button class="secondary-button" type="button" on:click=start_gateway><span class="icon-svg icon-play" aria-hidden="true"></span><span>"启动转发"</span></button>
+                            <button class="danger-button" type="button" on:click=stop_gateway><span>"■"</span><span>"停止转发"</span></button>
+                        </div>
                     </article>
 
-                    <article class="panel">
-                        <h2>{move || copy("readiness_layers")}</h2>
-                        <ul class="readiness-list">
-                            <li><span>"static config"</span><strong class=move || readiness_badge_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or(Some(provider_saved.get())))>{move || readiness_badge_label(readiness_snapshot.get().map(|snapshot| snapshot.provider_configured).or(Some(provider_saved.get())))}</strong></li>
-                            <li><span>"desktop readback"</span><strong class=move || readiness_badge_class(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))>{move || readiness_badge_label(readiness_snapshot.get().map(|snapshot| snapshot.desktop_readback_passed))}</strong></li>
-                            <li><span>"provider smoke"</span><strong class=move || readiness_badge_class(readiness_snapshot.get().map(|snapshot| snapshot.provider_smoke_passed))>{move || readiness_badge_label(readiness_snapshot.get().map(|snapshot| snapshot.provider_smoke_passed))}</strong></li>
-                            <li><span>"gateway smoke"</span><strong class=move || readiness_badge_class(readiness_snapshot.get().map(|snapshot| snapshot.gateway_smoke_passed))>{move || readiness_badge_label(readiness_snapshot.get().map(|snapshot| snapshot.gateway_smoke_passed))}</strong></li>
-                        </ul>
-                        <div class="issue-strip">{move || readiness_issue_text(readiness_snapshot.get().as_ref())}</div>
+                    <article class="proxy-log-panel">
+                        <div class="proxy-toolbar">
+                            <button class="dark-toolbar-button" type="button" on:click=check_gateway_status><span class="icon-svg icon-trash" aria-hidden="true"></span><span>"清除日志"</span></button>
+                            <button class="dark-toolbar-button" type="button" on:click=check_health><span>"⌁"</span><span>"运行诊断"</span></button>
+                            <button class="dark-toolbar-button" type="button" on:click=dry_run><span class="icon-svg icon-magic" aria-hidden="true"></span><span>"Dry-run"</span></button>
+                            <button class="dark-toolbar-button" type="button" on:click=export_diagnostics_package><span class="icon-svg icon-info" aria-hidden="true"></span><span>"导出诊断包"</span></button>
+                            <label class="auto-scroll-toggle"><span>"自动滚动"</span><input type="checkbox" checked=true /></label>
+                        </div>
+                        <pre class="proxy-log-body">{move || result.get()}</pre>
                     </article>
 
-                    <article class="panel diagnostics-panel">
-                        <h2>{move || copy("nav_diagnostics")}</h2>
-                        <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=copy_diagnostics_summary>"Summary"</button>
-                            <button class="secondary-button" type="button" on:click=copy_diagnostics_to_clipboard>"Copy"</button>
-                            <button class="secondary-button" type="button" on:click=export_diagnostics_package>"Package"</button>
-                            <button class="secondary-button" type="button" on:click=save_diagnostics_package>"Save"</button>
-                            <button class="secondary-button" type="button" on:click=save_diagnostics_package_as>"Save as"</button>
-                            <button class="secondary-button" type="button" on:click=preview_issue_draft>"Issue draft"</button>
-                            <button class="secondary-button" type="button" on:click=open_issue>"Open issue"</button>
-                        </div>
-                        <div class="result-box diagnostics-output" aria-live="polite">{move || diagnostics_text.get()}</div>
-                    </article>
+                    <div class="proxy-metrics-grid">
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-sliders" aria-hidden="true"></span><strong>"总请求"</strong><b>"0"</b></article>
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-check" aria-hidden="true"></span><strong>"成功"</strong><b>"0"</b></article>
+                        <article class="metric-card"><span class="metric-icon">"×"</span><strong>"失败"</strong><b>"0"</b></article>
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-dashboard" aria-hidden="true"></span><strong>"今日"</strong><b>"0"</b></article>
                     </div>
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Settings)>
-                    <div class="work-grid settings-grid">
-                        <article class="panel">
-                            <h2>{move || copy("nav_settings")}</h2>
-                            <div class="form-grid">
-                                <label class="field">
-                                    <span>"Language"</span>
-                                    <select on:change=move |event| set_language.set(event_target_value(&event))>
-                                        <option value="zh" selected=move || language.get() == "zh">"中文"</option>
-                                        <option value="en" selected=move || language.get() == "en">"English"</option>
-                                        <option value="ja" selected=move || language.get() == "ja">"日本語"</option>
-                                    </select>
-                                </label>
-                                <label class="field">
-                                    <span>"Theme"</span>
-                                    <select on:change=move |event| set_theme.set(event_target_value(&event))>
-                                        <option value="light" selected=move || theme.get() == "light">"Light"</option>
-                                        <option value="dark" selected=move || theme.get() == "dark">"Dark"</option>
-                                    </select>
-                                </label>
+                    <article class="settings-panel">
+                        <div class="settings-row">
+                            <label>"主题"</label>
+                            <div class="theme-swatches">
+                                <button class=move || theme_swatch_class(theme.get() == "light", "blue") type="button" on:click=move |_| set_theme.set("light".to_owned())><span></span></button>
+                                <button class=move || theme_swatch_class(false, "green") type="button"><span></span></button>
+                                <button class=move || theme_swatch_class(false, "orange") type="button"><span></span></button>
+                                <button class=move || theme_swatch_class(false, "slate") type="button"><span></span></button>
+                                <button class=move || theme_swatch_class(theme.get() == "dark", "dark") type="button" on:click=move |_| set_theme.set("dark".to_owned())><span></span></button>
+                                <button class=move || theme_swatch_class(false, "white") type="button"><span></span></button>
                             </div>
-                        </article>
-
-                        <article class="panel">
-                            <h2>"Gateway"</h2>
-                            <ul class="readiness-list settings-list">
-                                <li><span>"Mode"</span><strong>"local gateway"</strong></li>
-                                <li><span>"Port"</span><strong>"18080"</strong></li>
-                                <li><span>"Desktop routes"</span><strong>"claude-*"</strong></li>
-                                <li><span>"Default"</span><strong>"hidden"</strong></li>
-                            </ul>
-                        </article>
-                    </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"语言"</label>
+                            <div class="language-segmented">
+                                <button class=move || segmented_button_class(language.get() == "zh") type="button" on:click=move |_| set_language.set("zh".to_owned())>"中文"</button>
+                                <button class=move || segmented_button_class(language.get() == "en") type="button" on:click=move |_| set_language.set("en".to_owned())>"EN"</button>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"转发端口"</label>
+                            <input value="18080" />
+                        </div>
+                        <div class="settings-row">
+                            <label>"管理端口"</label>
+                            <input value="18081" />
+                        </div>
+                        <div class="settings-row">
+                            <label>"开机自启"</label>
+                            <label class="switch"><input type="checkbox" /><span></span></label>
+                        </div>
+                        <div class="settings-row">
+                            <label>"更新地址"</label>
+                            <input value="http://127.0.0.1:18925/latest-local-next.json" />
+                        </div>
+                        <div class="settings-row settings-proxy-row">
+                            <label>"上游代理"</label>
+                            <div>
+                                <div class="inline-switch-input">
+                                    <label class="mini-switch"><input type="checkbox" /><span></span></label>
+                                    <input value="127.0.0.1:7890" />
+                                </div>
+                                <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke><span class="icon-svg icon-search" aria-hidden="true"></span><span>"自动检测"</span></button>
+                                <p>"用于访问上游 API 的 HTTP 代理。留空则使用系统环境变量。格式：host:port 或 http://host:port"</p>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"第三方兼容"</label>
+                            <div>
+                                <button class="secondary-button compact" type="button" on:click=run_gateway_smoke><span class="icon-svg icon-info" aria-hidden="true"></span><span>"检查兼容性"</span></button>
+                                <p>"Anthropic 兼容接口是稳定主线；OpenAI Chat、new-api、CPA、OpenCode Go 属于实验适配，工具调用需要单独验证。"</p>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"诊断与支持"</label>
+                            <div>
+                                <div class="button-row">
+                                    <button class="secondary-button compact" type="button" on:click=run_provider_real_smoke><span>"⌁"</span><span>"运行诊断"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=copy_diagnostics_summary><span>"▣"</span><span>"诊断摘要"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=save_diagnostics_package><span class="icon-svg icon-info" aria-hidden="true"></span><span>"导出诊断包"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=save_diagnostics_package_as><span class="icon-svg icon-download" aria-hidden="true"></span><span>"另存诊断包"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=copy_diagnostics_to_clipboard><span>"▣"</span><span>"复制诊断包"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=preview_issue_draft><span class="icon-svg icon-edit" aria-hidden="true"></span><span>"Issue 草稿"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=open_issue><span class="icon-svg icon-terminal" aria-hidden="true"></span><span>"打开 Issue"</span></button>
+                                </div>
+                                <p>"诊断包会自动脱敏 API Key、gateway key、Authorization 和 token，可用于提交 issue。"</p>
+                                <pre class="settings-result">{move || diagnostics_text.get()}</pre>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"配置备份"</label>
+                            <div>
+                                <div class="button-row">
+                                    <button class="secondary-button compact" type="button" on:click=list_config_backups><span class="icon-svg icon-info" aria-hidden="true"></span><span>"立即备份"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=save_provider_export_as><span class="icon-svg icon-download" aria-hidden="true"></span><span>"导出配置"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=move |_| preview_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入配置"</span></button>
+                                </div>
+                                <textarea class="json-input settings-import-json" placeholder="粘贴 CC Switch / CC Desktop Switch 配置 JSON" prop:value=move || import_json.get() on:input=move |event| set_import_json.set(event_target_value(&event))></textarea>
+                                <pre class="settings-result">{move || import_preview_text.get()}</pre>
+                            </div>
+                        </div>
+                        <div class="settings-row">
+                            <label>"CC-Switch 导入"</label>
+                            <div>
+                                <div class="button-row">
+                                    <button class="secondary-button compact" type="button" on:click=load_provider_template_example><span class="icon-svg icon-search" aria-hidden="true"></span><span>"检测配置"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=move |_| apply_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入兼容项"</span></button>
+                                </div>
+                                <p>"只导入 Anthropic 兼容配置；OpenAI 格式会显示为暂不导入，避免转换风险。"</p>
+                            </div>
+                        </div>
+                    </article>
                 </section>
 
                 <section class=move || page_section_class(active_page.get(), AppPage::Guide)>
@@ -1593,6 +1679,22 @@ fn api_format_value(api_format: &commands::ApiFormat) -> String {
     }
 }
 
+fn auth_scheme_from_value(value: &str) -> AuthScheme {
+    match value {
+        "x_api_key" => AuthScheme::XApiKey,
+        "none" => AuthScheme::None,
+        _ => AuthScheme::Bearer,
+    }
+}
+
+fn auth_scheme_value(auth_scheme: &commands::AuthScheme) -> String {
+    match auth_scheme {
+        commands::AuthScheme::XApiKey => "x_api_key".to_owned(),
+        commands::AuthScheme::None => "none".to_owned(),
+        commands::AuthScheme::Bearer => "bearer".to_owned(),
+    }
+}
+
 fn format_gateway_health(health: &commands::GatewayHealth) -> String {
     format!("{} running={}", health.base_url, health.running)
 }
@@ -1613,7 +1715,10 @@ fn primary_route_active(active_page: AppPage, route: AppPage) -> bool {
 }
 
 fn page_title_class(page: AppPage) -> &'static str {
-    if matches!(page, AppPage::Dashboard | AppPage::Providers) {
+    if matches!(
+        page,
+        AppPage::Dashboard | AppPage::Providers | AppPage::Guide
+    ) {
         "page-title page-title-dashboard"
     } else {
         "page-title"
@@ -1654,7 +1759,7 @@ fn configured_provider_list_class(visible: bool) -> &'static str {
 
 fn dashboard_empty_preset_grid_class(visible: bool) -> &'static str {
     if visible {
-        "provider-preset-grid"
+        "provider-preset-grid dashboard-empty-state"
     } else {
         "provider-preset-grid hidden"
     }
@@ -1676,6 +1781,44 @@ fn compact_enable_class(active: bool) -> &'static str {
     }
 }
 
+fn gateway_status_label(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
+    if snapshot
+        .map(|snapshot| snapshot.gateway.running)
+        .unwrap_or(false)
+    {
+        "运行中"
+    } else {
+        "已停止"
+    }
+}
+
+fn gateway_status_dot_class(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
+    if snapshot
+        .map(|snapshot| snapshot.gateway.running)
+        .unwrap_or(false)
+    {
+        "proxy-status-dot running"
+    } else {
+        "proxy-status-dot"
+    }
+}
+
+fn segmented_button_class(active: bool) -> &'static str {
+    if active {
+        "segmented-button active"
+    } else {
+        "segmented-button"
+    }
+}
+
+fn theme_swatch_class(active: bool, color: &'static str) -> String {
+    if active {
+        format!("theme-swatch {color} active")
+    } else {
+        format!("theme-swatch {color}")
+    }
+}
+
 fn desktop_warning_class(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
     if snapshot
         .map(|snapshot| snapshot.issue_codes.is_empty())
@@ -1693,6 +1836,15 @@ fn provider_logo_src(name: &str) -> &'static str {
         "deepseek.ico"
     } else if normalized.contains("kimi") || name.contains("月之暗面") {
         "kimi.ico"
+    } else if normalized.contains("aliyun")
+        || normalized.contains("bailian")
+        || name.contains("阿里")
+        || name.contains("百炼")
+    {
+        "aliyun.ico"
+    } else if normalized.contains("xiaomi") || normalized.contains("mimo") || name.contains("小米")
+    {
+        "xiaomi-mimo.png"
     } else if normalized.contains("qiniu") || name.contains("七牛") {
         "qiniu.ico"
     } else if normalized.contains("zhipu") || name.contains("智谱") {
@@ -1783,22 +1935,6 @@ fn desktop_status_value(
         Some(_) => "未配置".to_owned(),
         None if provider_saved => "待应用".to_owned(),
         None => "未配置".to_owned(),
-    }
-}
-
-fn readiness_badge_class(passed: Option<bool>) -> String {
-    match passed {
-        Some(true) => "readiness-badge pass".to_owned(),
-        Some(false) => "readiness-badge fail".to_owned(),
-        None => "readiness-badge pending".to_owned(),
-    }
-}
-
-fn readiness_badge_label(passed: Option<bool>) -> &'static str {
-    match passed {
-        Some(true) => "pass",
-        Some(false) => "check",
-        None => "pending",
     }
 }
 
