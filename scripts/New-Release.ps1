@@ -14,6 +14,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+throw @"
+scripts/New-Release.ps1 is disabled in the Rust mainline worktree.
+
+Use the guarded release path instead:
+- non-publishing platform smoke: .github/workflows/rust-mainline-platform-smoke.yml
+- signed manifest assembly: scripts/New-ReleaseManifest.ps1 with -RequireExistingKey and -ExpectedPublicKeySha256
+- public Latest publishing: .github/workflows/release.yml with confirm_publish=PUBLISH_LATEST, release-publish environment, and passing cargo xtask verify --stage rc-readiness
+
+This legacy script can auto-create signing keys and does not enforce the v1.1.0-rc1 macOS x64 / pinned public-key / P83 evidence gates.
+"@
+
 function Get-ProjectRoot {
     return (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 }

@@ -6,24 +6,34 @@ use std::process::{Command, Stdio};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::apply_flow::{ApplyLocalConfigRequest, DesktopApplyResult};
+use crate::apply_flow::DesktopApplyResult;
 use crate::config::{
     AppConfig, ConfigBackupSummary, ConfigSettings, ModelMappingDraft, ModelMappingSummary,
     ProviderExportPackage, ProviderImportApplyResult, ProviderImportPreview, ProviderPreset,
 };
-use crate::desktop::{build_apply_dry_run, ApplyDryRun};
-use crate::desktop_writer::{probe_current_desktop_config, DesktopConfigProbe};
+use crate::desktop::{build_apply_dry_run, ApplyStep};
+use crate::desktop_writer::{
+    clear_local_config_library, probe_current_desktop_config,
+    restart_claude_desktop as restart_claude_desktop_impl, DesktopClearResult, DesktopConfigProbe,
+    DesktopRestartResult,
+};
 use crate::diagnostics::{
     readiness_snapshot, DiagnosticsIssueDraft, DiagnosticsLogEntry, DiagnosticsPackage,
     ReadinessSnapshot, SmokeCheckResult,
 };
 use crate::gateway::GatewayHealth;
+use crate::model_catalog::DesktopModel;
 use crate::provider::{ProviderDraft, ProviderSummary};
-use crate::state::{AppState, StateError};
+use crate::state::{AppState, ProxyStatsSnapshot, StateError};
+use crate::update::{
+    check_update as check_update_impl, download_update as download_update_impl,
+    install_update as install_update_impl, UpdateCheckResult, UpdateDownloadResult,
+    UpdateInstallResult,
+};
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +52,10 @@ impl From<AppConfig> for ConfigSnapshot {
             schema_version: config.schema_version,
             version: config.version,
             active_provider: config.active_provider,
-            gateway_api_key_present: config.gateway_api_key.is_some(),
+            gateway_api_key_present: config
+                .gateway_api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty()),
             providers: config
                 .providers
                 .iter()
@@ -71,6 +84,17 @@ pub struct ProxyStatus {
     pub stats: ProxyStats,
 }
 
+impl From<ProxyStatsSnapshot> for ProxyStats {
+    fn from(stats: ProxyStatsSnapshot) -> Self {
+        Self {
+            total: stats.total,
+            success: stats.success,
+            failed: stats.failed,
+            today: stats.today,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderImportRequest {
@@ -95,6 +119,30 @@ pub struct ProviderPresetImportRequest {
     pub replace_existing: bool,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyDryRunView {
+    pub mode: String,
+    pub success: bool,
+    pub expected_base_url: String,
+    pub expected_models: Vec<DesktopModel>,
+    pub plan_error: Option<String>,
+    pub steps: Vec<ApplyStep>,
+}
+
+impl From<crate::desktop::ApplyDryRun> for ApplyDryRunView {
+    fn from(value: crate::desktop::ApplyDryRun) -> Self {
+        Self {
+            mode: value.mode,
+            success: value.success,
+            expected_base_url: value.expected_base_url,
+            expected_models: value.expected_models,
+            plan_error: value.plan_error,
+            steps: value.steps,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
     #[error("{0}")]
@@ -110,7 +158,49 @@ impl serde::Serialize for CommandError {
     where
         S: serde::ser::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        let payload = CommandErrorPayload {
+            error_type: "command_error",
+            code: self.code(),
+            message: self.to_string(),
+        };
+        payload.serialize(serializer)
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandErrorPayload {
+    #[serde(rename = "type")]
+    error_type: &'static str,
+    code: String,
+    message: String,
+}
+
+impl CommandError {
+    fn code(&self) -> String {
+        match self {
+            CommandError::InvalidProvider(message) => {
+                issue_code_from_message(message).unwrap_or_else(|| "provider.invalid".to_owned())
+            }
+            CommandError::StateLock => "state.lock_poisoned".to_owned(),
+            CommandError::State(message) => {
+                issue_code_from_message(message).unwrap_or_else(|| "command.state_error".to_owned())
+            }
+        }
+    }
+}
+
+fn issue_code_from_message(message: &str) -> Option<String> {
+    let (prefix, _) = message.split_once(':')?;
+    let prefix = prefix.trim();
+    if prefix.contains('.')
+        && prefix
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+    {
+        Some(prefix.to_owned())
+    } else {
+        None
     }
 }
 
@@ -133,7 +223,7 @@ pub fn set_active_provider(
     state: State<'_, AppState>,
 ) -> Result<bool, CommandError> {
     state
-        .set_active_provider(&provider_id)
+        .set_active_provider_and_refresh_gateway(&provider_id)
         .map_err(CommandError::from)
 }
 
@@ -159,7 +249,9 @@ pub fn reorder_providers(
 
 #[tauri::command]
 pub fn export_providers(state: State<'_, AppState>) -> Result<ProviderExportPackage, CommandError> {
-    state.export_provider_package().map_err(CommandError::from)
+    state
+        .export_provider_package_redacted()
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -333,12 +425,7 @@ pub fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus, Comma
         running: health.running,
         port,
         base_url: health.base_url,
-        stats: ProxyStats {
-            total: 0,
-            success: 0,
-            failed: 0,
-            today: 0,
-        },
+        stats: state.proxy_stats().map_err(CommandError::from)?.into(),
     })
 }
 
@@ -377,6 +464,46 @@ pub fn clear_proxy_logs(state: State<'_, AppState>) -> Result<bool, CommandError
 #[tauri::command]
 pub fn desktop_config_probe() -> Result<DesktopConfigProbe, CommandError> {
     probe_current_desktop_config().map_err(|error| CommandError::State(error.to_string()))
+}
+
+#[tauri::command]
+pub fn clear_desktop_config() -> Result<DesktopClearResult, CommandError> {
+    let probe =
+        probe_current_desktop_config().map_err(|error| CommandError::State(error.to_string()))?;
+    if probe.managed_detected {
+        let config_path = probe.local_config_library.join(format!(
+            "{}.json",
+            crate::desktop_writer::CCDS_LOCAL_CONFIG_ID
+        ));
+        let meta_path = probe.local_config_library.join("_meta.json");
+        let mut issue_codes = probe.issue_codes;
+        if !issue_codes
+            .iter()
+            .any(|code| code == "desktop.clear_blocked_by_managed_config")
+        {
+            issue_codes.push("desktop.clear_blocked_by_managed_config".to_owned());
+        }
+        return Ok(DesktopClearResult {
+            success: false,
+            config_id: crate::desktop_writer::CCDS_LOCAL_CONFIG_ID.to_owned(),
+            local_config_library: probe.local_config_library,
+            config_path,
+            meta_path,
+            removed_config: false,
+            cleared_active_config: false,
+            preserved_meta: false,
+            readback_cleared: false,
+            issue_codes,
+        });
+    }
+    let result = clear_local_config_library(&probe.local_config_library)
+        .map_err(|error| CommandError::State(error.to_string()))?;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn restart_claude_desktop() -> Result<DesktopRestartResult, CommandError> {
+    restart_claude_desktop_impl().map_err(|error| CommandError::State(error.to_string()))
 }
 
 #[tauri::command]
@@ -484,25 +611,56 @@ pub fn provider_real_smoke(state: State<'_, AppState>) -> Result<SmokeCheckResul
 }
 
 #[tauri::command]
-pub fn apply_dry_run(state: State<'_, AppState>) -> Result<ApplyDryRun, CommandError> {
+pub async fn check_update(state: State<'_, AppState>) -> Result<UpdateCheckResult, CommandError> {
+    let settings = state.settings().map_err(CommandError::from)?;
+    check_update_impl(&settings.update_url, env!("CARGO_PKG_VERSION"))
+        .await
+        .map_err(|error| CommandError::State(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn download_update(
+    state: State<'_, AppState>,
+) -> Result<UpdateDownloadResult, CommandError> {
+    let settings = state.settings().map_err(CommandError::from)?;
+    let updates_dir = state
+        .config_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("updates");
+    download_update_impl(
+        &settings.update_url,
+        env!("CARGO_PKG_VERSION"),
+        &updates_dir,
+    )
+    .await
+    .map_err(|error| CommandError::State(error.to_string()))
+}
+
+#[tauri::command]
+pub fn install_update(
+    installer_path: PathBuf,
+    state: State<'_, AppState>,
+) -> Result<UpdateInstallResult, CommandError> {
+    let updates_dir = state
+        .config_path()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("updates");
+    install_update_impl(&installer_path, &updates_dir)
+        .map_err(|error| CommandError::State(error.to_string()))
+}
+
+#[tauri::command]
+pub fn apply_dry_run(state: State<'_, AppState>) -> Result<ApplyDryRunView, CommandError> {
     let snapshot = state.snapshot().map_err(CommandError::from)?;
     Ok(build_apply_dry_run(
         snapshot.active_provider.as_ref(),
         &snapshot.active_model_mappings,
         snapshot.proxy_port,
-        snapshot
-            .gateway_api_key
-            .as_deref()
-            .unwrap_or("ccds_dry_run_key"),
-    ))
-}
-
-#[tauri::command]
-pub fn apply_local_config(
-    request: ApplyLocalConfigRequest,
-    state: State<'_, AppState>,
-) -> Result<DesktopApplyResult, CommandError> {
-    Ok(state.apply_to_local_config_library(&request.config_library_root))
+        "ccds_dry_run_key",
+    )
+    .into())
 }
 
 #[tauri::command]
@@ -620,5 +778,34 @@ fn open_url(url: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("diagnostics.open_issue_failed: {status}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_error_serializes_structured_issue_code() {
+        let value = serde_json::to_value(CommandError::State(
+            "update.install_failed: installer launch failed".to_owned(),
+        ))
+        .unwrap();
+
+        assert_eq!(value["type"], "command_error");
+        assert_eq!(value["code"], "update.install_failed");
+        assert_eq!(
+            value["message"],
+            "update.install_failed: installer launch failed"
+        );
+    }
+
+    #[test]
+    fn command_error_uses_generic_code_without_issue_prefix() {
+        let value = serde_json::to_value(CommandError::State("plain failure".to_owned())).unwrap();
+
+        assert_eq!(value["type"], "command_error");
+        assert_eq!(value["code"], "command.state_error");
+        assert_eq!(value["message"], "plain failure");
     }
 }

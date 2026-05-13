@@ -109,5 +109,10 @@ Do not publish Public Latest unless:
 - macOS x64 assets exist.
 - `latest.json` includes all required platforms.
 - `.sha256`, `.sig`, `latest.json.sig`, and public key are present.
+- Manifest signing uses an existing release key and validates the public key SHA256 against the runtime-pinned fingerprint.
+- Fresh P83 macOS arm64/x64 workflow evidence is recorded for the current commit.
+- Fresh P83 macOS real Desktop smoke evidence is recorded for both arm64 and x64 on the current commit.
+- `cargo xtask verify --stage rc-readiness` passes on the commit being published.
 - Windows and macOS manual smoke tests passed.
-- User explicitly confirms upload/release.
+- User explicitly confirms upload/release with `confirm_publish=PUBLISH_LATEST`.
+- The GitHub Actions `release-publish` environment gate approves the publish job.

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use base64::{engine::general_purpose, Engine as _};
 use rsa::pkcs1v15;
@@ -58,6 +58,8 @@ struct LatestPlatformManifest {
 #[derive(Debug, Deserialize)]
 struct LatestAssetManifest {
     name: String,
+    #[serde(default)]
+    sha256: Option<String>,
     signature: Option<String>,
 }
 
@@ -150,6 +152,7 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
     let staging_dir = staging_dir.as_ref();
     let latest_path = staging_dir.join("latest.json");
     let latest_sha256_path = staging_dir.join("latest.json.sha256");
+    let latest_sig_path = staging_dir.join("latest.json.sig");
     let latest_json = fs::read_to_string(&latest_path).ok();
     let latest_manifest = latest_json
         .as_deref()
@@ -158,12 +161,24 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
     let mut input = ReleaseGateInput {
         latest_json,
         latest_json_sha256_present: latest_sha256_path.is_file(),
-        latest_json_signature_present: staging_dir.join("latest.json.sig").is_file(),
+        latest_json_signature_present: latest_sig_path.is_file(),
         public_key_present: false,
         assets: Vec::new(),
     };
     let mut issues = Vec::new();
 
+    require_file_present(
+        &mut issues,
+        &latest_sha256_path,
+        "release.latest_json_sha256_missing",
+        "latest.json.sha256 is required",
+    );
+    require_file_present(
+        &mut issues,
+        &latest_sig_path,
+        "release.latest_json_sig_missing",
+        "latest.json.sig is required",
+    );
     validate_sha256_sidecar(
         &mut issues,
         &latest_path,
@@ -180,6 +195,16 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
             .and_then(|signature| signature.public_key.as_deref())
             .filter(|public_key| !public_key.trim().is_empty())
             .unwrap_or("CC-Desktop-Switch-release-public.pem");
+        let Some(public_key_file) =
+            validated_manifest_file_name(&mut issues, public_key_file, "release public key")
+        else {
+            issues.extend(validate_release_gate(&input).issues);
+            normalize_issues(&mut issues);
+            return ReleaseGateReport {
+                passed: issues.is_empty(),
+                issues,
+            };
+        };
         let public_key_path = staging_dir.join(public_key_file);
         input.public_key_present = public_key_path.is_file();
         let public_key = validate_public_key(
@@ -193,7 +218,7 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
         validate_signature_sidecar(
             &mut issues,
             &latest_path,
-            &staging_dir.join("latest.json.sig"),
+            &latest_sig_path,
             public_key.as_ref(),
             "release.latest_json_sig_invalid",
             "release.latest_json_sig_mismatch",
@@ -205,13 +230,26 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
                 let asset_id = asset_id_for_file_name(&manifest_asset.name)
                     .unwrap_or("unknown-release-asset")
                     .to_owned();
-                let asset_path = staging_dir.join(&manifest_asset.name);
+                let Some(asset_name) = validated_manifest_file_name(
+                    &mut issues,
+                    &manifest_asset.name,
+                    "release asset",
+                ) else {
+                    input.assets.push(ReleaseAsset {
+                        asset_id,
+                        file_name: manifest_asset.name.clone(),
+                        sha256_present: false,
+                        signature_present: false,
+                    });
+                    continue;
+                };
+                let asset_path = staging_dir.join(asset_name);
                 let signature_name = manifest_asset
                     .signature
                     .as_deref()
                     .filter(|signature| !signature.trim().is_empty())
                     .map(str::to_owned)
-                    .unwrap_or_else(|| format!("{}.sig", manifest_asset.name));
+                    .unwrap_or_else(|| format!("{}.sig", asset_name));
 
                 if !asset_path.is_file() {
                     issues.push(issue(
@@ -223,7 +261,13 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
                     ));
                 }
 
-                let sha256_path = staging_dir.join(format!("{}.sha256", manifest_asset.name));
+                let sha256_path = staging_dir.join(format!("{}.sha256", asset_name));
+                require_file_present(
+                    &mut issues,
+                    &sha256_path,
+                    "release.asset_sha256_missing",
+                    &format!("asset '{}' is missing .sha256", manifest_asset.name),
+                );
                 validate_sha256_sidecar(
                     &mut issues,
                     &asset_path,
@@ -233,7 +277,26 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
                     &format!("asset '{}'", manifest_asset.name),
                 );
 
-                let signature_path = staging_dir.join(&signature_name);
+                let Some(signature_name) = validated_manifest_file_name(
+                    &mut issues,
+                    &signature_name,
+                    "release asset signature",
+                ) else {
+                    input.assets.push(ReleaseAsset {
+                        asset_id,
+                        file_name: manifest_asset.name.clone(),
+                        sha256_present: sha256_path.is_file(),
+                        signature_present: false,
+                    });
+                    continue;
+                };
+                let signature_path = staging_dir.join(signature_name);
+                require_file_present(
+                    &mut issues,
+                    &signature_path,
+                    "release.asset_sig_missing",
+                    &format!("asset '{}' is missing .sig", manifest_asset.name),
+                );
                 validate_signature_sidecar(
                     &mut issues,
                     &asset_path,
@@ -257,6 +320,310 @@ pub fn validate_release_directory(staging_dir: impl AsRef<Path>) -> ReleaseGateR
     issues.extend(validate_release_gate(&input).issues);
     normalize_issues(&mut issues);
 
+    ReleaseGateReport {
+        passed: issues.is_empty(),
+        issues,
+    }
+}
+
+pub fn validate_update_metadata(staging_dir: impl AsRef<Path>) -> ReleaseGateReport {
+    let staging_dir = staging_dir.as_ref();
+    let latest_path = staging_dir.join("latest.json");
+    let latest_sha256_path = staging_dir.join("latest.json.sha256");
+    let latest_sig_path = staging_dir.join("latest.json.sig");
+    let latest_json = fs::read_to_string(&latest_path).ok();
+    let latest_manifest = latest_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<LatestJsonManifest>(raw).ok());
+    let mut issues = Vec::new();
+
+    if latest_json.is_none() {
+        issues.push(issue(
+            "release.latest_json_missing",
+            "latest.json is required",
+        ));
+    } else if latest_manifest.is_none() {
+        issues.push(issue(
+            "release.latest_json_invalid",
+            "latest.json must be valid JSON",
+        ));
+    }
+
+    require_file_present(
+        &mut issues,
+        &latest_sha256_path,
+        "release.latest_json_sha256_missing",
+        "latest.json.sha256 is required",
+    );
+    require_file_present(
+        &mut issues,
+        &latest_sig_path,
+        "release.latest_json_sig_missing",
+        "latest.json.sig is required",
+    );
+    validate_sha256_sidecar(
+        &mut issues,
+        &latest_path,
+        &latest_sha256_path,
+        "release.latest_json_sha256_invalid",
+        "release.latest_json_sha256_mismatch",
+        "latest.json",
+    );
+
+    let Some(manifest) = latest_manifest else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+
+    let public_key_file = manifest
+        .signature
+        .as_ref()
+        .and_then(|signature| signature.public_key.as_deref())
+        .filter(|public_key| !public_key.trim().is_empty())
+        .unwrap_or("CC-Desktop-Switch-release-public.pem");
+    let Some(public_key_file) =
+        validated_manifest_file_name(&mut issues, public_key_file, "release public key")
+    else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+    let public_key_path = staging_dir.join(public_key_file);
+    if !public_key_path.is_file() {
+        issues.push(issue(
+            "release.public_key_missing",
+            "update signature public key is required",
+        ));
+    }
+    let public_key = validate_public_key(
+        &mut issues,
+        &public_key_path,
+        manifest
+            .signature
+            .as_ref()
+            .and_then(|item| item.algorithm.as_deref()),
+    );
+    validate_signature_sidecar(
+        &mut issues,
+        &latest_path,
+        &latest_sig_path,
+        public_key.as_ref(),
+        "release.latest_json_sig_invalid",
+        "release.latest_json_sig_mismatch",
+        "latest.json",
+    );
+
+    normalize_issues(&mut issues);
+    ReleaseGateReport {
+        passed: issues.is_empty(),
+        issues,
+    }
+}
+
+pub fn validate_update_bundle(
+    staging_dir: impl AsRef<Path>,
+    expected_asset_name: &str,
+) -> ReleaseGateReport {
+    let staging_dir = staging_dir.as_ref();
+    let latest_path = staging_dir.join("latest.json");
+    let latest_sha256_path = staging_dir.join("latest.json.sha256");
+    let latest_sig_path = staging_dir.join("latest.json.sig");
+    let latest_json = fs::read_to_string(&latest_path).ok();
+    let latest_manifest = latest_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<LatestJsonManifest>(raw).ok());
+    let mut issues = Vec::new();
+
+    if latest_json.is_none() {
+        issues.push(issue(
+            "release.latest_json_missing",
+            "latest.json is required",
+        ));
+    } else if latest_manifest.is_none() {
+        issues.push(issue(
+            "release.latest_json_invalid",
+            "latest.json must be valid JSON",
+        ));
+    }
+
+    require_file_present(
+        &mut issues,
+        &latest_sha256_path,
+        "release.latest_json_sha256_missing",
+        "latest.json.sha256 is required",
+    );
+    require_file_present(
+        &mut issues,
+        &latest_sig_path,
+        "release.latest_json_sig_missing",
+        "latest.json.sig is required",
+    );
+    validate_sha256_sidecar(
+        &mut issues,
+        &latest_path,
+        &latest_sha256_path,
+        "release.latest_json_sha256_invalid",
+        "release.latest_json_sha256_mismatch",
+        "latest.json",
+    );
+
+    let Some(manifest) = latest_manifest else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+
+    let public_key_file = manifest
+        .signature
+        .as_ref()
+        .and_then(|signature| signature.public_key.as_deref())
+        .filter(|public_key| !public_key.trim().is_empty())
+        .unwrap_or("CC-Desktop-Switch-release-public.pem");
+    let Some(public_key_file) =
+        validated_manifest_file_name(&mut issues, public_key_file, "release public key")
+    else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+    let public_key_path = staging_dir.join(public_key_file);
+    if !public_key_path.is_file() {
+        issues.push(issue(
+            "release.public_key_missing",
+            "update signature public key is required",
+        ));
+    }
+    let public_key = validate_public_key(
+        &mut issues,
+        &public_key_path,
+        manifest
+            .signature
+            .as_ref()
+            .and_then(|item| item.algorithm.as_deref()),
+    );
+    validate_signature_sidecar(
+        &mut issues,
+        &latest_path,
+        &latest_sig_path,
+        public_key.as_ref(),
+        "release.latest_json_sig_invalid",
+        "release.latest_json_sig_mismatch",
+        "latest.json",
+    );
+
+    if validated_manifest_file_name(&mut issues, expected_asset_name, "selected update asset")
+        .is_none()
+    {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    }
+
+    let selected_asset = manifest
+        .platforms
+        .values()
+        .flat_map(|platform| platform.assets.iter())
+        .find(|asset| asset.name == expected_asset_name);
+    let Some(asset) = selected_asset else {
+        issues.push(issue(
+            "update.asset_not_in_manifest",
+            &format!("asset '{expected_asset_name}' is not listed in latest.json"),
+        ));
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+
+    let Some(asset_name) = validated_manifest_file_name(&mut issues, &asset.name, "update asset")
+    else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+    let asset_path = staging_dir.join(asset_name);
+    if !asset_path.is_file() {
+        issues.push(issue(
+            "release.latest_json_asset_missing",
+            &format!("latest.json references missing asset '{}'", asset.name),
+        ));
+    }
+
+    let sha256_path = staging_dir.join(format!("{}.sha256", asset_name));
+    require_file_present(
+        &mut issues,
+        &sha256_path,
+        "release.asset_sha256_missing",
+        &format!("asset '{}' is missing .sha256", asset.name),
+    );
+    validate_sha256_sidecar(
+        &mut issues,
+        &asset_path,
+        &sha256_path,
+        "release.asset_sha256_invalid",
+        "release.asset_sha256_mismatch",
+        &format!("asset '{}'", asset.name),
+    );
+    if let Some(expected_sha256) = asset.sha256.as_deref() {
+        validate_manifest_sha256(
+            &mut issues,
+            &asset_path,
+            expected_sha256,
+            &format!("asset '{}'", asset.name),
+        );
+    }
+
+    let signature_name = asset
+        .signature
+        .as_deref()
+        .filter(|signature| !signature.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{}.sig", asset_name));
+    let Some(signature_name) =
+        validated_manifest_file_name(&mut issues, &signature_name, "update asset signature")
+    else {
+        normalize_issues(&mut issues);
+        return ReleaseGateReport {
+            passed: issues.is_empty(),
+            issues,
+        };
+    };
+    let signature_path = if signature_name.is_empty() {
+        staging_dir.join(format!("{}.sig", asset_name))
+    } else {
+        staging_dir.join(signature_name)
+    };
+    require_file_present(
+        &mut issues,
+        &signature_path,
+        "release.asset_sig_missing",
+        &format!("asset '{}' is missing .sig", asset.name),
+    );
+    validate_signature_sidecar(
+        &mut issues,
+        &asset_path,
+        &signature_path,
+        public_key.as_ref(),
+        "release.asset_sig_invalid",
+        "release.asset_sig_mismatch",
+        &format!("asset '{}'", asset.name),
+    );
+
+    normalize_issues(&mut issues);
     ReleaseGateReport {
         passed: issues.is_empty(),
         issues,
@@ -298,6 +665,37 @@ fn asset_id_for_file_name(file_name: &str) -> Option<&'static str> {
         return Some("macos-x64-dmg");
     }
     None
+}
+
+fn validated_manifest_file_name<'a>(
+    issues: &mut Vec<ReleaseGateIssue>,
+    file_name: &'a str,
+    label: &str,
+) -> Option<&'a str> {
+    let trimmed = file_name.trim();
+    let is_plain = !trimmed.is_empty()
+        && !trimmed.contains('/')
+        && !trimmed.contains('\\')
+        && !trimmed.contains(':')
+        && !Path::new(trimmed).is_absolute()
+        && Path::new(trimmed)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if is_plain {
+        Some(trimmed)
+    } else {
+        issues.push(issue(
+            "release.asset_file_name_invalid",
+            &format!("{label} must be a plain file name"),
+        ));
+        None
+    }
+}
+
+fn require_file_present(issues: &mut Vec<ReleaseGateIssue>, path: &Path, code: &str, detail: &str) {
+    if !path.is_file() {
+        issues.push(issue(code, detail));
+    }
 }
 
 fn validate_public_key(
@@ -456,6 +854,42 @@ fn validate_sha256_sidecar(
         issues.push(issue(
             mismatch_code,
             &format!("{label} sha256 mismatch: expected {expected}, got {actual}"),
+        ));
+    }
+}
+
+fn validate_manifest_sha256(
+    issues: &mut Vec<ReleaseGateIssue>,
+    file_path: &Path,
+    expected_sha256: &str,
+    label: &str,
+) {
+    let expected_sha256 = expected_sha256.trim().to_ascii_lowercase();
+    if expected_sha256.len() != 64 || !expected_sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        issues.push(issue(
+            "release.asset_sha256_invalid",
+            &format!("{label} manifest sha256 is not a 64-character hex digest"),
+        ));
+        return;
+    }
+    if !file_path.is_file() {
+        return;
+    }
+    let bytes = match fs::read(file_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            issues.push(issue(
+                "release.asset_sha256_mismatch",
+                &format!("{label} could not be read for manifest sha256 verification: {error}"),
+            ));
+            return;
+        }
+    };
+    let actual = sha256_hex(&bytes);
+    if expected_sha256 != actual {
+        issues.push(issue(
+            "release.asset_sha256_mismatch",
+            &format!("{label} manifest sha256 mismatch: expected {expected_sha256}, got {actual}"),
         ));
     }
 }
@@ -814,6 +1248,119 @@ mod tests {
     }
 
     #[test]
+    fn update_bundle_verifies_selected_asset_without_requiring_all_platform_assets() {
+        let dir = complete_release_dir();
+        fs::remove_file(dir.join("CC-Desktop-Switch-v1.1.0-rc1-macOS-x64.dmg"))
+            .expect("unselected asset should be removable");
+
+        let report = validate_update_bundle(&dir, "CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe");
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(report.passed, "{:?}", report.issues);
+    }
+
+    #[test]
+    fn update_metadata_verifies_latest_json_before_asset_download() {
+        let dir = complete_release_dir();
+
+        let report = validate_update_metadata(&dir);
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(report.passed, "{:?}", report.issues);
+    }
+
+    #[test]
+    fn update_metadata_requires_latest_sidecars() {
+        let dir = complete_release_dir();
+        fs::remove_file(dir.join("latest.json.sig")).expect("latest signature should be removed");
+        fs::remove_file(dir.join("latest.json.sha256")).expect("latest sha256 should be removed");
+
+        let report = validate_update_metadata(&dir);
+        let codes = report
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<HashSet<_>>();
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(!report.passed);
+        assert!(codes.contains("release.latest_json_sig_missing"));
+        assert!(codes.contains("release.latest_json_sha256_missing"));
+    }
+
+    #[test]
+    fn update_bundle_rejects_path_traversal_asset_names() {
+        let dir = complete_release_dir();
+        let latest_json = fs::read_to_string(dir.join("latest.json"))
+            .expect("latest.json should be readable")
+            .replace(
+                "CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe",
+                "../CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe",
+            );
+        fs::write(dir.join("latest.json"), latest_json).expect("latest.json should be writable");
+        write_sha256_sidecar(&dir.join("latest.json"));
+        write_signature_sidecar(&dir.join("latest.json"), fixture_private_key());
+
+        let report =
+            validate_update_bundle(&dir, "../CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe");
+        let codes = report
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<HashSet<_>>();
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(!report.passed);
+        assert!(codes.contains("release.asset_file_name_invalid"));
+    }
+
+    #[test]
+    fn update_bundle_requires_selected_asset_sidecars() {
+        let dir = complete_release_dir();
+        fs::remove_file(dir.join("CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe.sig"))
+            .expect("selected asset signature should be removed");
+        fs::remove_file(dir.join("CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe.sha256"))
+            .expect("selected asset sha256 should be removed");
+
+        let report = validate_update_bundle(&dir, "CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe");
+        let codes = report
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<HashSet<_>>();
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(!report.passed);
+        assert!(codes.contains("release.asset_sig_missing"));
+        assert!(codes.contains("release.asset_sha256_missing"));
+    }
+
+    #[test]
+    fn release_directory_rejects_manifest_path_traversal_file_names() {
+        let dir = complete_release_dir();
+        let latest_json = fs::read_to_string(dir.join("latest.json"))
+            .expect("latest.json should be readable")
+            .replace(
+                "CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe",
+                "../CC-Desktop-Switch-v1.1.0-rc1-Windows-Setup.exe",
+            );
+        fs::write(dir.join("latest.json"), latest_json).expect("latest.json should be writable");
+        write_sha256_sidecar(&dir.join("latest.json"));
+        write_signature_sidecar(&dir.join("latest.json"), fixture_private_key());
+
+        let report = validate_release_directory(&dir);
+        let codes = report
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<HashSet<_>>();
+
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(!report.passed);
+        assert!(codes.contains("release.asset_file_name_invalid"));
+    }
+
+    #[test]
     fn release_directory_rejects_latest_json_referencing_missing_asset() {
         let dir = complete_release_dir();
         fs::remove_file(dir.join("CC-Desktop-Switch-v1.1.0-rc1-macOS-x64.dmg"))
@@ -1023,18 +1570,7 @@ mod tests {
         let dir = temp_release_dir("powershell");
         let key_dir = dir.join("keys");
         let version = "1.1.0-rc1";
-        for asset in [
-            format!("CC-Desktop-Switch-v{version}-Windows-Setup.exe"),
-            format!("CC-Desktop-Switch-v{version}-Windows-Portable.zip"),
-            format!("CC-Desktop-Switch-v{version}-Windows-x64.exe"),
-            format!("CC-Desktop-Switch-v{version}-macOS-arm64.pkg"),
-            format!("CC-Desktop-Switch-v{version}-macOS-arm64.dmg"),
-            format!("CC-Desktop-Switch-v{version}-macOS-x64.pkg"),
-            format!("CC-Desktop-Switch-v{version}-macOS-x64.dmg"),
-        ] {
-            fs::write(dir.join(asset), "powershell fixture")
-                .expect("PowerShell fixture asset should be written");
-        }
+        write_powershell_manifest_fixture_assets(&dir, version);
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("src-tauri should have a repo root parent");
@@ -1066,5 +1602,65 @@ mod tests {
 
         fs::remove_dir_all(&dir).expect("release temp dir should be removed");
         assert!(report.passed, "{:?}", report.issues);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_manifest_rejects_public_key_fingerprint_mismatch() {
+        let dir = temp_release_dir("powershell-fingerprint");
+        let key_dir = dir.join("keys");
+        let version = "1.1.0-rc1";
+        write_powershell_manifest_fixture_assets(&dir, version);
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri should have a repo root parent");
+        let script = repo_root.join("scripts").join("New-ReleaseManifest.ps1");
+        let output = Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(&script)
+            .arg("-Version")
+            .arg(version)
+            .arg("-StagingDir")
+            .arg(&dir)
+            .arg("-Repository")
+            .arg("")
+            .arg("-KeyDir")
+            .arg(&key_dir)
+            .arg("-ExpectedPublicKeySha256")
+            .arg("0".repeat(64))
+            .output()
+            .expect("PowerShell manifest script should run");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        fs::remove_dir_all(&dir).expect("release temp dir should be removed");
+        assert!(
+            !output.status.success(),
+            "manifest script unexpectedly succeeded\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            stdout.contains("Release public key fingerprint mismatch")
+                || stderr.contains("Release public key fingerprint mismatch"),
+            "expected fingerprint mismatch\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    #[cfg(windows)]
+    fn write_powershell_manifest_fixture_assets(dir: &Path, version: &str) {
+        for asset in [
+            format!("CC-Desktop-Switch-v{version}-Windows-Setup.exe"),
+            format!("CC-Desktop-Switch-v{version}-Windows-Portable.zip"),
+            format!("CC-Desktop-Switch-v{version}-Windows-x64.exe"),
+            format!("CC-Desktop-Switch-v{version}-macOS-arm64.pkg"),
+            format!("CC-Desktop-Switch-v{version}-macOS-arm64.dmg"),
+            format!("CC-Desktop-Switch-v{version}-macOS-x64.pkg"),
+            format!("CC-Desktop-Switch-v{version}-macOS-x64.dmg"),
+        ] {
+            fs::write(dir.join(asset), "powershell fixture")
+                .expect("PowerShell fixture asset should be written");
+        }
     }
 }

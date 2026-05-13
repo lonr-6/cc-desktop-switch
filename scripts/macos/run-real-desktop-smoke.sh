@@ -55,6 +55,7 @@ log_path="$output_directory/macos-real-desktop-smoke-$timestamp.log"
 log_field="$(basename "$log_path")"
 platform="$(uname -s 2>/dev/null || echo unknown)"
 arch="$(uname -m 2>/dev/null || echo unknown)"
+commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 config_library_path="${HOME:-}/Library/Application Support/Claude-3p/configLibrary"
 config_library_exists="False"
 if [[ -d "$config_library_path" ]]; then
@@ -82,6 +83,7 @@ exit_code: $exit_code
 log: $log_field
 platform: $platform
 arch: $arch
+commit: $commit
 configLibraryPath: $config_library_path
 
 ## Preflight

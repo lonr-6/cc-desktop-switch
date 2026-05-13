@@ -1,21 +1,23 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version without v prefix, for example 1.0.20"
+        description: "Release version without v prefix, for example 1.1.0-rc1"
         required: true
+        type: string
+      confirm_publish:
+        description: "Type PUBLISH_LATEST to upload and mark the GitHub Release as Latest"
+        required: false
+        default: ""
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.event.inputs.version || github.ref_name }}
+  group: release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -29,21 +31,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Resolve release version
         id: release
         shell: bash
         env:
-          INPUT_VERSION: ${{ github.event.inputs.version || '' }}
-          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           version="$INPUT_VERSION"
-          if [[ -z "$version" ]]; then
-            version="${REF_NAME#v}"
-          fi
-
           if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release version: $version" >&2
             exit 1
@@ -51,27 +46,6 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure release tag for manual run
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          tag="${{ steps.release.outputs.tag }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --tags
-          target_sha="$(git rev-parse HEAD)"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            tag_sha="$(git rev-list -n 1 "$tag")"
-            if [[ "$tag_sha" != "$target_sha" ]]; then
-              echo "Tag $tag points to $tag_sha, but this workflow is building $target_sha." >&2
-              echo "Run the workflow from the tagged commit or choose a new version." >&2
-              exit 1
-            fi
-          else
-            git tag "$tag"
-            git push origin "$tag"
-          fi
 
   build_windows:
     name: Build Windows x64
@@ -81,60 +55,81 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python dependencies
+      - name: Install Rust UI and Tauri tools
         shell: powershell
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          rustup component add rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+          cargo install trunk --locked
+          cargo install tauri-cli --version "^2" --locked
 
       - name: Install NSIS
         shell: powershell
         run: choco install nsis -y --no-progress
 
-      - name: Build Windows release assets
+      - name: Run Rust/Tauri release gate
+        shell: powershell
+        run: cargo xtask verify --all
+
+      - name: Prepare Windows release assets
         shell: powershell
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
         run: |
-          $args = @(
-            "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", "scripts\New-Release.ps1",
-            "-Version", $env:RELEASE_VERSION,
-            "-OutputDir", "release-staging",
-            "-Build",
-            "-TryInstaller",
-            "-SkipManifest",
-            "-Repository", $env:GITHUB_REPOSITORY
-          )
+          $releaseDir = "release-staging"
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+
+          $appExe = "target\release\cc-desktop-switch.exe"
+          $setupSource = Get-ChildItem -LiteralPath "target\release\bundle\nsis" -File -Filter "*setup.exe" |
+            Select-Object -First 1
+          if (-not (Test-Path -LiteralPath $appExe)) {
+            throw "Rust/Tauri app exe missing: $appExe"
+          }
+          if (-not $setupSource) {
+            throw "Rust/Tauri NSIS setup missing under target\release\bundle\nsis"
+          }
 
           if ($env:WINDOWS_CODESIGN_PFX_BASE64) {
-            $args += "-CodeSign"
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Invoke-CodeSigning.ps1 `
+              -Files @($appExe, $setupSource.FullName) `
+              -CertificateBase64 $env:WINDOWS_CODESIGN_PFX_BASE64 `
+              -CertificatePassword $env:WINDOWS_CODESIGN_PFX_PASSWORD
           }
 
-          powershell @args
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
+          $portableDir = Join-Path $env:RUNNER_TEMP "ccds-portable"
+          if (Test-Path -LiteralPath $portableDir) {
+            Remove-Item -LiteralPath $portableDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item -LiteralPath $appExe -Destination (Join-Path $portableDir "CC-Desktop-Switch.exe") -Force
+          if (Test-Path -LiteralPath "LICENSE.txt") {
+            Copy-Item -LiteralPath "LICENSE.txt" -Destination (Join-Path $portableDir "LICENSE.txt") -Force
           }
 
-          $required = @(
-            "release-staging\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe",
-            "release-staging\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
-          )
-          foreach ($path in $required) {
-            if (-not (Test-Path -LiteralPath $path)) {
-              throw "Required Windows artifact missing: $path"
+          $portableZip = Join-Path $releaseDir "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
+          if (Test-Path -LiteralPath $portableZip) {
+            Remove-Item -LiteralPath $portableZip -Force
+          }
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $portableZip -Force
+
+          Copy-Item -LiteralPath $appExe `
+            -Destination (Join-Path $releaseDir "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe") `
+            -Force
+          Copy-Item -LiteralPath $setupSource.FullName `
+            -Destination (Join-Path $releaseDir "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe") `
+            -Force
+
+          foreach ($path in @(
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe",
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip",
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
+          )) {
+            $fullPath = Join-Path $releaseDir $path
+            if (-not (Test-Path -LiteralPath $fullPath)) {
+              throw "Required Windows artifact missing: $fullPath"
             }
           }
 
@@ -147,92 +142,103 @@ jobs:
           retention-days: 7
 
   build_macos:
-    name: Build macOS arm64
-    runs-on: macos-14
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            expected_uname: arm64
+          - arch: x64
+            runner: macos-15-intel
+            expected_uname: x86_64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          actual="$(uname -m)"
+          expected="${{ matrix.expected_uname }}"
+          echo "runner=$(sw_vers -productVersion) arch=$actual expected=$expected"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Expected runner arch $expected, got: $actual" >&2
+            exit 1
+          fi
 
-      - name: Build macOS assets
+      - name: Install Rust UI and Tauri tools
+        shell: bash
+        run: |
+          rustup component add rustfmt clippy
+          rustup target add wasm32-unknown-unknown
+          cargo install trunk --locked
+          cargo install tauri-cli --version "^2" --locked
+
+      - name: Run Rust/Tauri release gate
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace
+          cargo clippy --workspace --all-targets -- -D warnings
+          cd ui && trunk build --release
+          cd ..
+          cargo tauri build
+
+      - name: Prepare macOS release assets
         shell: bash
         env:
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          arch="$(uname -m)"
-          if [[ "$arch" != "arm64" ]]; then
-            echo "Expected macOS arm64 runner, got: $arch" >&2
+          app_path="$(find target/release/bundle -type d -name "CC Desktop Switch.app" -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo "CC Desktop Switch.app was not produced" >&2
+            find target/release/bundle -maxdepth 4 -print >&2 || true
             exit 1
           fi
 
-          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
-          echo "RELEASE_ARCH=arm64" >> "$GITHUB_ENV"
-          CCDS_VERSION="$RELEASE_VERSION" ./macos/build-macos.sh
-
-      - name: Smoke test macOS app bundle
-        shell: bash
-        run: |
-          app_exe="dist/mac/CC Desktop Switch.app/Contents/MacOS/CC-Desktop-Switch"
-          if [[ ! -x "$app_exe" ]]; then
-            echo "App executable not found: $app_exe" >&2
+          info_plist="$app_path/Contents/Info.plist"
+          macos_dir="$app_path/Contents/MacOS"
+          plutil -lint "$info_plist"
+          executable_count="$(find "$macos_dir" -type f -perm -111 | wc -l | tr -d ' ')"
+          if [[ "$executable_count" -lt 1 ]]; then
+            echo "No executable file found under $macos_dir" >&2
             exit 1
           fi
 
-          export HOME="$RUNNER_TEMP/ccds-home"
-          mkdir -p "$HOME"
-          "$app_exe" --server-only --port 19081 > "$RUNNER_TEMP/ccds-macos-smoke.log" 2>&1 &
-          app_pid=$!
-          cleanup() {
-            kill "$app_pid" 2>/dev/null || true
-            wait "$app_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          ok=0
-          for _ in {1..60}; do
-            if curl -fsS "http://127.0.0.1:19081/api/ready" >/dev/null; then
-              ok=1
-              break
-            fi
-            sleep 1
-          done
-
-          if [[ "$ok" != "1" ]]; then
-            cat "$RUNNER_TEMP/ccds-macos-smoke.log" >&2
+          dmg_source="$(find target/release/bundle -type f -name "*.dmg" -print -quit)"
+          if [[ -z "$dmg_source" ]]; then
+            echo "No DMG was produced" >&2
+            find target/release/bundle -maxdepth 4 -print >&2 || true
             exit 1
           fi
+          hdiutil verify "$dmg_source"
 
-      - name: Verify macOS packages
-        shell: bash
-        run: |
-          pkg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-arm64.pkg"
-          dmg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-arm64.dmg"
-
-          test -f "$pkg"
-          test -f "$dmg"
-          pkgutil --expand "$pkg" "$RUNNER_TEMP/pkg-expanded"
-          hdiutil verify "$dmg"
+          staging="release-staging"
+          mkdir -p "$staging"
+          pkg_path="$staging/CC-Desktop-Switch-v${VERSION}-macOS-${ARCH}.pkg"
+          dmg_path="$staging/CC-Desktop-Switch-v${VERSION}-macOS-${ARCH}.dmg"
+          pkgbuild --install-location /Applications --component "$app_path" "$pkg_path"
+          pkgutil --expand "$pkg_path" "$RUNNER_TEMP/pkg-expanded"
+          cp "$dmg_source" "$dmg_path"
+          test -f "$pkg_path"
+          test -f "$dmg_path"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-macos-arm64
-          path: |
-            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-arm64.pkg
-            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-arm64.dmg
+          name: release-macos-${{ matrix.arch }}
+          path: release-staging/*
           if-no-files-found: error
           retention-days: 7
 
-  publish_release:
-    name: Publish release
+  assemble_release:
+    name: Assemble signed release staging
     runs-on: windows-latest
     needs:
       - prepare
@@ -242,8 +248,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -256,8 +260,29 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          CCDS_RELEASE_PRIVATE_KEY_BASE64: ${{ secrets.CCDS_RELEASE_PRIVATE_KEY_BASE64 }}
+          CCDS_RELEASE_PUBLIC_KEY_BASE64: ${{ secrets.CCDS_RELEASE_PUBLIC_KEY_BASE64 }}
+          CCDS_RELEASE_PUBLIC_KEY_SHA256: "3649e9dffa2dd4929a954aa33aca5e3b74b6c9e71eb14e0bdee94df64a41b8af"
         run: |
           $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
+          if (-not $env:CCDS_RELEASE_PRIVATE_KEY_BASE64 -or -not $env:CCDS_RELEASE_PUBLIC_KEY_BASE64) {
+            throw "Release signing secrets are required: CCDS_RELEASE_PRIVATE_KEY_BASE64 and CCDS_RELEASE_PUBLIC_KEY_BASE64."
+          }
+
+          $keyDir = Join-Path $env:RUNNER_TEMP "ccds-release-signing"
+          New-Item -ItemType Directory -Force -Path $keyDir | Out-Null
+          $ascii = [System.Text.Encoding]::ASCII
+          [System.IO.File]::WriteAllText(
+            (Join-Path $keyDir "release-private-key.pem"),
+            $ascii.GetString([Convert]::FromBase64String($env:CCDS_RELEASE_PRIVATE_KEY_BASE64)),
+            $ascii
+          )
+          [System.IO.File]::WriteAllText(
+            (Join-Path $keyDir "release-public-key.pem"),
+            $ascii.GetString([Convert]::FromBase64String($env:CCDS_RELEASE_PUBLIC_KEY_BASE64)),
+            $ascii
+          )
+
           $args = @(
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
@@ -265,6 +290,9 @@ jobs:
             "-Version", $env:RELEASE_VERSION,
             "-StagingDir", "release-staging",
             "-Repository", $env:GITHUB_REPOSITORY,
+            "-KeyDir", $keyDir,
+            "-RequireExistingKey",
+            "-ExpectedPublicKeySha256", $env:CCDS_RELEASE_PUBLIC_KEY_SHA256,
             "-RequiredPlatforms", "windows-x64", "macos-arm64", "macos-x64"
           )
           if (Test-Path -LiteralPath $notesPath) {
@@ -294,6 +322,44 @@ jobs:
             }
           }
 
+      - name: Upload signed release staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-staging-signed
+          path: release-staging/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish_release:
+    name: Publish GitHub Release
+    runs-on: windows-latest
+    needs:
+      - prepare
+      - assemble_release
+    if: ${{ inputs.confirm_publish == 'PUBLISH_LATEST' }}
+    permissions:
+      contents: write
+    environment:
+      name: release-publish
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust for readiness gate
+        shell: powershell
+        run: rustup component add rustfmt clippy
+
+      - name: Verify RC readiness evidence
+        shell: powershell
+        run: cargo xtask verify --stage rc-readiness
+
+      - name: Download signed release staging
+        uses: actions/download-artifact@v4
+        with:
+          name: release-staging-signed
+          path: release-staging
+
       - name: Publish GitHub Release
         shell: powershell
         env:
@@ -310,12 +376,19 @@ jobs:
           }
 
           $tag = $env:RELEASE_TAG
+          $target = $env:GITHUB_SHA
           $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
           $notesFile = Join-Path $env:RUNNER_TEMP "release-notes.md"
           if (Test-Path -LiteralPath $notesPath) {
             Copy-Item -LiteralPath $notesPath -Destination $notesFile -Force
           } else {
             Set-Content -LiteralPath $notesFile -Value "Release for CC Desktop Switch v$env:RELEASE_VERSION." -Encoding utf8
+          }
+
+          git fetch --tags
+          $existingTag = git rev-parse -q --verify "refs/tags/$tag" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $existingTag.Trim() -ne $target) {
+            throw "Tag $tag points to $($existingTag.Trim()), but this workflow is publishing $target."
           }
 
           $isDraft = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft --jq ".isDraft" 2>$null
@@ -325,7 +398,7 @@ jobs:
             }
             Invoke-Gh release edit $tag --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" --notes-file $notesFile --verify-tag
           } else {
-            Invoke-Gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --title "CC Desktop Switch $tag" --notes-file $notesFile --verify-tag
+            Invoke-Gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --title "CC Desktop Switch $tag" --notes-file $notesFile --target $target
           }
 
           $existingAssetsText = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq ".assets[].name" 2>$null

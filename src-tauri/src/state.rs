@@ -4,9 +4,12 @@ use std::future::Future;
 use std::hash::{Hash, Hasher};
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use rand::{distributions::Alphanumeric, Rng};
 
 use crate::apply_flow::{DesktopApplyResult, DesktopApplyStepStatus};
 use crate::config::{
@@ -23,8 +26,9 @@ use crate::diagnostics::{
     DiagnosticsLogEntry, DiagnosticsPackage, SmokeCheckResult,
 };
 use crate::gateway::{
-    gateway_base_url, gateway_router_with_provider, planned_gateway_health_for_port,
-    serve_gateway_router, GatewayHealth, GatewayMode,
+    gateway_base_url, gateway_router_with_provider_auth_and_recorder,
+    planned_gateway_health_for_port, serve_gateway_router, GatewayHealth, GatewayMode,
+    GatewayRecorder, GatewayRequestEvent,
 };
 use crate::gateway_adapter::{build_messages_upstream_request, forward_upstream_request};
 use crate::model_catalog::ModelCatalog;
@@ -35,7 +39,56 @@ pub struct AppState {
     config_path: PathBuf,
     lock: Mutex<()>,
     gateway: Mutex<GatewayRuntime>,
-    logs: Mutex<Vec<DiagnosticsLogEntry>>,
+    logs: Arc<Mutex<Vec<DiagnosticsLogEntry>>>,
+    proxy_stats: Arc<Mutex<ProxyStatsState>>,
+    log_sequence: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyStatsSnapshot {
+    pub total: u64,
+    pub success: u64,
+    pub failed: u64,
+    pub today: u64,
+}
+
+#[derive(Default)]
+struct ProxyStatsState {
+    total: u64,
+    success: u64,
+    failed: u64,
+    today: u64,
+    day: u64,
+}
+
+impl ProxyStatsState {
+    fn record(&mut self, success: bool) {
+        let current_day = current_epoch_day();
+        if self.day != current_day {
+            self.day = current_day;
+            self.today = 0;
+        }
+        self.total = self.total.saturating_add(1);
+        self.today = self.today.saturating_add(1);
+        if success {
+            self.success = self.success.saturating_add(1);
+        } else {
+            self.failed = self.failed.saturating_add(1);
+        }
+    }
+
+    fn snapshot(&self) -> ProxyStatsSnapshot {
+        let mut snapshot = ProxyStatsSnapshot {
+            total: self.total,
+            success: self.success,
+            failed: self.failed,
+            today: self.today,
+        };
+        if self.day != current_epoch_day() {
+            snapshot.today = 0;
+        }
+        snapshot
+    }
 }
 
 #[derive(Default)]
@@ -73,7 +126,9 @@ impl AppState {
             config_path: path.into(),
             lock: Mutex::new(()),
             gateway: Mutex::new(GatewayRuntime::default()),
-            logs: Mutex::new(Vec::new()),
+            logs: Arc::new(Mutex::new(Vec::new())),
+            proxy_stats: Arc::new(Mutex::new(ProxyStatsState::default())),
+            log_sequence: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -95,13 +150,17 @@ impl AppState {
         let provider = request
             .into_provider()
             .map_err(StateError::InvalidProvider)?;
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        let sort_index = config.providers.len() as u32;
-        let provider = ConfigProvider::from_provider(provider, sort_index);
-        let summary = provider.summary();
-        config.upsert_provider(provider);
-        self.save_config_unlocked(&config)?;
+        let summary = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let sort_index = config.providers.len() as u32;
+            let provider = ConfigProvider::from_provider(provider, sort_index);
+            let summary = provider.summary();
+            config.upsert_provider(provider);
+            self.save_config_unlocked(&config)?;
+            summary
+        };
+        self.refresh_gateway_after_config_change()?;
         Ok(summary)
     }
 
@@ -115,12 +174,44 @@ impl AppState {
         Ok(changed)
     }
 
+    pub fn set_active_provider_and_refresh_gateway(
+        &self,
+        provider_id: &str,
+    ) -> Result<bool, StateError> {
+        let changed = self.set_active_provider(provider_id)?;
+        if changed && self.gateway_status()?.running {
+            self.start_gateway()?;
+        }
+        Ok(changed)
+    }
+
+    fn refresh_gateway_after_config_change(&self) -> Result<(), StateError> {
+        let running = {
+            let mut runtime = self.gateway.lock().map_err(map_lock)?;
+            cleanup_gateway_unlocked(&mut runtime);
+            runtime.port.is_some()
+        };
+        if running {
+            if let Err(error) = self.start_gateway() {
+                let _ = self.stop_gateway();
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub fn delete_provider(&self, provider_id: &str) -> Result<bool, StateError> {
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        let changed = config.delete_provider(provider_id);
+        let changed = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let changed = config.delete_provider(provider_id);
+            if changed {
+                self.save_config_unlocked(&config)?;
+            }
+            changed
+        };
         if changed {
-            self.save_config_unlocked(&config)?;
+            self.refresh_gateway_after_config_change()?;
         }
         Ok(changed)
     }
@@ -141,6 +232,12 @@ impl AppState {
         let _lock = self.lock.lock().map_err(map_lock)?;
         let config = self.load_config_unlocked()?;
         Ok(config.export_provider_package())
+    }
+
+    pub fn export_provider_package_redacted(&self) -> Result<ProviderExportPackage, StateError> {
+        let _lock = self.lock.lock().map_err(map_lock)?;
+        let config = self.load_config_unlocked()?;
+        Ok(config.export_provider_package_redacted())
     }
 
     pub fn preview_provider_import(
@@ -176,12 +273,18 @@ impl AppState {
         replace_existing: bool,
         skip_existing: bool,
     ) -> Result<ProviderImportApplyResult, StateError> {
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        let result =
-            config.import_providers_with_merge(raw_json, replace_existing, skip_existing)?;
+        let result = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let result =
+                config.import_providers_with_merge(raw_json, replace_existing, skip_existing)?;
+            if result.changed {
+                self.save_config_unlocked(&config)?;
+            }
+            result
+        };
         if result.changed {
-            self.save_config_unlocked(&config)?;
+            self.refresh_gateway_after_config_change()?;
         }
         Ok(result)
     }
@@ -206,11 +309,17 @@ impl AppState {
         api_key: String,
         replace_existing: bool,
     ) -> Result<ProviderImportApplyResult, StateError> {
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        let result = config.import_provider_preset(preset_id, api_key, replace_existing)?;
+        let result = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let result = config.import_provider_preset(preset_id, api_key, replace_existing)?;
+            if result.changed {
+                self.save_config_unlocked(&config)?;
+            }
+            result
+        };
         if result.changed {
-            self.save_config_unlocked(&config)?;
+            self.refresh_gateway_after_config_change()?;
         }
         Ok(result)
     }
@@ -231,17 +340,24 @@ impl AppState {
         provider_id: &str,
         mappings: Vec<ModelMappingDraft>,
     ) -> Result<Vec<ModelMappingSummary>, StateError> {
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        let changed = config
-            .update_provider_model_mappings(provider_id, mappings)
-            .map_err(StateError::InvalidProvider)?;
-        if changed {
-            self.save_config_unlocked(&config)?;
+        let summaries = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let changed = config
+                .update_provider_model_mappings(provider_id, mappings)
+                .map_err(StateError::InvalidProvider)?;
+            if changed {
+                self.save_config_unlocked(&config)?;
+            }
+            let summaries = config
+                .model_mapping_summaries(provider_id)
+                .map_err(StateError::InvalidProvider)?;
+            (changed, summaries)
+        };
+        if summaries.0 {
+            self.refresh_gateway_after_config_change()?;
         }
-        config
-            .model_mapping_summaries(provider_id)
-            .map_err(StateError::InvalidProvider)
+        Ok(summaries.1)
     }
 
     pub fn list_config_backups(&self) -> Result<Vec<ConfigBackupSummary>, StateError> {
@@ -263,15 +379,23 @@ impl AppState {
     pub fn snapshot(&self) -> Result<AppSnapshot, StateError> {
         let _lock = self.lock.lock().map_err(map_lock)?;
         let config = self.load_config_unlocked()?;
-        let active_provider = config.active_provider();
-        Ok(AppSnapshot {
-            active_provider: active_provider.map(ConfigProvider::as_provider),
-            active_model_mappings: active_provider
-                .map(|provider| provider.model_mappings.clone())
-                .unwrap_or_default(),
-            gateway_api_key: config.gateway_api_key.clone(),
-            proxy_port: config.settings.proxy_port,
-        })
+        Ok(snapshot_from_config(&config))
+    }
+
+    fn snapshot_with_gateway_api_key(&self) -> Result<AppSnapshot, StateError> {
+        let _lock = self.lock.lock().map_err(map_lock)?;
+        let mut config = self.load_config_unlocked()?;
+        if config
+            .gateway_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .is_none()
+        {
+            config.gateway_api_key = Some(generate_gateway_api_key());
+            self.save_config_unlocked(&config)?;
+        }
+        Ok(snapshot_from_config(&config))
     }
 
     pub fn gateway_status(&self) -> Result<GatewayHealth, StateError> {
@@ -289,6 +413,11 @@ impl AppState {
         Ok(logs.clone())
     }
 
+    pub fn proxy_stats(&self) -> Result<ProxyStatsSnapshot, StateError> {
+        let stats = self.proxy_stats.lock().map_err(map_lock)?;
+        Ok(stats.snapshot())
+    }
+
     pub fn clear_runtime_logs(&self) -> Result<bool, StateError> {
         let mut logs = self.logs.lock().map_err(map_lock)?;
         let had_logs = !logs.is_empty();
@@ -303,11 +432,37 @@ impl AppState {
     }
 
     pub fn update_settings(&self, settings: ConfigSettings) -> Result<ConfigSettings, StateError> {
-        let _lock = self.lock.lock().map_err(map_lock)?;
-        let mut config = self.load_config_unlocked()?;
-        config.settings = settings;
-        self.save_config_unlocked(&config)?;
-        Ok(config.settings)
+        if settings.proxy_port == 0 {
+            return Err(StateError::Gateway(
+                "settings.proxy_port_invalid: proxyPort must be between 1 and 65535".to_owned(),
+            ));
+        }
+        let gateway_running = self.gateway_status()?.running;
+        let saved = {
+            let _lock = self.lock.lock().map_err(map_lock)?;
+            let mut config = self.load_config_unlocked()?;
+            let previous = config.settings.clone();
+            let changed = config.settings != settings;
+            let proxy_port_changed = previous.proxy_port != settings.proxy_port;
+            if changed {
+                if gateway_running && proxy_port_changed {
+                    preflight_gateway_port(settings.proxy_port)?;
+                }
+                config.settings = settings;
+                self.save_config_unlocked(&config)?;
+            }
+            (changed, proxy_port_changed, previous, config.settings)
+        };
+        if saved.0 && saved.1 {
+            if let Err(error) = self.start_gateway() {
+                let _lock = self.lock.lock().map_err(map_lock)?;
+                let mut config = self.load_config_unlocked()?;
+                config.settings = saved.2;
+                self.save_config_unlocked(&config)?;
+                return Err(error);
+            }
+        }
+        Ok(saved.3)
     }
 
     pub fn diagnostics_package(
@@ -382,12 +537,21 @@ impl AppState {
                 ));
             }
         };
+        let gateway_api_key = self
+            .snapshot()?
+            .gateway_api_key
+            .ok_or_else(|| StateError::Gateway("gateway.auth_key_missing".to_owned()))?;
         let url = format!("{}/v1/models", health.base_url);
         let client = reqwest::Client::new();
         let result = block_on_async(async {
-            let response = client.get(&url).send().await.map_err(|error| {
-                smoke_fail("gateway.smoke", "gateway.smoke_failed", &error.to_string())
-            })?;
+            let response = client
+                .get(&url)
+                .bearer_auth(gateway_api_key)
+                .send()
+                .await
+                .map_err(|error| {
+                    smoke_fail("gateway.smoke", "gateway.smoke_failed", &error.to_string())
+                })?;
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             if !status.is_success() {
@@ -492,7 +656,7 @@ impl AppState {
     }
 
     pub fn start_gateway(&self) -> Result<GatewayHealth, StateError> {
-        let snapshot = self.snapshot()?;
+        let snapshot = self.snapshot_with_gateway_api_key()?;
         let provider = match snapshot.active_provider {
             Some(provider) => provider,
             None => {
@@ -507,8 +671,16 @@ impl AppState {
                 ));
             }
         };
-        let config_fingerprint =
-            gateway_config_fingerprint(&provider, &snapshot.active_model_mappings);
+        let gateway_api_key = snapshot
+            .gateway_api_key
+            .clone()
+            .ok_or_else(|| StateError::Gateway("gateway.auth_key_missing".to_owned()))?;
+        let config_fingerprint = gateway_config_fingerprint(
+            &provider,
+            &snapshot.active_model_mappings,
+            &gateway_api_key,
+            snapshot.proxy_port,
+        );
 
         {
             let mut runtime = self.gateway.lock().map_err(map_lock)?;
@@ -521,7 +693,9 @@ impl AppState {
                         base_url: gateway_base_url(port),
                     });
                 }
-                stop_gateway_unlocked(&mut runtime);
+                if port == snapshot.proxy_port {
+                    stop_gateway_unlocked(&mut runtime);
+                }
             }
         }
 
@@ -571,7 +745,12 @@ impl AppState {
                 return Err(StateError::Gateway(format!("gateway.bind_failed: {error}")));
             }
         };
-        let router = gateway_router_with_provider(catalog, provider);
+        let router = gateway_router_with_provider_auth_and_recorder(
+            catalog,
+            provider,
+            gateway_api_key,
+            self.gateway_recorder(),
+        );
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let thread = match std::thread::Builder::new()
             .name("ccds-local-gateway".to_owned())
@@ -594,13 +773,24 @@ impl AppState {
             }
         };
 
-        let mut runtime = self.gateway.lock().map_err(map_lock)?;
-        cleanup_gateway_unlocked(&mut runtime);
-        runtime.port = Some(port);
-        runtime.shutdown = Some(shutdown);
-        runtime.thread = Some(thread);
-        runtime.last_error_code = None;
-        runtime.config_fingerprint = Some(config_fingerprint);
+        let old_gateway = {
+            let mut runtime = self.gateway.lock().map_err(map_lock)?;
+            cleanup_gateway_unlocked(&mut runtime);
+            let old_gateway = if runtime.port.is_some() {
+                Some((runtime.shutdown.take(), runtime.thread.take()))
+            } else {
+                None
+            };
+            runtime.port = Some(port);
+            runtime.shutdown = Some(shutdown);
+            runtime.thread = Some(thread);
+            runtime.last_error_code = None;
+            runtime.config_fingerprint = Some(config_fingerprint);
+            old_gateway
+        };
+        if let Some((old_shutdown, old_thread)) = old_gateway {
+            stop_gateway_handles(old_shutdown, old_thread);
+        }
         self.record_runtime_log(
             "info",
             "gateway.started",
@@ -684,7 +874,7 @@ impl AppState {
         root: &Path,
         result: &mut DesktopApplyResult,
     ) {
-        let snapshot = match self.snapshot() {
+        let snapshot = match self.snapshot_with_gateway_api_key() {
             Ok(snapshot) => {
                 result.push_step(
                     "provider.snapshot",
@@ -848,17 +1038,66 @@ impl AppState {
     }
 
     fn record_runtime_log(&self, level: &str, code: &str, message: &str) {
-        if let Ok(mut logs) = self.logs.lock() {
-            logs.push(DiagnosticsLogEntry {
-                timestamp_unix_ms: now_millis(),
-                level: level.to_owned(),
-                code: code.to_owned(),
-                message: redact_diagnostics_text(message),
-            });
-            let overflow = logs.len().saturating_sub(200);
-            if overflow > 0 {
-                logs.drain(0..overflow);
+        push_runtime_log(
+            &self.logs,
+            self.log_sequence.fetch_add(1, Ordering::Relaxed),
+            level,
+            code,
+            message,
+        );
+    }
+
+    fn gateway_recorder(&self) -> GatewayRecorder {
+        let logs = Arc::clone(&self.logs);
+        let proxy_stats = Arc::clone(&self.proxy_stats);
+        let log_sequence = Arc::clone(&self.log_sequence);
+        GatewayRecorder::new(move |event| {
+            if let Ok(mut stats) = proxy_stats.lock() {
+                stats.record(event.succeeded());
             }
+            let message = gateway_request_log_message(&event);
+            push_runtime_log(
+                &logs,
+                log_sequence.fetch_add(1, Ordering::Relaxed),
+                if event.succeeded() { "info" } else { "warn" },
+                &event.code,
+                &message,
+            );
+        })
+    }
+}
+
+fn gateway_request_log_message(event: &GatewayRequestEvent) -> String {
+    match &event.route_id {
+        Some(route_id) => format!(
+            "{} {} status={} route={route_id}",
+            event.method, event.endpoint, event.status
+        ),
+        None => format!(
+            "{} {} status={}",
+            event.method, event.endpoint, event.status
+        ),
+    }
+}
+
+fn push_runtime_log(
+    logs: &Mutex<Vec<DiagnosticsLogEntry>>,
+    id: u64,
+    level: &str,
+    code: &str,
+    message: &str,
+) {
+    if let Ok(mut logs) = logs.lock() {
+        logs.push(DiagnosticsLogEntry {
+            id,
+            timestamp_unix_ms: now_millis(),
+            level: level.to_owned(),
+            code: code.to_owned(),
+            message: redact_diagnostics_text(message),
+        });
+        let overflow = logs.len().saturating_sub(200);
+        if overflow > 0 {
+            logs.drain(0..overflow);
         }
     }
 }
@@ -890,6 +1129,27 @@ fn stop_gateway_unlocked(runtime: &mut GatewayRuntime) {
     runtime.config_fingerprint = None;
 }
 
+fn stop_gateway_handles(
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+) {
+    if let Some(shutdown) = shutdown {
+        let _ = shutdown.send(());
+    }
+    if let Some(thread) = thread {
+        let _ = thread.join();
+    }
+}
+
+fn preflight_gateway_port(port: u16) -> Result<(), StateError> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpListener::bind(addr).map(|_| ()).map_err(|error| {
+        StateError::Gateway(format!(
+            "gateway.port_in_use: failed to bind local gateway on {addr}: {error}"
+        ))
+    })
+}
+
 fn default_config_path() -> PathBuf {
     if let Ok(path) = std::env::var("CCDS_CONFIG_FILE") {
         return PathBuf::from(path);
@@ -910,9 +1170,45 @@ fn port_from_gateway_base_url(base_url: &str) -> Option<u16> {
     base_url.rsplit(':').next()?.parse().ok()
 }
 
-fn gateway_config_fingerprint(provider: &Provider, mappings: &[ModelMapping]) -> String {
-    let raw = serde_json::to_string(&(provider, mappings))
-        .unwrap_or_else(|_| format!("{}:{}", provider.provider_id, provider.base_url));
+fn snapshot_from_config(config: &AppConfig) -> AppSnapshot {
+    let active_provider = config.active_provider();
+    AppSnapshot {
+        active_provider: active_provider.map(ConfigProvider::as_provider),
+        active_model_mappings: active_provider
+            .map(|provider| provider.model_mappings.clone())
+            .unwrap_or_default(),
+        gateway_api_key: config
+            .gateway_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned),
+        proxy_port: config.settings.proxy_port,
+    }
+}
+
+fn generate_gateway_api_key() -> String {
+    let token = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(48)
+        .map(char::from)
+        .collect::<String>();
+    format!("ccds-gw-{token}")
+}
+
+fn gateway_config_fingerprint(
+    provider: &Provider,
+    mappings: &[ModelMapping],
+    gateway_api_key: &str,
+    proxy_port: u16,
+) -> String {
+    let raw = serde_json::to_string(&(provider, mappings, gateway_api_key, proxy_port))
+        .unwrap_or_else(|_| {
+            format!(
+                "{}:{}:{}:{}",
+                provider.provider_id, provider.base_url, gateway_api_key, proxy_port
+            )
+        });
     let mut hasher = DefaultHasher::new();
     raw.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
@@ -923,6 +1219,14 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+fn current_epoch_day() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400
 }
 
 fn block_on_async<F: Future>(future: F) -> F::Output {
@@ -1003,6 +1307,16 @@ mod tests {
             std::thread::sleep(Duration::from_millis(25));
         }
         panic!("gateway did not accept TCP connections on port {port}");
+    }
+
+    fn wait_for_tcp_closed(port: u16) {
+        for _ in 0..20 {
+            if TcpStream::connect(("127.0.0.1", port)).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("gateway still accepted TCP connections on port {port}");
     }
 
     const REAL_DESKTOP_SMOKE_FILES: [&str; 2] =
@@ -1648,6 +1962,125 @@ mod tests {
     }
 
     #[test]
+    fn gateway_lifecycle_records_request_stats_and_logs() {
+        let (path, state) = state_with_provider("gateway-request-stats", 0);
+
+        let started = state.start_gateway().unwrap();
+        let port = port_from_base_url(&started.base_url);
+        wait_for_tcp(port);
+        let base_url = started.base_url.clone();
+        let gateway_api_key = state.snapshot().unwrap().gateway_api_key.unwrap();
+
+        block_on_async(async {
+            let client = reqwest::Client::new();
+            let models = client
+                .get(format!("{base_url}/v1/models"))
+                .bearer_auth(&gateway_api_key)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(models.status(), reqwest::StatusCode::OK);
+
+            let messages = reqwest::Client::new()
+                .post(format!("{base_url}/v1/messages"))
+                .header("x-api-key", &gateway_api_key)
+                .json(&serde_json::json!({
+                    "model": "claude-missing-route",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(messages.status(), reqwest::StatusCode::BAD_REQUEST);
+        });
+
+        let stats = state.proxy_stats().unwrap();
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.success, 1);
+        assert_eq!(stats.failed, 1);
+        assert_eq!(stats.today, 2);
+
+        let logs = state.runtime_logs().unwrap();
+        assert!(logs.iter().any(|entry| entry.code == "gateway.models"));
+        assert!(logs
+            .iter()
+            .any(|entry| entry.code == "gateway.unmapped_model_route"));
+        assert!(logs.iter().all(|entry| entry.id > 0));
+        let mut ids = logs.iter().map(|entry| entry.id).collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), logs.len());
+
+        state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn gateway_lifecycle_rejects_missing_or_invalid_gateway_auth() {
+        let (path, state) = state_with_provider("gateway-auth", 0);
+
+        let started = state.start_gateway().unwrap();
+        let port = port_from_base_url(&started.base_url);
+        wait_for_tcp(port);
+        let base_url = started.base_url.clone();
+        let gateway_api_key = state.snapshot().unwrap().gateway_api_key.unwrap();
+
+        block_on_async(async {
+            let missing_client = reqwest::Client::new();
+            let missing = missing_client
+                .get(format!("{base_url}/v1/models"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(missing.status(), reqwest::StatusCode::UNAUTHORIZED);
+            let missing_body = missing.text().await.unwrap();
+            assert!(missing_body.contains("gateway.auth_missing"));
+            assert!(!missing_body.contains(&gateway_api_key));
+
+            let invalid_client = reqwest::Client::new();
+            let invalid = invalid_client
+                .post(format!("{base_url}/v1/messages"))
+                .header("authorization", "Bearer wrong-gateway-key")
+                .json(&serde_json::json!({
+                    "model": "claude-deepseek-v4-pro",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(invalid.status(), reqwest::StatusCode::UNAUTHORIZED);
+            let invalid_body = invalid.text().await.unwrap();
+            assert!(invalid_body.contains("gateway.auth_invalid"));
+            assert!(!invalid_body.contains("wrong-gateway-key"));
+            assert!(!invalid_body.contains(&gateway_api_key));
+        });
+
+        let stats = state.proxy_stats().unwrap();
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.success, 0);
+        assert_eq!(stats.failed, 2);
+
+        let logs = state.runtime_logs().unwrap();
+        assert!(logs
+            .iter()
+            .any(|entry| entry.code == "gateway.auth_missing"));
+        assert!(logs
+            .iter()
+            .any(|entry| entry.code == "gateway.auth_invalid"));
+        assert!(logs
+            .iter()
+            .all(|entry| !entry.message.contains(&gateway_api_key)));
+        assert!(logs
+            .iter()
+            .all(|entry| !entry.message.contains("wrong-gateway-key")));
+
+        state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn provider_parity_gateway_restarts_when_active_provider_changes() {
         let (path, state) = state_with_provider("gateway-fingerprint", 0);
 
@@ -1682,6 +2115,124 @@ mod tests {
         assert_ne!(first_fingerprint, second_fingerprint);
 
         state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn set_active_provider_refreshes_running_gateway_runtime() {
+        let (path, state) = state_with_provider("gateway-active-switch", 0);
+        state.save_provider(provider("Kimi")).unwrap();
+        let kimi_id = state
+            .list_providers()
+            .unwrap()
+            .into_iter()
+            .find(|provider| provider.display_name == "Kimi")
+            .unwrap()
+            .provider_id;
+
+        let started = state.start_gateway().unwrap();
+        let port = port_from_base_url(&started.base_url);
+        wait_for_tcp(port);
+        let first_fingerprint = {
+            let runtime = state.gateway.lock().unwrap();
+            runtime.config_fingerprint.clone().unwrap()
+        };
+
+        assert!(state
+            .set_active_provider_and_refresh_gateway(&kimi_id)
+            .unwrap());
+        let refreshed = state.gateway_status().unwrap();
+        let second_fingerprint = {
+            let runtime = state.gateway.lock().unwrap();
+            runtime.config_fingerprint.clone().unwrap()
+        };
+
+        assert!(refreshed.running);
+        assert_ne!(first_fingerprint, second_fingerprint);
+
+        state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn settings_port_change_refreshes_running_gateway_runtime() {
+        let (path, state) = state_with_provider("gateway-settings-port", 0);
+
+        let started = state.start_gateway().unwrap();
+        let first_port = port_from_base_url(&started.base_url);
+        wait_for_tcp(first_port);
+
+        let new_port = {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        assert_ne!(first_port, new_port);
+
+        let saved = state
+            .update_settings(ConfigSettings {
+                theme: "light".to_owned(),
+                language: "zh".to_owned(),
+                proxy_port: new_port,
+                update_url: "http://127.0.0.1:18925/latest-local-next.json".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(saved.proxy_port, new_port);
+
+        let refreshed = state.gateway_status().unwrap();
+        assert!(refreshed.running);
+        assert_eq!(port_from_base_url(&refreshed.base_url), new_port);
+        wait_for_tcp(new_port);
+        wait_for_tcp_closed(first_port);
+
+        state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn settings_port_change_to_occupied_port_keeps_existing_gateway_and_settings() {
+        let (path, state) = state_with_provider("gateway-settings-port-occupied", 0);
+
+        let started = state.start_gateway().unwrap();
+        let first_port = port_from_base_url(&started.base_url);
+        wait_for_tcp(first_port);
+        let blocker = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let blocked_port = blocker.local_addr().unwrap().port();
+
+        let error = state
+            .update_settings(ConfigSettings {
+                theme: "light".to_owned(),
+                language: "zh".to_owned(),
+                proxy_port: blocked_port,
+                update_url: "http://127.0.0.1:18925/latest-local-next.json".to_owned(),
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("gateway.port_in_use"));
+        let status = state.gateway_status().unwrap();
+        assert!(status.running);
+        assert_eq!(port_from_base_url(&status.base_url), first_port);
+        assert_eq!(state.settings().unwrap().proxy_port, 0);
+
+        drop(blocker);
+        state.stop_gateway().unwrap();
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn update_settings_rejects_zero_proxy_port() {
+        let (path, state) = state_with_provider("settings-zero-port", 18080);
+
+        let error = state
+            .update_settings(ConfigSettings {
+                theme: "light".to_owned(),
+                language: "zh".to_owned(),
+                proxy_port: 0,
+                update_url: "http://127.0.0.1:18925/latest-local-next.json".to_owned(),
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("settings.proxy_port_invalid"));
+        assert_eq!(state.settings().unwrap().proxy_port, 18080);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

@@ -5,7 +5,9 @@ param(
     [string]$Notes,
     [string]$NotesFile,
     [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64", "macos-x64"),
-    [string]$KeyDir
+    [string]$KeyDir,
+    [string]$ExpectedPublicKeySha256 = $env:CCDS_RELEASE_PUBLIC_KEY_SHA256,
+    [switch]$RequireExistingKey
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,14 +37,21 @@ function Convert-KeyFileToBytes {
 function Get-OrCreateSigningKey {
     param(
         [string]$KeyDir,
-        [string]$ReleaseDir
+        [string]$ReleaseDir,
+        [bool]$RequireExistingKey
     )
 
     New-Item -ItemType Directory -Force -Path $KeyDir | Out-Null
     $privatePath = Join-Path $KeyDir "release-private-key.pem"
     $publicPath = Join-Path $KeyDir "release-public-key.pem"
 
-    if (-not (Test-Path -LiteralPath $privatePath)) {
+    $privateExists = Test-Path -LiteralPath $privatePath
+    $publicExists = Test-Path -LiteralPath $publicPath
+    if ($RequireExistingKey -and (-not $privateExists -or -not $publicExists)) {
+        throw "Release signing key missing. Expected release-private-key.pem and release-public-key.pem under: $KeyDir"
+    }
+
+    if (-not $privateExists -or -not $publicExists) {
         $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider 3072
         $rsa.PersistKeyInCsp = $false
         $privateText = Convert-BytesToKeyFile -Bytes $rsa.ExportCspBlob($true) -Label "RSA PRIVATE KEY BLOB"
@@ -59,6 +68,27 @@ function Get-OrCreateSigningKey {
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-PublicKeyFingerprint {
+    param(
+        [string]$Path,
+        [string]$ExpectedSha256
+    )
+
+    if (-not $ExpectedSha256) {
+        return
+    }
+
+    $expected = $ExpectedSha256.Trim().ToLowerInvariant()
+    if ($expected -notmatch "^[0-9a-f]{64}$") {
+        throw "Expected public key SHA256 must be a 64-character hex digest."
+    }
+
+    $actual = Get-Sha256 -Path $Path
+    if ($actual -ne $expected) {
+        throw "Release public key fingerprint mismatch: expected $expected, got $actual"
+    }
 }
 
 function Sign-File {
@@ -201,7 +231,8 @@ foreach ($assetName in $requiredAssetNames) {
     }
 }
 
-$privateKey = Get-OrCreateSigningKey -KeyDir $KeyDir -ReleaseDir $releaseDir
+$privateKey = Get-OrCreateSigningKey -KeyDir $KeyDir -ReleaseDir $releaseDir -RequireExistingKey:$RequireExistingKey.IsPresent
+Assert-PublicKeyFingerprint -Path (Join-Path $releaseDir "CC-Desktop-Switch-release-public.pem") -ExpectedSha256 $ExpectedPublicKeySha256
 $platforms = [ordered]@{}
 $assetFiles = Get-ChildItem -LiteralPath $releaseDir -File |
     Where-Object { $_.Name -like "CC-Desktop-Switch-v$Version-*" } |

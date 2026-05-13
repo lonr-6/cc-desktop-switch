@@ -88,7 +88,8 @@ fn run_rc_readiness() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let checks = rc_readiness_checks(&root);
+    let current_commit = current_git_commit(&root).ok();
+    let checks = rc_readiness_checks(&root, current_commit.as_deref());
 
     println!("RC1 readiness audit");
     println!("worktree: {}", root.display());
@@ -122,7 +123,25 @@ struct RcReadinessCheck {
     next: &'static str,
 }
 
-fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
+fn rc_readiness_checks(root: &Path, current_commit: Option<&str>) -> Vec<RcReadinessCheck> {
+    let p83_platform_commit_needles = current_commit
+        .map(|commit| {
+            vec![
+                format!("expected_commit: {commit}"),
+                format!("commit_arm64: {commit}"),
+                format!("commit_x64: {commit}"),
+            ]
+        })
+        .unwrap_or_default();
+    let p83_real_desktop_commit_needles = current_commit
+        .map(|commit| {
+            vec![
+                format!("expected_commit: {commit}"),
+                format!("commit_arm64: {commit}"),
+                format!("commit_x64: {commit}"),
+            ]
+        })
+        .unwrap_or_default();
     vec![
         check_paths(
             "Cargo workspace / src-tauri / ui / xtask structure exists",
@@ -268,12 +287,15 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
             &[
                 "platform-smoke-evidence.md",
                 "platform.macos_arm64_x64_smoke_path",
+                "ExpectedCommit",
                 "platform: macOS arm64",
                 "platform: macOS x64",
                 "runner: macos-14",
                 "runner: macos-15-intel",
                 "actual_uname: arm64",
                 "actual_uname: x86_64",
+                "commit_arm64:",
+                "commit_x64:",
                 "## Result",
                 "Pass",
                 "OutputPath",
@@ -327,6 +349,7 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
                 "--allow-real-desktop-write",
                 "UnsupportedPlatform",
                 "CCDS_ALLOW_REAL_DESKTOP_WRITE=1",
+                "commit:",
             ],
             "Restore the macOS real Desktop smoke wrapper so real runs can produce evidence without default writes.",
         ),
@@ -340,7 +363,12 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
                 "macos-real-desktop-smoke-evidence.md",
                 "desktop.real_macos_local_config_smoke",
                 "macos_real_desktop_local_config_smoke",
+                "ExpectedCommit",
                 "platform: Darwin",
+                "arch_arm64:",
+                "arch_x64:",
+                "commit_arm64:",
+                "commit_x64:",
                 "mode: run",
                 "exit_code: 0",
                 "configLibrary",
@@ -396,6 +424,23 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
             ],
             "Run the non-publishing macOS platform smoke workflow and record both runner results.",
         ),
+        check_handoff_contains_dynamic(
+            "P83 fresh macOS arm64 and macOS x64 build/smoke workflow evidence exists",
+            root,
+            &[
+                "phase: P83",
+                "## Result\n\nPass",
+                "platform.macos_arm64_x64_smoke_path",
+                "macos-14",
+                "macos-15-intel",
+                "workflow_run_arm64:",
+                "workflow_run_x64:",
+                "artifact_arm64: rust-mainline-macos-arm64",
+                "artifact_x64: rust-mainline-macos-x64",
+            ],
+            &p83_platform_commit_needles,
+            "After the P83 fixes are pushed, rerun the non-publishing macOS platform smoke workflow and record fresh arm64/x64 evidence.",
+        ),
         check_handoff_contains(
             "macOS real Claude Desktop local config smoke passed",
             root,
@@ -411,6 +456,28 @@ fn rc_readiness_checks(root: &Path) -> Vec<RcReadinessCheck> {
                 "log:",
             ],
             "Run real Claude Desktop local config smoke on macOS and record readback evidence.",
+        ),
+        check_handoff_contains_dynamic(
+            "P83 fresh macOS real Claude Desktop local config smoke passed",
+            root,
+            &[
+                "phase: P83",
+                "## Result\n\nPass",
+                "fingerprint: desktop.real_macos_local_config_smoke",
+                "test_name: macos_real_desktop_local_config_smoke",
+                "platform: Darwin",
+                "arch_arm64: arm64",
+                "arch_x64: x86_64",
+                "macOS real Claude Desktop local config smoke",
+                "configLibrary",
+                "safe route",
+                "evidence_arm64:",
+                "evidence_x64:",
+                "log_arm64:",
+                "log_x64:",
+            ],
+            &p83_real_desktop_commit_needles,
+            "After the P83 fixes are pushed, rerun macOS real Desktop local config smoke and record fresh readback evidence.",
         ),
     ]
 }
@@ -502,6 +569,49 @@ fn check_handoff_contains(
     }
 }
 
+fn check_handoff_contains_dynamic(
+    requirement: &'static str,
+    root: &Path,
+    needles: &[&str],
+    dynamic_needles: &[String],
+    next: &'static str,
+) -> RcReadinessCheck {
+    if dynamic_needles.is_empty() {
+        return RcReadinessCheck {
+            requirement,
+            passed: false,
+            evidence: "current git commit could not be resolved for fresh-evidence matching"
+                .to_owned(),
+            next,
+        };
+    }
+
+    let handoff_dir = root.join("project-docs").join("handoff");
+    let matches = find_markdown_files_containing_dynamic(&handoff_dir, needles, dynamic_needles);
+    RcReadinessCheck {
+        requirement,
+        passed: !matches.is_empty(),
+        evidence: if matches.is_empty() {
+            format!(
+                "no handoff under {} contains all of: {}; {}",
+                handoff_dir.display(),
+                display_needles(needles),
+                dynamic_needles.join(", ")
+            )
+        } else {
+            format!(
+                "matched handoff evidence: {}",
+                matches
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+        next,
+    }
+}
+
 fn find_markdown_files_containing(dir: &Path, needles: &[&str]) -> Vec<PathBuf> {
     let mut matches = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -521,6 +631,53 @@ fn find_markdown_files_containing(dir: &Path, needles: &[&str]) -> Vec<PathBuf> 
         }
     }
     matches
+}
+
+fn find_markdown_files_containing_dynamic(
+    dir: &Path,
+    needles: &[&str],
+    dynamic_needles: &[String],
+) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return matches;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if needles.iter().all(|needle| content.contains(needle))
+            && dynamic_needles
+                .iter()
+                .all(|needle| content.contains(needle))
+        {
+            matches.push(path);
+        }
+    }
+    matches
+}
+
+fn current_git_commit(root: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if commit.is_empty() {
+        Err("git rev-parse HEAD returned an empty commit".to_owned())
+    } else {
+        Ok(commit)
+    }
 }
 
 fn display_needles(needles: &[&str]) -> String {

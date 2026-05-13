@@ -1,6 +1,6 @@
 Unicode true
 ; Based on Tauri CLI 2.11.0 default NSIS template.
-; Local change: RestorePreviousInstallLocation also reads the v1.0.x HKLM uninstall key.
+; Local change: RestorePreviousInstallLocation validates legacy install dirs and ignores MSI uninstall commands.
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
 ; Currently undocumented on NSIS's website but is in the Docs folder of source tree, see
@@ -893,20 +893,29 @@ SectionEnd
 Function RestorePreviousInstallLocation
   ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
   Call NormalizeInstallLocation
+  Call ValidateInstallLocation
   StrCmp $4 "" 0 restore_done
   ReadRegStr $4 SHCTX "${UNINSTKEY}" "InstallLocation"
   Call NormalizeInstallLocation
+  Call ValidateInstallLocation
+  StrCmp $4 "" 0 restore_done
+  ReadRegStr $5 SHCTX "${UNINSTKEY}" "DisplayIcon"
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 restore_done
   ReadRegStr $5 SHCTX "${UNINSTKEY}" "UninstallString"
-  Call InstallLocationFromUninstallString
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 restore_done
   ; Migration from the v1.0.x Python/NSIS installer.
   ; That line stored InstallLocation under HKLM uninstall metadata instead of MANUPRODUCTKEY.
   ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\CC Desktop Switch" "InstallLocation"
   Call NormalizeInstallLocation
+  Call ValidateInstallLocation
+  StrCmp $4 "" 0 restore_done
+  ReadRegStr $5 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\CC Desktop Switch" "DisplayIcon"
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 restore_done
   ReadRegStr $5 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\CC Desktop Switch" "UninstallString"
-  Call InstallLocationFromUninstallString
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 restore_done
   ; MSI installers usually use a GUID uninstall key. Scan DisplayName entries so the
   ; NSIS directory page can still inherit an MSI-installed location before the user sees it.
@@ -927,22 +936,67 @@ Function NormalizeInstallLocation
 normalize_done:
 FunctionEnd
 
-Function InstallLocationFromUninstallString
+Function ValidateInstallLocation
+  StrCmp $4 "" validate_install_location_done
+  Call NormalizeInstallLocation
+  ${If} ${FileExists} "$4\${MAINBINARYNAME}.exe"
+  ${OrIf} ${FileExists} "$4\${PRODUCTNAME}.exe"
+  ${OrIf} ${FileExists} "$4\cc-desktop-switch.exe"
+  ${OrIf} ${FileExists} "$4\CC-Desktop-Switch.exe"
+  ${OrIf} ${FileExists} "$4\CC Desktop Switch.exe"
+  ${OrIf} ${FileExists} "$4\uninstall.exe"
+  ${OrIf} ${FileExists} "$4\uninst.exe"
+    ; keep $4
+  ${Else}
+    StrCpy $4 ""
+  ${EndIf}
+validate_install_location_done:
+FunctionEnd
+
+Function InstallLocationFromPathValue
   StrCpy $4 ""
-  StrCmp $5 "" install_location_from_uninstall_done
+  StrCmp $5 "" install_location_from_path_done
   StrCpy $4 $5
+  Call NormalizeInstallLocation
+  ${StrCase} $6 $4 "L"
+  ${StrLoc} $7 $6 "msiexec" ">"
+  StrCmp $7 "" install_location_not_msiexec 0
+    StrCpy $4 ""
+    Goto install_location_from_path_done
+install_location_not_msiexec:
+  ${StrLoc} $7 $6 ".exe" ">"
+  StrCmp $7 "" 0 install_location_has_exe
+    Call ValidateInstallLocation
+    Goto install_location_from_path_done
+install_location_has_exe:
+  IntOp $7 $7 + 4
+  StrCpy $4 $4 $7
   Call NormalizeInstallLocation
   ${GetParent} $4 $4
   Call NormalizeInstallLocation
-install_location_from_uninstall_done:
+  Call ValidateInstallLocation
+install_location_from_path_done:
 FunctionEnd
 
 Function FindPreviousInstallLocation
   StrCpy $4 ""
+  ${If} ${RunningX64}
+    SetRegView 64
+  ${EndIf}
   Call FindPreviousInstallLocationHKLM
   StrCmp $4 "" 0 find_previous_install_done
   Call FindPreviousInstallLocationHKCU
+  StrCmp $4 "" 0 find_previous_install_done
+  ${If} ${RunningX64}
+    SetRegView 32
+    Call FindPreviousInstallLocationHKLM
+    StrCmp $4 "" 0 find_previous_install_done
+    Call FindPreviousInstallLocationHKCU
+  ${EndIf}
 find_previous_install_done:
+  ${If} ${RunningX64}
+    SetRegView lastused
+  ${EndIf}
 FunctionEnd
 
 Function FindPreviousInstallLocationHKLM
@@ -955,9 +1009,13 @@ find_previous_install_hklm_loop:
   StrCmp $2 "${PRODUCTNAME}" 0 find_previous_install_hklm_loop
   ReadRegStr $4 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "InstallLocation"
   Call NormalizeInstallLocation
+  Call ValidateInstallLocation
+  StrCmp $4 "" 0 find_previous_install_hklm_done
+  ReadRegStr $5 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayIcon"
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 find_previous_install_hklm_done
   ReadRegStr $5 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
-  Call InstallLocationFromUninstallString
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 find_previous_install_hklm_done
   Goto find_previous_install_hklm_loop
 find_previous_install_hklm_done:
@@ -973,9 +1031,13 @@ find_previous_install_hkcu_loop:
   StrCmp $2 "${PRODUCTNAME}" 0 find_previous_install_hkcu_loop
   ReadRegStr $4 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "InstallLocation"
   Call NormalizeInstallLocation
+  Call ValidateInstallLocation
+  StrCmp $4 "" 0 find_previous_install_hkcu_done
+  ReadRegStr $5 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayIcon"
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 find_previous_install_hkcu_done
   ReadRegStr $5 HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
-  Call InstallLocationFromUninstallString
+  Call InstallLocationFromPathValue
   StrCmp $4 "" 0 find_previous_install_hkcu_done
   Goto find_previous_install_hkcu_loop
 find_previous_install_hkcu_done:

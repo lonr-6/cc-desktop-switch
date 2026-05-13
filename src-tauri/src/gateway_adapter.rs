@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::pin::Pin;
 
 use bytes::Bytes;
@@ -173,11 +174,12 @@ pub async fn forward_upstream_stream(
         .contains("text/event-stream")
     {
         let body = response.text().await.unwrap_or_default();
-        return Err(normalize_upstream_response_error(
+        return Err(normalize_upstream_response_error_for_route(
             status,
             Some(&content_type),
             &body,
             true,
+            route,
         ));
     }
 
@@ -187,7 +189,7 @@ pub async fn forward_upstream_stream(
             status,
             code: "provider.real_smoke_failed".to_owned(),
             message: "upstream provider returned an error status".to_owned(),
-            redacted_preview: preview(&body),
+            redacted_preview: preview_for_route(&body, route),
         });
     }
 
@@ -229,22 +231,24 @@ pub fn normalize_upstream_response(
         .to_ascii_lowercase()
         .contains("application/json")
     {
-        return Err(normalize_upstream_response_error(
+        return Err(normalize_upstream_response_error_for_route(
             status,
             Some(content_type),
             body,
             false,
+            route,
         ));
     }
 
-    let parsed = serde_json::from_str::<Value>(body)
-        .map_err(|_| normalize_upstream_response_error(status, Some(content_type), body, false))?;
+    let parsed = serde_json::from_str::<Value>(body).map_err(|_| {
+        normalize_upstream_response_error_for_route(status, Some(content_type), body, false, route)
+    })?;
     if !(200..300).contains(&status) {
         return Err(UpstreamError {
             status,
             code: "provider.real_smoke_failed".to_owned(),
             message: "upstream provider returned an error status".to_owned(),
-            redacted_preview: preview(body),
+            redacted_preview: preview_for_route(body, route),
         });
     }
 
@@ -264,10 +268,21 @@ struct SseStreamNormalizer {
     api_format: ApiFormat,
     upstream_model: String,
     route_id: String,
+    anthropic_buffer: String,
     openai_buffer: String,
     openai_message_started: bool,
-    openai_content_started: bool,
+    openai_content_block_index: Option<usize>,
+    openai_next_block_index: usize,
+    openai_tool_blocks: BTreeMap<u64, OpenAiStreamToolBlock>,
     openai_message_stopped: bool,
+}
+
+#[derive(Clone, Debug)]
+struct OpenAiStreamToolBlock {
+    index: usize,
+    id: Option<String>,
+    name: Option<String>,
+    started: bool,
 }
 
 impl SseStreamNormalizer {
@@ -276,20 +291,39 @@ impl SseStreamNormalizer {
             api_format,
             upstream_model,
             route_id,
+            anthropic_buffer: String::new(),
             openai_buffer: String::new(),
             openai_message_started: false,
-            openai_content_started: false,
+            openai_content_block_index: None,
+            openai_next_block_index: 0,
+            openai_tool_blocks: BTreeMap::new(),
             openai_message_stopped: false,
         }
     }
 
     fn normalize(&mut self, chunk: Bytes) -> Bytes {
         match self.api_format {
-            ApiFormat::Anthropic => {
-                normalize_anthropic_sse_chunk(chunk, &self.upstream_model, &self.route_id)
-            }
+            ApiFormat::Anthropic => self.normalize_anthropic_sse_chunk(chunk),
             ApiFormat::OpenAiChat => self.normalize_openai_chat_sse_chunk(chunk),
         }
+    }
+
+    fn normalize_anthropic_sse_chunk(&mut self, chunk: Bytes) -> Bytes {
+        self.anthropic_buffer
+            .push_str(&String::from_utf8_lossy(&chunk));
+        let mut output = String::new();
+
+        while let Some((index, separator_len)) = next_sse_frame_boundary(&self.anthropic_buffer) {
+            let frame = self.anthropic_buffer[..index].to_owned();
+            self.anthropic_buffer = self.anthropic_buffer[index + separator_len..].to_owned();
+            output.push_str(&normalize_anthropic_sse_frame(
+                &frame,
+                &self.upstream_model,
+                &self.route_id,
+            ));
+        }
+
+        Bytes::from(output)
     }
 
     fn normalize_openai_chat_sse_chunk(&mut self, chunk: Bytes) -> Bytes {
@@ -297,9 +331,9 @@ impl SseStreamNormalizer {
             .push_str(&String::from_utf8_lossy(&chunk));
         let mut output = String::new();
 
-        while let Some(index) = self.openai_buffer.find("\n\n") {
+        while let Some((index, separator_len)) = next_sse_frame_boundary(&self.openai_buffer) {
             let frame = self.openai_buffer[..index].to_owned();
-            self.openai_buffer = self.openai_buffer[index + 2..].to_owned();
+            self.openai_buffer = self.openai_buffer[index + separator_len..].to_owned();
             output.push_str(&self.normalize_openai_chat_sse_frame(&frame));
         }
 
@@ -329,10 +363,12 @@ impl SseStreamNormalizer {
         let mut events = String::new();
         if !self.openai_message_started {
             self.openai_message_started = true;
-            let message_id = value
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("ccds-openai-stream");
+            let message_id = self.sanitize_text(
+                value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("ccds-openai-stream"),
+            );
             events.push_str(&sse_event(
                 "message_start",
                 serde_json::json!({
@@ -358,25 +394,29 @@ impl SseStreamNormalizer {
             .and_then(Value::as_str)
         {
             if !content.is_empty() {
-                if !self.openai_content_started {
-                    self.openai_content_started = true;
-                    events.push_str(&sse_event(
-                        "content_block_start",
-                        serde_json::json!({
-                            "type": "content_block_start",
-                            "index": 0,
-                            "content_block": {"type": "text", "text": ""}
-                        }),
-                    ));
-                }
+                let index = self.ensure_openai_text_block(&mut events);
+                let content = self.sanitize_text(content);
                 events.push_str(&sse_event(
                     "content_block_delta",
                     serde_json::json!({
                         "type": "content_block_delta",
-                        "index": 0,
+                        "index": index,
                         "delta": {"type": "text_delta", "text": content}
                     }),
                 ));
+            }
+        }
+
+        if let Some(tool_calls) = choice
+            .get("delta")
+            .and_then(Value::as_object)
+            .and_then(|delta| delta.get("tool_calls"))
+            .and_then(Value::as_array)
+        {
+            for tool_call in tool_calls {
+                if let Some(tool_call) = tool_call.as_object() {
+                    self.handle_openai_tool_call_delta(tool_call, &mut events);
+                }
             }
         }
 
@@ -396,14 +436,25 @@ impl SseStreamNormalizer {
         self.openai_message_stopped = true;
 
         let mut events = String::new();
-        if self.openai_content_started {
+        if let Some(index) = self.openai_content_block_index {
             events.push_str(&sse_event(
                 "content_block_stop",
                 serde_json::json!({
                     "type": "content_block_stop",
-                    "index": 0
+                    "index": index
                 }),
             ));
+        }
+        for block in self.openai_tool_blocks.values() {
+            if block.started {
+                events.push_str(&sse_event(
+                    "content_block_stop",
+                    serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": block.index
+                    }),
+                ));
+            }
         }
         events.push_str(&sse_event(
             "message_delta",
@@ -424,20 +475,189 @@ impl SseStreamNormalizer {
         ));
         events
     }
+
+    fn ensure_openai_text_block(&mut self, events: &mut String) -> usize {
+        if let Some(index) = self.openai_content_block_index {
+            return index;
+        }
+        let index = self.openai_next_block_index;
+        self.openai_next_block_index += 1;
+        self.openai_content_block_index = Some(index);
+        events.push_str(&sse_event(
+            "content_block_start",
+            serde_json::json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""}
+            }),
+        ));
+        index
+    }
+
+    fn handle_openai_tool_call_delta(
+        &mut self,
+        tool_call: &Map<String, Value>,
+        events: &mut String,
+    ) {
+        let upstream_index = tool_call
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or(self.openai_tool_blocks.len() as u64);
+        if !self.openai_tool_blocks.contains_key(&upstream_index) {
+            let index = self.openai_next_block_index;
+            self.openai_next_block_index += 1;
+            self.openai_tool_blocks.insert(
+                upstream_index,
+                OpenAiStreamToolBlock {
+                    index,
+                    id: None,
+                    name: None,
+                    started: false,
+                },
+            );
+        }
+
+        let block = self
+            .openai_tool_blocks
+            .get_mut(&upstream_index)
+            .expect("tool block must exist");
+        if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+            if !id.trim().is_empty() {
+                block.id = Some(replace_upstream_model_text(
+                    id,
+                    &self.upstream_model,
+                    &self.route_id,
+                ));
+            }
+        }
+        if let Some(name) = tool_call
+            .get("function")
+            .and_then(Value::as_object)
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+        {
+            if !name.trim().is_empty() {
+                block.name = Some(replace_upstream_model_text(
+                    name,
+                    &self.upstream_model,
+                    &self.route_id,
+                ));
+            }
+        }
+        if !block.started {
+            block.started = true;
+            events.push_str(&sse_event(
+                "content_block_start",
+                serde_json::json!({
+                    "type": "content_block_start",
+                    "index": block.index,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": block.id.clone().unwrap_or_else(|| format!("toolu_{upstream_index}")),
+                        "name": block.name.clone().unwrap_or_else(|| "tool_call".to_owned()),
+                        "input": {}
+                    }
+                }),
+            ));
+        }
+        if let Some(arguments) = tool_call
+            .get("function")
+            .and_then(Value::as_object)
+            .and_then(|function| function.get("arguments"))
+            .and_then(Value::as_str)
+        {
+            if !arguments.is_empty() {
+                let arguments =
+                    replace_upstream_model_text(arguments, &self.upstream_model, &self.route_id);
+                events.push_str(&sse_event(
+                    "content_block_delta",
+                    serde_json::json!({
+                        "type": "content_block_delta",
+                        "index": block.index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments
+                        }
+                    }),
+                ));
+            }
+        }
+    }
+
+    fn sanitize_text(&self, text: &str) -> String {
+        replace_upstream_model_text(text, &self.upstream_model, &self.route_id)
+    }
 }
 
-fn normalize_anthropic_sse_chunk(chunk: Bytes, upstream_model: &str, route_id: &str) -> Bytes {
-    let text = String::from_utf8_lossy(&chunk);
-    let normalized = text
-        .replace(
-            &format!(r#""model":"{upstream_model}""#),
-            &format!(r#""model":"{route_id}""#),
-        )
-        .replace(
-            &format!(r#""model": "{upstream_model}""#),
-            &format!(r#""model": "{route_id}""#),
-        );
-    Bytes::from(normalized)
+fn normalize_anthropic_sse_frame(frame: &str, upstream_model: &str, route_id: &str) -> String {
+    let mut lines = Vec::new();
+    for line in frame.lines() {
+        if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim();
+            if data == "[DONE]" {
+                lines.push("data: [DONE]".to_owned());
+                continue;
+            }
+            if let Ok(mut value) = serde_json::from_str::<Value>(data) {
+                replace_model_values(&mut value, upstream_model, route_id);
+                lines.push(format!(
+                    "data: {}",
+                    serde_json::to_string(&value).unwrap_or_else(|_| {
+                        replace_upstream_model_text(data, upstream_model, route_id)
+                    })
+                ));
+            } else {
+                lines.push(format!(
+                    "data: {}",
+                    replace_upstream_model_text(data, upstream_model, route_id)
+                ));
+            }
+        } else {
+            lines.push(replace_upstream_model_text(line, upstream_model, route_id));
+        }
+    }
+    format!("{}\n\n", lines.join("\n"))
+}
+
+fn replace_model_values(value: &mut Value, upstream_model: &str, route_id: &str) {
+    match value {
+        Value::String(text)
+            if !upstream_model.is_empty() && text != route_id && text.contains(upstream_model) =>
+        {
+            *text = text.replace(upstream_model, route_id);
+        }
+        Value::String(_) => {}
+        Value::Array(items) => {
+            for item in items {
+                replace_model_values(item, upstream_model, route_id);
+            }
+        }
+        Value::Object(object) => {
+            for item in object.values_mut() {
+                replace_model_values(item, upstream_model, route_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn replace_upstream_model_text(text: &str, upstream_model: &str, route_id: &str) -> String {
+    if upstream_model.is_empty() {
+        text.to_owned()
+    } else {
+        text.replace(upstream_model, route_id)
+    }
+}
+
+fn next_sse_frame_boundary(buffer: &str) -> Option<(usize, usize)> {
+    let lf = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+    match (lf, crlf) {
+        (Some(lf), Some(crlf)) => Some(if lf.0 <= crlf.0 { lf } else { crlf }),
+        (Some(lf), None) => Some(lf),
+        (None, Some(crlf)) => Some(crlf),
+        (None, None) => None,
+    }
 }
 
 fn sse_data_payload(frame: &str) -> Option<&str> {
@@ -457,6 +677,7 @@ fn openai_stop_reason(reason: &str) -> &str {
     match reason {
         "length" => "max_tokens",
         "content_filter" => "stop_sequence",
+        "tool_calls" => "tool_use",
         _ => "end_turn",
     }
 }
@@ -476,6 +697,7 @@ fn normalize_anthropic_response(mut body: Value, route: &RouteResolution) -> Val
     if let Some(object) = body.as_object_mut() {
         object.insert("model".to_owned(), Value::String(route.route_id.clone()));
     }
+    replace_model_values(&mut body, &route.upstream_model, &route.route_id);
     body
 }
 
@@ -500,12 +722,15 @@ fn openai_chat_to_anthropic_response(
                 "OpenAI Chat response must contain choices",
             )
         })?;
-    let content = choice
+    let message = choice
         .get("message")
         .and_then(Value::as_object)
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+        .ok_or_else(|| {
+            adapter_error(
+                "provider.api_format_mismatch",
+                "OpenAI Chat response choice must contain a message",
+            )
+        })?;
     let stop_reason = choice
         .get("finish_reason")
         .and_then(Value::as_str)
@@ -517,19 +742,21 @@ fn openai_chat_to_anthropic_response(
         })
     });
 
-    Ok(serde_json::json!({
+    let mut response = serde_json::json!({
         "id": object.get("id").and_then(Value::as_str).unwrap_or("ccds-openai-chat"),
         "type": "message",
         "role": "assistant",
         "model": route.route_id.clone(),
-        "content": [{"type": "text", "text": content}],
-        "stop_reason": stop_reason,
+        "content": openai_message_to_anthropic_content(message),
+        "stop_reason": openai_stop_reason(stop_reason),
         "stop_sequence": null,
         "usage": {
             "input_tokens": usage.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(0),
             "output_tokens": usage.get("completion_tokens").and_then(Value::as_u64).unwrap_or(0)
         }
-    }))
+    });
+    replace_model_values(&mut response, &route.upstream_model, &route.route_id);
+    Ok(response)
 }
 
 pub fn normalize_upstream_response_error(
@@ -537,6 +764,32 @@ pub fn normalize_upstream_response_error(
     content_type: Option<&str>,
     body: &str,
     expected_stream: bool,
+) -> UpstreamError {
+    normalize_upstream_response_error_inner(status, content_type, body, expected_stream, None)
+}
+
+fn normalize_upstream_response_error_for_route(
+    status: u16,
+    content_type: Option<&str>,
+    body: &str,
+    expected_stream: bool,
+    route: &RouteResolution,
+) -> UpstreamError {
+    normalize_upstream_response_error_inner(
+        status,
+        content_type,
+        body,
+        expected_stream,
+        Some(route),
+    )
+}
+
+fn normalize_upstream_response_error_inner(
+    status: u16,
+    content_type: Option<&str>,
+    body: &str,
+    expected_stream: bool,
+    route: Option<&RouteResolution>,
 ) -> UpstreamError {
     let content_type = content_type.unwrap_or("").to_ascii_lowercase();
     let is_json = content_type.contains("application/json");
@@ -553,7 +806,7 @@ pub fn normalize_upstream_response_error(
         status,
         code: code.to_owned(),
         message: "upstream provider returned an unsupported response".to_owned(),
-        redacted_preview: preview(body),
+        redacted_preview: preview_with_optional_route(body, route),
     }
 }
 
@@ -613,8 +866,10 @@ fn build_openai_chat_request(
             .get("role")
             .and_then(Value::as_str)
             .unwrap_or("user");
-        let content = openai_content(message_object.get("content").unwrap_or(&Value::Null));
-        messages.push(openai_message(role, &content));
+        messages.extend(openai_messages_from_anthropic_message(
+            role,
+            message_object,
+        )?);
     }
 
     request.insert("messages".to_owned(), Value::Array(messages));
@@ -622,6 +877,15 @@ fn build_openai_chat_request(
     copy_if_present(&object, &mut request, "temperature");
     copy_if_present(&object, &mut request, "top_p");
     copy_if_present(&object, &mut request, "stream");
+    if let Some(tools) = object.get("tools") {
+        request.insert("tools".to_owned(), openai_tools_from_anthropic(tools)?);
+    }
+    if let Some(tool_choice) = object.get("tool_choice") {
+        request.insert(
+            "tool_choice".to_owned(),
+            openai_tool_choice_from_anthropic(tool_choice),
+        );
+    }
 
     Ok(UpstreamRequest {
         method: "POST".to_owned(),
@@ -679,6 +943,226 @@ fn openai_message(role: &str, content: &str) -> Value {
     })
 }
 
+fn openai_messages_from_anthropic_message(
+    role: &str,
+    message_object: &Map<String, Value>,
+) -> Result<Vec<Value>, UpstreamError> {
+    let content = message_object.get("content").unwrap_or(&Value::Null);
+    if role == "assistant" {
+        let (text, tool_calls) = openai_assistant_content(content)?;
+        let mut message = Map::new();
+        message.insert("role".to_owned(), Value::String("assistant".to_owned()));
+        message.insert(
+            "content".to_owned(),
+            if text.trim().is_empty() {
+                Value::Null
+            } else {
+                Value::String(text)
+            },
+        );
+        if !tool_calls.is_empty() {
+            message.insert("tool_calls".to_owned(), Value::Array(tool_calls));
+        }
+        return Ok(vec![Value::Object(message)]);
+    }
+
+    if role == "user" {
+        return Ok(openai_user_messages(content));
+    }
+
+    Ok(vec![openai_message(role, &openai_content(content))])
+}
+
+fn openai_assistant_content(value: &Value) -> Result<(String, Vec<Value>), UpstreamError> {
+    let mut text = Vec::new();
+    let mut tool_calls = Vec::new();
+    match value {
+        Value::Array(parts) => {
+            for part in parts {
+                let Some(part) = part.as_object() else {
+                    if let Some(part_text) = part.as_str() {
+                        text.push(part_text.to_owned());
+                    }
+                    continue;
+                };
+                match part.get("type").and_then(Value::as_str) {
+                    Some("tool_use") => {
+                        let id = part
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or("toolu_ccds");
+                        let name = part
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                            .ok_or_else(|| {
+                                adapter_error(
+                                    "provider.api_format_mismatch",
+                                    "tool_use content requires a tool name",
+                                )
+                            })?;
+                        let input = part
+                            .get("input")
+                            .cloned()
+                            .unwrap_or_else(|| Value::Object(Map::new()));
+                        tool_calls.push(serde_json::json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_owned())
+                            }
+                        }));
+                    }
+                    _ => {
+                        if let Some(part_text) = part.get("text").and_then(Value::as_str) {
+                            text.push(part_text.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        _ => text.push(openai_content(value)),
+    }
+    Ok((text.join("\n"), tool_calls))
+}
+
+fn openai_user_messages(value: &Value) -> Vec<Value> {
+    let mut messages = Vec::new();
+    match value {
+        Value::Array(parts) => {
+            let mut text = Vec::new();
+            for part in parts {
+                let Some(part_object) = part.as_object() else {
+                    if let Some(part_text) = part.as_str() {
+                        text.push(part_text.to_owned());
+                    }
+                    continue;
+                };
+                if part_object.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    if !text.is_empty() {
+                        messages.push(openai_message("user", &text.join("\n")));
+                        text.clear();
+                    }
+                    let tool_call_id = part_object
+                        .get("tool_use_id")
+                        .or_else(|| part_object.get("id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("toolu_ccds");
+                    messages.push(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": openai_content(part_object.get("content").unwrap_or(&Value::Null))
+                    }));
+                } else if let Some(part_text) = part_object.get("text").and_then(Value::as_str) {
+                    text.push(part_text.to_owned());
+                }
+            }
+            if !text.is_empty() || messages.is_empty() {
+                messages.push(openai_message("user", &text.join("\n")));
+            }
+        }
+        _ => messages.push(openai_message("user", &openai_content(value))),
+    }
+    messages
+}
+
+fn openai_tools_from_anthropic(value: &Value) -> Result<Value, UpstreamError> {
+    let tools = value
+        .as_array()
+        .ok_or_else(|| adapter_error("provider.api_format_mismatch", "tools must be an array"))?;
+    Ok(Value::Array(
+        tools
+            .iter()
+            .filter_map(|tool| {
+                let object = tool.as_object()?;
+                if object.get("type").and_then(Value::as_str) == Some("function") {
+                    return Some(Value::Object(object.clone()));
+                }
+                let name = object.get("name")?.as_str()?;
+                let mut function = Map::new();
+                function.insert("name".to_owned(), Value::String(name.to_owned()));
+                if let Some(description) = object.get("description").and_then(Value::as_str) {
+                    function.insert(
+                        "description".to_owned(),
+                        Value::String(description.to_owned()),
+                    );
+                }
+                function.insert(
+                    "parameters".to_owned(),
+                    object
+                        .get("input_schema")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({"type": "object"})),
+                );
+                Some(serde_json::json!({
+                    "type": "function",
+                    "function": Value::Object(function)
+                }))
+            })
+            .collect(),
+    ))
+}
+
+fn openai_tool_choice_from_anthropic(value: &Value) -> Value {
+    if let Some(choice) = value.as_str() {
+        return Value::String(choice.to_owned());
+    }
+    let Some(object) = value.as_object() else {
+        return value.clone();
+    };
+    match object.get("type").and_then(Value::as_str).unwrap_or("auto") {
+        "tool" => object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {"name": name}
+                })
+            })
+            .unwrap_or_else(|| Value::String("auto".to_owned())),
+        "any" => Value::String("required".to_owned()),
+        "none" => Value::String("none".to_owned()),
+        _ => Value::String("auto".to_owned()),
+    }
+}
+
+fn openai_message_to_anthropic_content(message: &Map<String, Value>) -> Vec<Value> {
+    let mut content = Vec::new();
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        if !text.is_empty() {
+            content.push(serde_json::json!({"type": "text", "text": text}));
+        }
+    }
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for tool_call in tool_calls {
+            let Some(tool_call) = tool_call.as_object() else {
+                continue;
+            };
+            let function = tool_call
+                .get("function")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let arguments = function
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}");
+            let input = serde_json::from_str::<Value>(arguments)
+                .unwrap_or_else(|_| serde_json::json!({"arguments": arguments}));
+            content.push(serde_json::json!({
+                "type": "tool_use",
+                "id": tool_call.get("id").and_then(Value::as_str).unwrap_or("toolu_ccds"),
+                "name": function.get("name").and_then(Value::as_str).unwrap_or("tool_call"),
+                "input": input
+            }));
+        }
+    }
+    content
+}
+
 fn openai_content(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -723,6 +1207,22 @@ fn preview(body: &str) -> String {
         .collect()
 }
 
+fn preview_for_route(body: &str, route: &RouteResolution) -> String {
+    preview_with_optional_route(body, Some(route))
+}
+
+fn preview_with_optional_route(body: &str, route: Option<&RouteResolution>) -> String {
+    let mut preview_source = redact_diagnostics_text(body);
+    if let Some(route) = route {
+        preview_source =
+            replace_upstream_model_text(&preview_source, &route.upstream_model, &route.route_id);
+    }
+    preview_source
+        .chars()
+        .take(MAX_ERROR_PREVIEW_CHARS)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -758,6 +1258,16 @@ mod tests {
             route_id: "claude-deepseek-v4-pro".to_owned(),
             provider_id: "provider-deepseek".to_owned(),
             upstream_model: "deepseek-v4-pro".to_owned(),
+            supports_1m: true,
+            supports_max: false,
+        }
+    }
+
+    fn disjoint_route() -> RouteResolution {
+        RouteResolution {
+            route_id: "claude-safe-route".to_owned(),
+            provider_id: "provider-deepseek".to_owned(),
+            upstream_model: "raw-upstream-model".to_owned(),
             supports_1m: true,
             supports_max: false,
         }
@@ -853,6 +1363,62 @@ mod tests {
     }
 
     #[test]
+    fn openai_chat_conversion_preserves_tools_and_tool_results() {
+        let request = build_messages_upstream_request(
+            &provider(ApiFormat::OpenAiChat),
+            &route(),
+            serde_json::json!({
+                "model": "claude-deepseek-v4-pro",
+                "tools": [{
+                    "name": "search_docs",
+                    "description": "Search documents",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}}
+                    }
+                }],
+                "tool_choice": {"type": "tool", "name": "search_docs"},
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "I will search."},
+                            {"type": "tool_use", "id": "toolu_1", "name": "search_docs", "input": {"query": "ccds"}}
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "toolu_1", "content": [{"type": "text", "text": "found"}]},
+                            {"type": "text", "text": "summarize"}
+                        ]
+                    }
+                ],
+                "max_tokens": 256
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(request.body["tools"][0]["type"], "function");
+        assert_eq!(
+            request.body["tools"][0]["function"]["parameters"]["properties"]["query"]["type"],
+            "string"
+        );
+        assert_eq!(
+            request.body["tool_choice"]["function"]["name"],
+            "search_docs"
+        );
+        assert_eq!(request.body["messages"][0]["role"], "assistant");
+        assert_eq!(
+            request.body["messages"][0]["tool_calls"][0]["function"]["name"],
+            "search_docs"
+        );
+        assert_eq!(request.body["messages"][1]["role"], "tool");
+        assert_eq!(request.body["messages"][1]["tool_call_id"], "toolu_1");
+        assert_eq!(request.body["messages"][2]["content"], "summarize");
+    }
+
+    #[test]
     fn openai_chat_conversion_rejects_invalid_message_shape() {
         let error = build_messages_upstream_request(
             &provider(ApiFormat::OpenAiChat),
@@ -908,6 +1474,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forward_anthropic_passthrough_replaces_raw_model_in_success_payload_values() {
+        let route = disjoint_route();
+        let base_url = spawn_json_upstream(
+            "/v1/messages",
+            serde_json::json!({
+                "id": "msg_raw-upstream-model",
+                "type": "message",
+                "role": "assistant",
+                "model": "raw-upstream-model",
+                "content": [{"type": "text", "text": "answer from raw-upstream-model"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1}
+            }),
+        )
+        .await;
+        let upstream_request = build_messages_upstream_request(
+            &provider_with_base_url(ApiFormat::Anthropic, base_url),
+            &route,
+            serde_json::json!({
+                "model": "claude-safe-route",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 32
+            }),
+        )
+        .unwrap();
+
+        let response = forward_upstream_request(&reqwest::Client::new(), upstream_request, &route)
+            .await
+            .unwrap();
+        let serialized = serde_json::to_string(&response.body).unwrap();
+
+        assert_eq!(response.status, 200);
+        assert!(!serialized.contains("raw-upstream-model"));
+        assert!(serialized.contains("claude-safe-route"));
+    }
+
+    #[test]
+    fn openai_chat_response_tool_calls_convert_to_anthropic_tool_use() {
+        let response = openai_chat_to_anthropic_response(
+            serde_json::json!({
+                "id": "chatcmpl-tools",
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "search_docs",
+                                "arguments": "{\"query\":\"ccds\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2}
+            }),
+            &route(),
+        )
+        .unwrap();
+
+        assert_eq!(response["model"], "claude-deepseek-v4-pro");
+        assert_eq!(response["stop_reason"], "tool_use");
+        assert_eq!(response["content"][0]["type"], "tool_use");
+        assert_eq!(response["content"][0]["name"], "search_docs");
+        assert_eq!(response["content"][0]["input"]["query"], "ccds");
+        assert!(!serde_json::to_string(&response)
+            .unwrap()
+            .contains(r#""model":"deepseek-v4-pro""#));
+    }
+
+    #[test]
+    fn openai_chat_response_replaces_raw_model_in_success_payload_values() {
+        let route = disjoint_route();
+        let response = openai_chat_to_anthropic_response(
+            serde_json::json!({
+                "id": "chatcmpl_raw-upstream-model",
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "answer from raw-upstream-model",
+                        "tool_calls": [{
+                            "id": "call_raw-upstream-model",
+                            "type": "function",
+                            "function": {
+                                "name": "lookup_raw-upstream-model",
+                                "arguments": "{\"query\":\"raw-upstream-model\"}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2}
+            }),
+            &route,
+        )
+        .unwrap();
+        let serialized = serde_json::to_string(&response).unwrap();
+
+        assert!(!serialized.contains("raw-upstream-model"));
+        assert!(serialized.contains("claude-safe-route"));
+        assert_eq!(response["model"], "claude-safe-route");
+    }
+
+    #[tokio::test]
     async fn forward_invalid_html_response_returns_redacted_error() {
         async fn handler() -> (
             axum::http::StatusCode,
@@ -917,7 +1589,7 @@ mod tests {
             (
                 axum::http::StatusCode::OK,
                 [("content-type", "text/html")],
-                "<html>sk-upstream-secret</html>".to_owned(),
+                "<html>sk-upstream-secret raw-upstream-model</html>".to_owned(),
             )
         }
 
@@ -929,22 +1601,94 @@ mod tests {
         });
         let upstream_request = build_messages_upstream_request(
             &provider_with_base_url(ApiFormat::Anthropic, format!("http://{addr}")),
-            &route(),
+            &disjoint_route(),
             serde_json::json!({
-                "model": "claude-deepseek-v4-pro",
+                "model": "claude-safe-route",
                 "messages": [{"role": "user", "content": "hello"}],
                 "max_tokens": 32
             }),
         )
         .unwrap();
 
-        let error = forward_upstream_request(&reqwest::Client::new(), upstream_request, &route())
-            .await
-            .unwrap_err();
+        let error =
+            forward_upstream_request(&reqwest::Client::new(), upstream_request, &disjoint_route())
+                .await
+                .unwrap_err();
 
         assert_eq!(error.code, "gateway.invalid_upstream_response");
         assert!(!error.redacted_preview.contains("sk-upstream-secret"));
+        assert!(!error.redacted_preview.contains("raw-upstream-model"));
+        assert!(error.redacted_preview.contains("claude-safe-route"));
         assert!(error.redacted_preview.contains("[REDACTED:key]"));
+    }
+
+    #[test]
+    fn anthropic_sse_normalizer_handles_split_frames_and_model_whitespace() {
+        let mut normalizer = SseStreamNormalizer::new(
+            ApiFormat::Anthropic,
+            "raw-upstream-model".to_owned(),
+            "claude-safe-route".to_owned(),
+        );
+
+        let first = normalizer.normalize(Bytes::from_static(
+            br#"event: message_start
+data: {"type":"message_start","message":{"model" : "raw-up"#,
+        ));
+        let second = normalizer.normalize(Bytes::from_static(
+            br#"stream-model","nested":["raw-upstream-model"]}}
+
+"#,
+        ));
+        let third = normalizer.normalize(Bytes::from_static(
+            br#"event: error
+data: {"type":"error","error":{"message":"model raw-upstream-model overloaded"}}
+
+"#,
+        ));
+        let body = format!(
+            "{}{}{}",
+            String::from_utf8(first.to_vec()).unwrap(),
+            String::from_utf8(second.to_vec()).unwrap(),
+            String::from_utf8(third.to_vec()).unwrap()
+        );
+
+        assert!(body.contains("claude-safe-route"));
+        assert!(!body.contains("raw-upstream-model"));
+    }
+
+    #[test]
+    fn sse_normalizer_accepts_crlf_frame_boundaries() {
+        let mut anthropic = SseStreamNormalizer::new(
+            ApiFormat::Anthropic,
+            "raw-upstream-model".to_owned(),
+            "claude-safe-route".to_owned(),
+        );
+        let anthropic_body = String::from_utf8(
+            anthropic
+                .normalize(Bytes::from_static(
+                    b"event: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"raw-upstream-model\"}}\r\n\r\n",
+                ))
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(anthropic_body.contains("claude-safe-route"));
+        assert!(!anthropic_body.contains("raw-upstream-model"));
+
+        let mut openai = SseStreamNormalizer::new(
+            ApiFormat::OpenAiChat,
+            "raw-upstream-model".to_owned(),
+            "claude-safe-route".to_owned(),
+        );
+        let openai_body = String::from_utf8(
+            openai
+                .normalize(Bytes::from_static(
+                    b"data: {\"id\":\"chatcmpl_raw-upstream-model\",\"choices\":[{\"delta\":{\"content\":\"raw-upstream-model\"},\"finish_reason\":null}]}\r\n\r\n",
+                ))
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(openai_body.contains("claude-safe-route"));
+        assert!(!openai_body.contains("raw-upstream-model"));
     }
 
     #[tokio::test]
@@ -1042,12 +1786,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forward_openai_stream_converts_tool_call_deltas() {
+        async fn handler() -> (StatusCode, [(&'static str, &'static str); 1], &'static str) {
+            (
+                StatusCode::OK,
+                [("content-type", "text/event-stream")],
+                "data: {\"id\":\"chatcmpl-tools\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"search_docs\",\"arguments\":\"{\\\"query\\\":\"}}]},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"ccds\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+            )
+        }
+
+        let app = Router::new().route("/v1/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let upstream_request = build_messages_upstream_request(
+            &provider_with_base_url(ApiFormat::OpenAiChat, format!("http://{addr}")),
+            &route(),
+            serde_json::json!({
+                "model": "claude-deepseek-v4-pro",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 32,
+                "stream": true
+            }),
+        )
+        .unwrap();
+
+        let mut response =
+            forward_upstream_stream(&reqwest::Client::new(), upstream_request, &route())
+                .await
+                .unwrap();
+        let mut body = Vec::new();
+        while let Some(chunk) = response.body.next().await {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        let body = String::from_utf8(body).unwrap();
+
+        assert!(body.contains(r#""type":"tool_use""#));
+        assert!(body.contains(r#""name":"search_docs""#));
+        assert!(body.contains(r#""type":"input_json_delta""#));
+        assert!(body.contains(r#""stop_reason":"tool_use""#));
+        assert!(!body.contains(r#""model":"deepseek-v4-pro""#));
+    }
+
+    #[tokio::test]
+    async fn forward_openai_stream_replaces_raw_model_in_success_payload_values() {
+        async fn handler() -> (StatusCode, [(&'static str, &'static str); 1], &'static str) {
+            (
+                StatusCode::OK,
+                [("content-type", "text/event-stream")],
+                "data: {\"id\":\"chatcmpl_raw-upstream-model\",\"choices\":[{\"delta\":{\"content\":\"answer from raw-upstream-model\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_raw-upstream-model\",\"type\":\"function\",\"function\":{\"name\":\"lookup_raw-upstream-model\",\"arguments\":\"{\\\"query\\\":\\\"raw-upstream-model\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+            )
+        }
+
+        let route = disjoint_route();
+        let app = Router::new().route("/v1/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let upstream_request = build_messages_upstream_request(
+            &provider_with_base_url(ApiFormat::OpenAiChat, format!("http://{addr}")),
+            &route,
+            serde_json::json!({
+                "model": "claude-safe-route",
+                "messages": [{"role": "user", "content": "hello"}],
+                "max_tokens": 32,
+                "stream": true
+            }),
+        )
+        .unwrap();
+
+        let mut response =
+            forward_upstream_stream(&reqwest::Client::new(), upstream_request, &route)
+                .await
+                .unwrap();
+        let mut body = Vec::new();
+        while let Some(chunk) = response.body.next().await {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        let body = String::from_utf8(body).unwrap();
+
+        assert!(!body.contains("raw-upstream-model"));
+        assert!(body.contains("claude-safe-route"));
+        assert!(body.contains(r#""type":"tool_use""#));
+    }
+
+    #[tokio::test]
     async fn forward_stream_rejects_non_event_stream_runtime_response() {
         async fn handler() -> (StatusCode, [(&'static str, &'static str); 1], &'static str) {
             (
                 StatusCode::OK,
                 [("content-type", "application/json")],
-                r#"{"error":"not-stream","token":"sk-stream-secret"}"#,
+                r#"{"error":"not-stream","model":"raw-upstream-model","token":"sk-stream-secret"}"#,
             )
         }
 
@@ -1059,9 +1892,9 @@ mod tests {
         });
         let upstream_request = build_messages_upstream_request(
             &provider_with_base_url(ApiFormat::Anthropic, format!("http://{addr}")),
-            &route(),
+            &disjoint_route(),
             serde_json::json!({
-                "model": "claude-deepseek-v4-pro",
+                "model": "claude-safe-route",
                 "messages": [{"role": "user", "content": "hello"}],
                 "max_tokens": 32,
                 "stream": true
@@ -1072,7 +1905,7 @@ mod tests {
         let error = match forward_upstream_stream(
             &reqwest::Client::new(),
             upstream_request,
-            &route(),
+            &disjoint_route(),
         )
         .await
         {
@@ -1082,6 +1915,8 @@ mod tests {
 
         assert_eq!(error.code, "gateway.invalid_stream_content_type");
         assert!(!error.redacted_preview.contains("sk-stream-secret"));
+        assert!(!error.redacted_preview.contains("raw-upstream-model"));
+        assert!(error.redacted_preview.contains("claude-safe-route"));
         assert!(error.redacted_preview.contains("[REDACTED:key]"));
     }
 
@@ -1106,6 +1941,20 @@ mod tests {
             "gateway.invalid_upstream_response"
         );
         assert!(payload.error.redacted_preview.contains("[REDACTED:key]"));
+    }
+
+    #[test]
+    fn route_preview_replaces_raw_model_before_truncation() {
+        let body = format!(
+            "{}{}",
+            "x".repeat(MAX_ERROR_PREVIEW_CHARS - "claude-safe-route".len()),
+            "raw-upstream-model"
+        );
+        let preview = preview_for_route(&body, &disjoint_route());
+
+        assert_eq!(preview.chars().count(), MAX_ERROR_PREVIEW_CHARS);
+        assert!(!preview.contains("raw-upstream"));
+        assert!(preview.ends_with("claude-safe-route"));
     }
 
     #[test]

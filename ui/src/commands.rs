@@ -1,13 +1,56 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
-    async fn invoke_without_args(cmd: &str) -> JsValue;
+    #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
+    async fn raw_invoke_without_args(cmd: &str) -> Result<JsValue, JsValue>;
 
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
-    async fn invoke_with_args(cmd: &str, args: JsValue) -> JsValue;
+    #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
+    async fn raw_invoke_with_args(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+}
+
+async fn invoke_without_args<T>(cmd: &str) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let value = raw_invoke_without_args(cmd)
+        .await
+        .map_err(command_error_to_string)?;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+async fn invoke_with_args<T>(cmd: &str, args: JsValue) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let value = raw_invoke_with_args(cmd, args)
+        .await
+        .map_err(command_error_to_string)?;
+    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+}
+
+fn command_error_to_string(error: JsValue) -> String {
+    if let Some(text) = error.as_string() {
+        return text;
+    }
+    match serde_wasm_bindgen::from_value::<serde_json::Value>(error.clone()) {
+        Ok(value) => format_command_error_value(&value),
+        Err(_) => format!("{error:?}"),
+    }
+}
+
+fn format_command_error_value(value: &serde_json::Value) -> String {
+    let code = value.get("code").and_then(serde_json::Value::as_str);
+    let message = value.get("message").and_then(serde_json::Value::as_str);
+    match (code, message) {
+        (Some(code), Some(message)) if !message.starts_with(code) => {
+            format!("{code}: {message}")
+        }
+        (_, Some(message)) => message.to_owned(),
+        (Some(code), None) => code.to_owned(),
+        _ => value.to_string(),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -144,6 +187,47 @@ pub struct ProxyStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAssetInfo {
+    pub name: String,
+    pub url: String,
+    pub sha256: Option<String>,
+    pub signature: Option<String>,
+    pub size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResult {
+    pub current_version: String,
+    pub latest_version: String,
+    pub available: bool,
+    pub platform: String,
+    pub asset: Option<UpdateAssetInfo>,
+    pub notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDownloadResult {
+    pub check: UpdateCheckResult,
+    pub asset_path: String,
+    pub staging_dir: String,
+    pub bytes: u64,
+    pub sha256_verified: bool,
+    pub signature_verified: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInstallResult {
+    pub launched: bool,
+    pub installer_path: String,
+    pub installer_type: String,
+    pub launch_method: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GatewayMode {
     LocalGateway,
@@ -157,6 +241,32 @@ pub struct DesktopConfigProbe {
     pub managed_detected: bool,
     pub managed_evidence: Vec<ManagedConfigEvidence>,
     pub issue_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopClearResult {
+    pub success: bool,
+    pub config_id: String,
+    pub local_config_library: String,
+    pub config_path: String,
+    pub meta_path: String,
+    pub removed_config: bool,
+    pub cleared_active_config: bool,
+    pub preserved_meta: bool,
+    pub readback_cleared: bool,
+    pub issue_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopRestartResult {
+    pub platform: DesktopPlatform,
+    pub stopped_processes: u32,
+    pub forced_processes: u32,
+    pub launched: bool,
+    pub executable: Option<String>,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -201,6 +311,7 @@ pub struct ApplyDryRun {
     pub success: bool,
     pub expected_base_url: String,
     pub expected_models: Vec<DesktopModel>,
+    pub plan_error: Option<String>,
     pub steps: Vec<ApplyStep>,
 }
 
@@ -298,6 +409,8 @@ pub struct SmokeCheckResult {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsLogEntry {
+    #[serde(default)]
+    pub id: u64,
     pub timestamp_unix_ms: u128,
     pub level: String,
     pub code: String,
@@ -307,44 +420,31 @@ pub struct DiagnosticsLogEntry {
 pub async fn save_provider(request: ProviderDraft) -> Result<ProviderSummary, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "request": request }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("save_provider", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("save_provider", args).await
 }
 
 pub async fn list_providers() -> Result<Vec<ProviderSummary>, String> {
-    let value = invoke_without_args("list_providers").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("list_providers").await
 }
 
 pub async fn set_active_provider(provider_id: String) -> Result<bool, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "providerId": provider_id }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("set_active_provider", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("set_active_provider", args).await
 }
 
 pub async fn delete_provider(provider_id: String) -> Result<bool, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "providerId": provider_id }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("delete_provider", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
-}
-
-pub async fn reorder_providers(provider_ids: Vec<String>) -> Result<bool, String> {
-    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "providerIds": provider_ids }))
-        .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("reorder_providers", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("delete_provider", args).await
 }
 
 pub async fn export_providers() -> Result<serde_json::Value, String> {
-    let value = invoke_without_args("export_providers").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("export_providers").await
 }
 
 pub async fn save_provider_export_as() -> Result<Option<String>, String> {
-    let value = invoke_without_args("save_provider_export_as").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("save_provider_export_as").await
 }
 
 pub async fn preview_provider_import(
@@ -360,8 +460,7 @@ pub async fn preview_provider_import(
         }
     }))
     .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("preview_provider_import", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("preview_provider_import", args).await
 }
 
 pub async fn import_providers(
@@ -377,13 +476,11 @@ pub async fn import_providers(
         }
     }))
     .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("import_providers", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("import_providers", args).await
 }
 
 pub async fn list_provider_presets() -> Result<Vec<ProviderPreset>, String> {
-    let value = invoke_without_args("list_provider_presets").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("list_provider_presets").await
 }
 
 pub async fn preview_provider_preset_import(
@@ -398,8 +495,7 @@ pub async fn preview_provider_preset_import(
         }
     }))
     .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("preview_provider_preset_import", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("preview_provider_preset_import", args).await
 }
 
 pub async fn import_provider_preset(
@@ -415,15 +511,13 @@ pub async fn import_provider_preset(
         }
     }))
     .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("import_provider_preset", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("import_provider_preset", args).await
 }
 
 pub async fn list_model_mappings(provider_id: String) -> Result<Vec<ModelMappingSummary>, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "providerId": provider_id }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("list_model_mappings", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("list_model_mappings", args).await
 }
 
 pub async fn update_model_mappings(
@@ -437,142 +531,139 @@ pub async fn update_model_mappings(
         }
     }))
     .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("update_model_mappings", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("update_model_mappings", args).await
 }
 
 pub async fn list_config_backups() -> Result<Vec<ConfigBackupSummary>, String> {
-    let value = invoke_without_args("list_config_backups").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("list_config_backups").await
 }
 
 pub async fn read_config_backup(file_name: String) -> Result<String, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "fileName": file_name }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("read_config_backup", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("read_config_backup", args).await
 }
 
 pub async fn create_config_backup() -> Result<Option<ConfigBackupSummary>, String> {
-    let value = invoke_without_args("create_config_backup").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("create_config_backup").await
 }
 
 pub async fn get_config_snapshot() -> Result<ConfigSnapshot, String> {
-    let value = invoke_without_args("get_config_snapshot").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("get_config_snapshot").await
 }
 
 pub async fn get_settings() -> Result<ConfigSettings, String> {
-    let value = invoke_without_args("get_settings").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("get_settings").await
 }
 
 pub async fn update_settings(settings: ConfigSettings) -> Result<ConfigSettings, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "settings": settings }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("update_settings", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("update_settings", args).await
 }
 
 pub async fn health() -> Result<ReadinessSnapshot, String> {
-    let value = invoke_without_args("health").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("health").await
 }
 
 pub async fn get_proxy_status() -> Result<ProxyStatus, String> {
-    let value = invoke_without_args("get_proxy_status").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("get_proxy_status").await
 }
 
 pub async fn start_gateway() -> Result<GatewayHealth, String> {
-    let value = invoke_without_args("start_gateway").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("start_gateway").await
 }
 
 pub async fn stop_gateway() -> Result<GatewayHealth, String> {
-    let value = invoke_without_args("stop_gateway").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("stop_gateway").await
 }
 
 pub async fn get_proxy_logs() -> Result<Vec<DiagnosticsLogEntry>, String> {
-    let value = invoke_without_args("get_proxy_logs").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("get_proxy_logs").await
 }
 
 pub async fn clear_proxy_logs() -> Result<bool, String> {
-    let value = invoke_without_args("clear_proxy_logs").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("clear_proxy_logs").await
 }
 
 pub async fn desktop_config_probe() -> Result<DesktopConfigProbe, String> {
-    let value = invoke_without_args("desktop_config_probe").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("desktop_config_probe").await
+}
+
+pub async fn clear_desktop_config() -> Result<DesktopClearResult, String> {
+    invoke_without_args("clear_desktop_config").await
+}
+
+pub async fn restart_claude_desktop() -> Result<DesktopRestartResult, String> {
+    invoke_without_args("restart_claude_desktop").await
 }
 
 pub async fn apply_dry_run() -> Result<ApplyDryRun, String> {
-    let value = invoke_without_args("apply_dry_run").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("apply_dry_run").await
 }
 
 pub async fn apply_detected_local_config() -> Result<DesktopApplyResult, String> {
-    let value = invoke_without_args("apply_detected_local_config").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("apply_detected_local_config").await
 }
 
 pub async fn copy_diagnostics_summary() -> Result<String, String> {
-    let value = invoke_without_args("copy_diagnostics_summary").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("copy_diagnostics_summary").await
 }
 
 pub async fn copy_diagnostics_summary_to_clipboard() -> Result<String, String> {
-    let value = invoke_without_args("copy_diagnostics_summary_to_clipboard").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("copy_diagnostics_summary_to_clipboard").await
 }
 
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "text": text }))
         .map_err(|error| error.to_string())?;
-    let value = invoke_with_args("copy_text_to_clipboard_command", args).await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_with_args("copy_text_to_clipboard_command", args).await
 }
 
 pub async fn export_diagnostics_package() -> Result<serde_json::Value, String> {
-    let value = invoke_without_args("export_diagnostics_package").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("export_diagnostics_package").await
 }
 
 pub async fn save_diagnostics_package() -> Result<String, String> {
-    let value = invoke_without_args("save_diagnostics_package").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("save_diagnostics_package").await
 }
 
 pub async fn save_diagnostics_package_as() -> Result<Option<String>, String> {
-    let value = invoke_without_args("save_diagnostics_package_as").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("save_diagnostics_package_as").await
 }
 
 pub async fn diagnostics_issue_draft() -> Result<DiagnosticsIssueDraft, String> {
-    let value = invoke_without_args("diagnostics_issue_draft").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("diagnostics_issue_draft").await
 }
 
 pub async fn open_diagnostics_issue() -> Result<DiagnosticsIssueDraft, String> {
-    let value = invoke_without_args("open_diagnostics_issue").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("open_diagnostics_issue").await
 }
 
 pub async fn provider_static_smoke() -> Result<SmokeCheckResult, String> {
-    let value = invoke_without_args("provider_static_smoke").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("provider_static_smoke").await
 }
 
 pub async fn gateway_smoke() -> Result<SmokeCheckResult, String> {
-    let value = invoke_without_args("gateway_smoke").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("gateway_smoke").await
 }
 
 pub async fn provider_real_smoke() -> Result<SmokeCheckResult, String> {
-    let value = invoke_without_args("provider_real_smoke").await;
-    serde_wasm_bindgen::from_value(value).map_err(|error| error.to_string())
+    invoke_without_args("provider_real_smoke").await
+}
+
+pub async fn check_update() -> Result<UpdateCheckResult, String> {
+    invoke_without_args("check_update").await
+}
+
+pub async fn download_update() -> Result<UpdateDownloadResult, String> {
+    invoke_without_args("download_update").await
+}
+
+pub async fn install_update(installer_path: String) -> Result<UpdateInstallResult, String> {
+    let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+        "installerPath": installer_path,
+    }))
+    .map_err(|error| error.to_string())?;
+    invoke_with_args("install_update", args).await
 }

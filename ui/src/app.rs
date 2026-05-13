@@ -1,3 +1,4 @@
+use leptos::html;
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
@@ -17,6 +18,15 @@ enum AppPage {
     Guide,
 }
 
+#[derive(Clone, Debug)]
+struct ProxyLogRow {
+    key: String,
+    timestamp: String,
+    level: String,
+    code: String,
+    message: String,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (active_page, set_active_page) = signal(AppPage::Dashboard);
@@ -24,6 +34,8 @@ pub fn App() -> impl IntoView {
     let (theme, set_theme) = signal("light".to_owned());
     let (providers, set_providers) = signal(Vec::<ProviderSummary>::new());
     let (selected_provider_id, set_selected_provider_id) = signal(None::<String>);
+    let (editing_provider_id, set_editing_provider_id) = signal(None::<String>);
+    let (active_provider_id, set_active_provider_id) = signal(None::<String>);
     let (provider_name, set_provider_name) = signal(String::new());
     let (base_url, set_base_url) = signal(String::new());
     let (api_key, set_api_key) = signal(String::new());
@@ -45,19 +57,36 @@ pub fn App() -> impl IntoView {
     let (proxy_port, set_proxy_port) = signal("18080".to_owned());
     let (update_url, set_update_url) = signal(String::new());
     let (proxy_logs_text, set_proxy_logs_text) = signal("尚未读取日志。".to_owned());
+    let (proxy_logs, set_proxy_logs) = signal(Vec::<commands::DiagnosticsLogEntry>::new());
+    let (proxy_status, set_proxy_status) = signal(None::<commands::ProxyStatus>);
+    let (update_download_path, set_update_download_path) = signal(None::<String>);
+    let (auto_scroll_logs, set_auto_scroll_logs) = signal(true);
+    let proxy_log_body_ref = NodeRef::<html::Div>::new();
     let (result, set_result) = signal("尚未执行 command。".to_owned());
     let (diagnostics_text, set_diagnostics_text) = signal("尚未生成 diagnostics。".to_owned());
     let (provider_saved, set_provider_saved) = signal(false);
     let (_gateway_status_text, set_gateway_status_text) = signal(String::new());
     let (readiness_snapshot, set_readiness_snapshot) = signal(None::<commands::ReadinessSnapshot>);
+    let (restart_required, set_restart_required) = signal(false);
 
     let copy = move |key: &'static str| text(&language.get(), key);
+
+    Effect::new(move |_| {
+        let _ = proxy_logs.get().len();
+        if auto_scroll_logs.get() {
+            if let Some(node) = proxy_log_body_ref.get() {
+                node.set_scroll_top(node.scroll_height());
+            }
+        }
+    });
 
     let refresh_providers = move |_| {
         set_result.set("刷新 Provider 列表中...".to_owned());
         spawn_local(async move {
-            match commands::list_providers().await {
-                Ok(next_providers) => {
+            match commands::get_config_snapshot().await {
+                Ok(snapshot) => {
+                    set_active_provider_id.set(snapshot.active_provider.clone());
+                    let next_providers = snapshot.providers;
                     if selected_provider_id.get_untracked().is_none() {
                         if let Some(provider) = next_providers.first() {
                             set_selected_provider_id.set(Some(provider.provider_id.clone()));
@@ -66,14 +95,14 @@ pub fn App() -> impl IntoView {
                     set_result.set(format_provider_list(&next_providers));
                     set_providers.set(next_providers);
                 }
-                Err(error) => set_result.set(format!("list_providers failed: {error}")),
+                Err(error) => set_result.set(format!("get_config_snapshot failed: {error}")),
             }
         });
     };
 
     let save_provider = move |_| {
         let request = ProviderDraft {
-            provider_id: selected_provider_id.get_untracked(),
+            provider_id: editing_provider_id.get_untracked(),
             display_name: provider_name.get_untracked(),
             base_url: base_url.get_untracked(),
             auth_scheme: auth_scheme_from_value(&auth_scheme.get_untracked()),
@@ -89,10 +118,14 @@ pub fn App() -> impl IntoView {
             match commands::save_provider(request).await {
                 Ok(summary) => {
                     set_provider_saved.set(true);
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
                     set_selected_provider_id.set(Some(summary.provider_id.clone()));
+                    set_editing_provider_id.set(Some(summary.provider_id.clone()));
                     set_api_key.set(String::new());
-                    match commands::list_providers().await {
-                        Ok(next_providers) => {
+                    match commands::get_config_snapshot().await {
+                        Ok(snapshot) => {
+                            set_active_provider_id.set(snapshot.active_provider.clone());
+                            let next_providers = snapshot.providers;
                             set_providers.set(next_providers.clone());
                             set_result.set(format!(
                                 "save_provider ok\n{}\n{}",
@@ -100,113 +133,39 @@ pub fn App() -> impl IntoView {
                                 format_provider_list(&next_providers)
                             ));
                         }
-                        Err(error) => set_result
-                            .set(format!("save_provider ok\nlist_providers failed: {error}")),
+                        Err(error) => set_result.set(format!(
+                            "save_provider ok\nget_config_snapshot failed: {error}"
+                        )),
                     }
                 }
-                Err(error) => set_result.set(format!("save_provider failed: {error}")),
-            }
-        });
-    };
-
-    let delete_selected_provider = move |_| {
-        let Some(provider_id) = selected_provider_id.get_untracked() else {
-            set_result.set("delete_provider skipped: no provider selected".to_owned());
-            return;
-        };
-        set_result.set(format!("删除 Provider 中: {provider_id}"));
-        spawn_local(async move {
-            match commands::delete_provider(provider_id).await {
-                Ok(changed) => match commands::list_providers().await {
-                    Ok(next_providers) => {
-                        set_selected_provider_id.set(
-                            next_providers
-                                .first()
-                                .map(|provider| provider.provider_id.clone()),
-                        );
-                        set_providers.set(next_providers.clone());
-                        set_result.set(format!(
-                            "delete_provider changed={changed}\n{}",
-                            format_provider_list(&next_providers)
-                        ));
-                    }
-                    Err(error) => set_result.set(format!(
-                        "delete_provider changed={changed}\nlist_providers failed: {error}"
-                    )),
-                },
-                Err(error) => set_result.set(format!("delete_provider failed: {error}")),
-            }
-        });
-    };
-
-    let move_selected_provider_first = move |_| {
-        let Some(provider_id) = selected_provider_id.get_untracked() else {
-            set_result.set("reorder_providers skipped: no provider selected".to_owned());
-            return;
-        };
-        set_result.set(format!("调整 Provider 顺序中: {provider_id}"));
-        spawn_local(async move {
-            let current = match commands::list_providers().await {
-                Ok(providers) => providers,
                 Err(error) => {
-                    set_result.set(format!("list_providers failed: {error}"));
-                    return;
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_provider_state_from_backend(
+                        set_active_provider_id,
+                        set_selected_provider_id,
+                        set_providers,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "save_provider",
+                        &error,
+                        refresh_note,
+                    ));
                 }
-            };
-            let ids = current
-                .iter()
-                .map(|provider| provider.provider_id.clone())
-                .collect::<Vec<_>>();
-            if !ids.iter().any(|id| id == &provider_id) {
-                set_result.set(format!(
-                    "reorder_providers skipped: {provider_id} is not in provider list"
-                ));
-                return;
-            }
-            let mut reordered = vec![provider_id.clone()];
-            reordered.extend(ids.into_iter().filter(|id| id != &provider_id));
-            match commands::reorder_providers(reordered).await {
-                Ok(changed) => match commands::list_providers().await {
-                    Ok(next_providers) => {
-                        set_providers.set(next_providers.clone());
-                        set_result.set(format!(
-                            "reorder_providers changed={changed}\n{}",
-                            format_provider_list(&next_providers)
-                        ));
-                    }
-                    Err(error) => set_result.set(format!(
-                        "reorder_providers changed={changed}\nlist_providers failed: {error}"
-                    )),
-                },
-                Err(error) => set_result.set(format!("reorder_providers failed: {error}")),
-            }
-        });
-    };
-
-    let set_selected_active = move |_| {
-        let Some(provider_id) = selected_provider_id.get_untracked() else {
-            set_result.set("set_active_provider skipped: no provider selected".to_owned());
-            return;
-        };
-        set_result.set(format!("设置 active Provider 中: {provider_id}"));
-        spawn_local(async move {
-            match commands::set_active_provider(provider_id.clone()).await {
-                Ok(changed) => set_result.set(format!(
-                    "set_active_provider changed={changed}\nactiveProvider={provider_id}"
-                )),
-                Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
             }
         });
     };
 
     let export_providers = move |_| {
-        set_result.set("导出 Provider package 中...".to_owned());
+        set_result.set("生成 Provider export 预览中...".to_owned());
         spawn_local(async move {
             match commands::export_providers().await {
                 Ok(package) => match serde_json::to_string_pretty(&package) {
                     Ok(raw) => {
                         set_import_json.set(raw.clone());
-                        set_result.set(raw);
+                        set_result.set(format!(
+                            "Provider export preview (API keys redacted). Use Save as to write a full export file.\n{raw}"
+                        ));
                     }
                     Err(error) => set_result.set(format!("format export failed: {error}")),
                 },
@@ -258,8 +217,20 @@ pub fn App() -> impl IntoView {
         spawn_local(async move {
             match commands::import_providers(raw, replace_existing, skip_existing).await {
                 Ok(import_result) => {
-                    if let Ok(next_providers) = commands::list_providers().await {
-                        set_providers.set(next_providers);
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    if let Ok(snapshot) = commands::get_config_snapshot().await {
+                        set_active_provider_id.set(snapshot.active_provider.clone());
+                        if selected_provider_id.get_untracked().is_none() {
+                            set_selected_provider_id.set(snapshot.active_provider.clone().or_else(
+                                || {
+                                    snapshot
+                                        .providers
+                                        .first()
+                                        .map(|provider| provider.provider_id.clone())
+                                },
+                            ));
+                        }
+                        set_providers.set(snapshot.providers);
                     }
                     match serde_json::to_string_pretty(&import_result) {
                         Ok(raw) => {
@@ -270,7 +241,20 @@ pub fn App() -> impl IntoView {
                         Err(error) => set_result.set(format!("format import failed: {error}")),
                     }
                 }
-                Err(error) => set_result.set(format!("import_providers failed: {error}")),
+                Err(error) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_provider_state_from_backend(
+                        set_active_provider_id,
+                        set_selected_provider_id,
+                        set_providers,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "import_providers",
+                        &error,
+                        refresh_note,
+                    ));
+                }
             }
         });
     };
@@ -314,8 +298,19 @@ pub fn App() -> impl IntoView {
         spawn_local(async move {
             match commands::import_provider_preset(preset_id, api_key, replace_existing).await {
                 Ok(import_result) => {
-                    if let Ok(next_providers) = commands::list_providers().await {
-                        set_providers.set(next_providers);
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    if let Ok(snapshot) = commands::get_config_snapshot().await {
+                        set_active_provider_id.set(snapshot.active_provider.clone());
+                        set_editing_provider_id.set(None);
+                        set_selected_provider_id.set(snapshot.active_provider.clone().or_else(
+                            || {
+                                snapshot
+                                    .providers
+                                    .first()
+                                    .map(|provider| provider.provider_id.clone())
+                            },
+                        ));
+                        set_providers.set(snapshot.providers);
                     }
                     set_preset_api_key.set(String::new());
                     match serde_json::to_string_pretty(&import_result) {
@@ -325,52 +320,78 @@ pub fn App() -> impl IntoView {
                         }
                     }
                 }
-                Err(error) => set_result.set(format!("import_provider_preset failed: {error}")),
+                Err(error) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_provider_state_from_backend(
+                        set_active_provider_id,
+                        set_selected_provider_id,
+                        set_providers,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "import_provider_preset",
+                        &error,
+                        refresh_note,
+                    ));
+                }
             }
         });
     };
 
     let load_model_mappings = move |_| {
-        let Some(provider_id) = selected_provider_id.get_untracked() else {
+        let Some(provider_id) = model_mapping_target_provider_id(
+            editing_provider_id.get_untracked(),
+            selected_provider_id.get_untracked(),
+        ) else {
             set_result.set("list_model_mappings skipped: no provider selected".to_owned());
             return;
         };
         set_result.set(format!("读取模型映射中: {provider_id}"));
         spawn_local(async move {
-            match commands::list_model_mappings(provider_id).await {
-                Ok(mappings) => match serde_json::to_string_pretty(&mappings) {
-                    Ok(raw) => {
-                        for mapping in &mappings {
-                            match &mapping.slot {
-                                ModelSlot::Default => {
-                                    set_mapping_default.set(mapping.upstream_model.clone());
-                                }
-                                ModelSlot::Opus => {
-                                    set_mapping_opus.set(mapping.upstream_model.clone());
-                                }
-                                ModelSlot::Sonnet => {
-                                    set_mapping_sonnet.set(mapping.upstream_model.clone());
-                                }
-                                ModelSlot::Haiku => {
-                                    set_mapping_haiku.set(mapping.upstream_model.clone());
-                                }
-                            }
-                        }
-                        set_model_mapping_json.set(raw.clone());
-                        set_result.set(raw);
-                    }
-                    Err(error) => set_result.set(format!("format mappings failed: {error}")),
-                },
-                Err(error) => set_result.set(format!("list_model_mappings failed: {error}")),
-            }
+            load_model_mappings_for_provider(
+                provider_id,
+                set_mapping_default,
+                set_mapping_opus,
+                set_mapping_sonnet,
+                set_mapping_haiku,
+                set_model_mapping_json,
+                set_result,
+            )
+            .await;
+        });
+    };
+
+    let load_editing_model_mappings = move |_| {
+        let Some(provider_id) = editing_provider_id.get_untracked() else {
+            set_result.set(
+                "list_model_mappings skipped: save or edit an existing provider first".to_owned(),
+            );
+            return;
+        };
+        set_result.set(format!("读取模型映射中: {provider_id}"));
+        spawn_local(async move {
+            load_model_mappings_for_provider(
+                provider_id,
+                set_mapping_default,
+                set_mapping_opus,
+                set_mapping_sonnet,
+                set_mapping_haiku,
+                set_model_mapping_json,
+                set_result,
+            )
+            .await;
         });
     };
 
     let save_model_mappings = move |_| {
-        let Some(provider_id) = selected_provider_id.get_untracked() else {
+        let Some(provider_id) = model_mapping_target_provider_id(
+            editing_provider_id.get_untracked(),
+            selected_provider_id.get_untracked(),
+        ) else {
             set_result.set("update_model_mappings skipped: no provider selected".to_owned());
             return;
         };
+        let provider_id_for_refresh = provider_id.clone();
         let mappings = visible_model_mapping_drafts(
             mapping_default.get_untracked(),
             mapping_opus.get_untracked(),
@@ -379,16 +400,59 @@ pub fn App() -> impl IntoView {
         );
         set_result.set(format!("保存模型映射中: {provider_id}"));
         spawn_local(async move {
-            match commands::update_model_mappings(provider_id, mappings).await {
-                Ok(saved) => match serde_json::to_string_pretty(&saved) {
-                    Ok(raw) => {
-                        set_model_mapping_json.set(raw.clone());
-                        set_result.set(format!("update_model_mappings ok\n{raw}"));
-                    }
-                    Err(error) => set_result.set(format!("format mappings failed: {error}")),
-                },
-                Err(error) => set_result.set(format!("update_model_mappings failed: {error}")),
-            }
+            save_model_mappings_for_provider(
+                provider_id,
+                provider_id_for_refresh,
+                mappings,
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+                set_mapping_default,
+                set_mapping_opus,
+                set_mapping_sonnet,
+                set_mapping_haiku,
+                set_model_mapping_json,
+                set_readiness_snapshot,
+                set_restart_required,
+                set_result,
+            )
+            .await;
+        });
+    };
+
+    let save_editing_model_mappings = move |_| {
+        let Some(provider_id) = editing_provider_id.get_untracked() else {
+            set_result.set(
+                "update_model_mappings skipped: save or edit an existing provider first".to_owned(),
+            );
+            return;
+        };
+        let provider_id_for_refresh = provider_id.clone();
+        let mappings = visible_model_mapping_drafts(
+            mapping_default.get_untracked(),
+            mapping_opus.get_untracked(),
+            mapping_sonnet.get_untracked(),
+            mapping_haiku.get_untracked(),
+        );
+        set_result.set(format!("保存模型映射中: {provider_id}"));
+        spawn_local(async move {
+            save_model_mappings_for_provider(
+                provider_id,
+                provider_id_for_refresh,
+                mappings,
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+                set_mapping_default,
+                set_mapping_opus,
+                set_mapping_sonnet,
+                set_mapping_haiku,
+                set_model_mapping_json,
+                set_readiness_snapshot,
+                set_restart_required,
+                set_result,
+            )
+            .await;
         });
     };
 
@@ -442,24 +506,180 @@ pub fn App() -> impl IntoView {
     };
 
     let save_settings = move |_| {
+        let proxy_port_value = match parse_proxy_port(&proxy_port.get_untracked()) {
+            Ok(port) => port,
+            Err(error) => {
+                set_result.set(error);
+                return;
+            }
+        };
         let settings = ConfigSettings {
             theme: theme.get_untracked(),
             language: language.get_untracked(),
-            proxy_port: parse_proxy_port(&proxy_port.get_untracked()),
+            proxy_port: proxy_port_value,
             update_url: update_url_or_default(&update_url.get_untracked()),
         };
         set_result.set("保存 settings 中...".to_owned());
         spawn_local(async move {
             match commands::update_settings(settings).await {
                 Ok(saved) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
                     set_proxy_port.set(saved.proxy_port.to_string());
                     set_update_url.set(saved.update_url.clone());
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_status.set(Some(status));
+                    }
                     set_result.set(format!(
                         "update_settings ok\ntheme={}\nlanguage={}\nproxyPort={}\nupdateUrl={}",
                         saved.theme, saved.language, saved.proxy_port, saved.update_url
                     ));
                 }
-                Err(error) => set_result.set(format!("update_settings failed: {error}")),
+                Err(error) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_settings_state_from_backend(
+                        set_language,
+                        set_theme,
+                        set_proxy_port,
+                        set_update_url,
+                        set_proxy_status,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "update_settings",
+                        &error,
+                        refresh_note,
+                    ));
+                }
+            }
+        });
+    };
+
+    let check_update_now = move |_| {
+        set_update_download_path.set(None);
+        let proxy_port_value = match parse_proxy_port(&proxy_port.get_untracked()) {
+            Ok(port) => port,
+            Err(error) => {
+                set_result.set(error);
+                return;
+            }
+        };
+        let settings = ConfigSettings {
+            theme: theme.get_untracked(),
+            language: language.get_untracked(),
+            proxy_port: proxy_port_value,
+            update_url: update_url_or_default(&update_url.get_untracked()),
+        };
+        set_result.set("检查更新中...".to_owned());
+        spawn_local(async move {
+            match commands::update_settings(settings).await {
+                Ok(saved) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    set_update_url.set(saved.update_url.clone());
+                    match commands::check_update().await {
+                        Ok(check) => {
+                            if !check.available {
+                                set_update_download_path.set(None);
+                            }
+                            set_result.set(format_update_check(&check));
+                        }
+                        Err(error) => {
+                            set_update_download_path.set(None);
+                            set_result.set(format!("check_update failed: {error}"));
+                        }
+                    }
+                }
+                Err(error) => {
+                    set_update_download_path.set(None);
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_settings_state_from_backend(
+                        set_language,
+                        set_theme,
+                        set_proxy_port,
+                        set_update_url,
+                        set_proxy_status,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "update_settings",
+                        &error,
+                        refresh_note,
+                    ));
+                }
+            }
+        });
+    };
+
+    let download_update_now = move |_| {
+        set_update_download_path.set(None);
+        let proxy_port_value = match parse_proxy_port(&proxy_port.get_untracked()) {
+            Ok(port) => port,
+            Err(error) => {
+                set_result.set(error);
+                return;
+            }
+        };
+        let settings = ConfigSettings {
+            theme: theme.get_untracked(),
+            language: language.get_untracked(),
+            proxy_port: proxy_port_value,
+            update_url: update_url_or_default(&update_url.get_untracked()),
+        };
+        set_result.set("下载并验证更新中...".to_owned());
+        spawn_local(async move {
+            match commands::update_settings(settings).await {
+                Ok(saved) => {
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    set_update_url.set(saved.update_url.clone());
+                    match commands::download_update().await {
+                        Ok(download) => {
+                            set_update_download_path.set(Some(download.asset_path.clone()));
+                            set_result.set(format_update_download(&download));
+                        }
+                        Err(error) => {
+                            set_update_download_path.set(None);
+                            set_result.set(format!("download_update failed: {error}"));
+                        }
+                    }
+                }
+                Err(error) => {
+                    set_update_download_path.set(None);
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_settings_state_from_backend(
+                        set_language,
+                        set_theme,
+                        set_proxy_port,
+                        set_update_url,
+                        set_proxy_status,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "update_settings",
+                        &error,
+                        refresh_note,
+                    ));
+                }
+            }
+        });
+    };
+
+    let install_update_now = move |_| {
+        let Some(path) = update_download_path.get_untracked() else {
+            set_result.set(
+                "install_update skipped: no verified installer has been downloaded".to_owned(),
+            );
+            return;
+        };
+        set_result.set("启动已验证安装器中...".to_owned());
+        spawn_local(async move {
+            match commands::install_update(path).await {
+                Ok(result) => set_result.set(format!(
+                    "install_update ok\nlaunched={}\ninstaller={}\ninstallerType={}\nlaunchMethod={}",
+                    result.launched,
+                    result.installer_path,
+                    result.installer_type,
+                    result.launch_method
+                )),
+                Err(error) => set_result.set(format!("install_update failed: {error}")),
             }
         });
     };
@@ -470,8 +690,13 @@ pub fn App() -> impl IntoView {
             match commands::get_proxy_logs().await {
                 Ok(logs) => {
                     let text = format_proxy_logs(&logs);
+                    set_proxy_logs.set(logs);
                     set_proxy_logs_text.set(text.clone());
                     set_result.set(text);
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_port.set(status.port.to_string());
+                        set_proxy_status.set(Some(status));
+                    }
                 }
                 Err(error) => set_proxy_logs_text.set(format!("get_proxy_logs failed: {error}")),
             }
@@ -484,8 +709,13 @@ pub fn App() -> impl IntoView {
             match commands::clear_proxy_logs().await {
                 Ok(changed) => {
                     let text = format!("clear_proxy_logs changed={changed}");
+                    set_proxy_logs.set(Vec::new());
                     set_proxy_logs_text.set(text.clone());
                     set_result.set(text);
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_port.set(status.port.to_string());
+                        set_proxy_status.set(Some(status));
+                    }
                 }
                 Err(error) => set_proxy_logs_text.set(format!("clear_proxy_logs failed: {error}")),
             }
@@ -499,6 +729,10 @@ pub fn App() -> impl IntoView {
                 Ok(snapshot) => {
                     set_readiness_snapshot.set(Some(snapshot.clone()));
                     set_gateway_status_text.set(format_gateway_health(&snapshot.gateway));
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_port.set(status.port.to_string());
+                        set_proxy_status.set(Some(status));
+                    }
                     set_result.set(format!(
                         "providerConfigured: {}\ndesktopReadbackPassed: {}\nproviderSmokePassed: {}\ngatewaySmokePassed: {}\ngateway: {} running={}\nissues: {}",
                         snapshot.provider_configured,
@@ -517,25 +751,51 @@ pub fn App() -> impl IntoView {
     let check_health = move |_| run_health_check();
 
     let start_gateway = move |_| {
+        let proxy_port_value = match parse_proxy_port(&proxy_port.get_untracked()) {
+            Ok(port) => port,
+            Err(error) => {
+                set_result.set(error);
+                return;
+            }
+        };
         let settings = ConfigSettings {
             theme: theme.get_untracked(),
             language: language.get_untracked(),
-            proxy_port: parse_proxy_port(&proxy_port.get_untracked()),
+            proxy_port: proxy_port_value,
             update_url: update_url_or_default(&update_url.get_untracked()),
         };
         set_result.set("启动 gateway 中...".to_owned());
         spawn_local(async move {
             if let Err(error) = commands::update_settings(settings).await {
+                mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                let refresh_note = refresh_settings_state_from_backend(
+                    set_language,
+                    set_theme,
+                    set_proxy_port,
+                    set_update_url,
+                    set_proxy_status,
+                )
+                .await;
                 set_result.set(format!(
-                    "update_settings failed before start_gateway: {error}"
+                    "{}\nstart_gateway skipped",
+                    format_backend_mutation_error("update_settings", &error, refresh_note)
                 ));
                 return;
             }
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
             match commands::start_gateway().await {
                 Ok(health) => {
                     let formatted = format_gateway_health(&health);
+                    let status_note = match commands::get_proxy_status().await {
+                        Ok(status) => {
+                            set_proxy_port.set(status.port.to_string());
+                            set_proxy_status.set(Some(status));
+                            String::new()
+                        }
+                        Err(error) => format!("\nget_proxy_status failed: {error}"),
+                    };
                     set_gateway_status_text.set(formatted.clone());
-                    set_result.set(format!("gateway started: {formatted}"));
+                    set_result.set(format!("gateway started: {formatted}{status_note}"));
                 }
                 Err(error) => set_result.set(format!("start_gateway failed: {error}")),
             }
@@ -548,8 +808,16 @@ pub fn App() -> impl IntoView {
             match commands::stop_gateway().await {
                 Ok(health) => {
                     let formatted = format_gateway_health(&health);
+                    let status_note = match commands::get_proxy_status().await {
+                        Ok(status) => {
+                            set_proxy_port.set(status.port.to_string());
+                            set_proxy_status.set(Some(status));
+                            String::new()
+                        }
+                        Err(error) => format!("\nget_proxy_status failed: {error}"),
+                    };
                     set_gateway_status_text.set(formatted.clone());
-                    set_result.set(format!("gateway stopped: {formatted}"));
+                    set_result.set(format!("gateway stopped: {formatted}{status_note}"));
                 }
                 Err(error) => set_result.set(format!("stop_gateway failed: {error}")),
             }
@@ -576,6 +844,46 @@ pub fn App() -> impl IntoView {
                     ));
                 }
                 Err(error) => set_result.set(format!("desktop_config_probe failed: {error}")),
+            }
+        });
+    };
+
+    let clear_desktop_config = move |_| {
+        if !confirm_action("这会清除本工具写入 Claude Desktop 的本机 gateway 配置，不会删除本工具保存的 Provider 和 API Key。继续？") {
+            return;
+        }
+        set_result.set("清除 Claude Desktop 配置中...".to_owned());
+        mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+        spawn_local(async move {
+            match commands::clear_desktop_config().await {
+                Ok(clear_result) => {
+                    set_restart_required.set(clear_result.success);
+                    set_result.set(format_desktop_clear_result(&clear_result));
+                    if let Ok(snapshot) = commands::health().await {
+                        set_readiness_snapshot.set(Some(snapshot));
+                    }
+                }
+                Err(error) => set_result.set(format!("clear_desktop_config failed: {error}")),
+            }
+        });
+    };
+
+    let restart_claude_desktop = move |_| {
+        if !confirm_action(
+            "这会尝试关闭并重新打开 Claude Desktop。未保存的 Claude Desktop 内容可能受影响。继续？",
+        ) {
+            return;
+        }
+        set_result.set("重启 Claude Desktop 中...".to_owned());
+        spawn_local(async move {
+            match commands::restart_claude_desktop().await {
+                Ok(restart_result) => {
+                    if restart_result.launched {
+                        set_restart_required.set(false);
+                    }
+                    set_result.set(format_desktop_restart_result(&restart_result));
+                }
+                Err(error) => set_result.set(format!("restart_claude_desktop failed: {error}")),
             }
         });
     };
@@ -687,7 +995,7 @@ pub fn App() -> impl IntoView {
     };
 
     let run_provider_static_smoke = move |_| {
-        set_result.set("运行 provider static smoke 中...".to_owned());
+        set_result.set("检查当前已启用 Provider 的静态配置中...".to_owned());
         spawn_local(async move {
             match commands::provider_static_smoke().await {
                 Ok(smoke) => set_result.set(format_smoke_result(&smoke)),
@@ -733,9 +1041,14 @@ pub fn App() -> impl IntoView {
                         .map(|step| format!("- {}: wouldRun={}", step.id, step.would_run))
                         .collect::<Vec<_>>()
                         .join("\n");
+                    let plan_error = plan
+                        .plan_error
+                        .as_deref()
+                        .map(|error| format!("\nplanError: {error}"))
+                        .unwrap_or_default();
                     set_result.set(format!(
-                        "success: {}\nmode: {}\nexpectedBaseUrl: {}\nexpectedRoutes: {}\n{}",
-                        plan.success, plan.mode, plan.expected_base_url, routes, steps
+                        "success: {}\nmode: {}\nexpectedBaseUrl: {}\nexpectedRoutes: {}{}\n{}",
+                        plan.success, plan.mode, plan.expected_base_url, routes, plan_error, steps
                     ));
                 }
                 Err(error) => set_result.set(format!("apply_dry_run failed: {error}")),
@@ -745,9 +1058,21 @@ pub fn App() -> impl IntoView {
 
     let run_apply = move || {
         set_result.set("执行 apply 中...".to_owned());
+        mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
         spawn_local(async move {
             match commands::apply_detected_local_config().await {
                 Ok(result) => {
+                    set_restart_required.set(result.success);
+                    if result.success {
+                        if let Ok(snapshot) = commands::health().await {
+                            set_gateway_status_text.set(format_gateway_health(&snapshot.gateway));
+                            set_readiness_snapshot.set(Some(snapshot));
+                        }
+                    }
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_port.set(status.port.to_string());
+                        set_proxy_status.set(Some(status));
+                    }
                     let gateway = result
                         .gateway
                         .as_ref()
@@ -797,7 +1122,7 @@ pub fn App() -> impl IntoView {
 
     let apply_provider_to_desktop = move |_| {
         let request = ProviderDraft {
-            provider_id: selected_provider_id.get_untracked(),
+            provider_id: editing_provider_id.get_untracked(),
             display_name: provider_name.get_untracked(),
             base_url: base_url.get_untracked(),
             auth_scheme: auth_scheme_from_value(&auth_scheme.get_untracked()),
@@ -808,30 +1133,95 @@ pub fn App() -> impl IntoView {
                 ApiFormat::Anthropic
             },
         };
+        let mapping_drafts = visible_model_mapping_drafts(
+            mapping_default.get_untracked(),
+            mapping_opus.get_untracked(),
+            mapping_sonnet.get_untracked(),
+            mapping_haiku.get_untracked(),
+        );
         set_result.set("保存 Provider 并应用到 Claude Desktop 中...".to_owned());
         spawn_local(async move {
             let summary = match commands::save_provider(request).await {
                 Ok(summary) => summary,
                 Err(error) => {
-                    set_result.set(format!("save_provider failed: {error}"));
+                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                    let refresh_note = refresh_provider_state_from_backend(
+                        set_active_provider_id,
+                        set_selected_provider_id,
+                        set_providers,
+                    )
+                    .await;
+                    set_result.set(format_backend_mutation_error(
+                        "save_provider",
+                        &error,
+                        refresh_note,
+                    ));
                     return;
                 }
             };
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
             set_provider_saved.set(true);
             set_selected_provider_id.set(Some(summary.provider_id.clone()));
+            set_editing_provider_id.set(Some(summary.provider_id.clone()));
             set_api_key.set(String::new());
 
-            if let Err(error) = commands::set_active_provider(summary.provider_id.clone()).await {
+            if let Err(error) =
+                commands::update_model_mappings(summary.provider_id.clone(), mapping_drafts).await
+            {
+                let provider_refresh = refresh_provider_state_from_backend_preserving_selection(
+                    set_active_provider_id,
+                    set_selected_provider_id,
+                    set_providers,
+                    Some(summary.provider_id.clone()),
+                )
+                .await;
+                let mapping_refresh = refresh_model_mappings_from_backend(
+                    summary.provider_id.clone(),
+                    set_mapping_default,
+                    set_mapping_opus,
+                    set_mapping_sonnet,
+                    set_mapping_haiku,
+                    set_model_mapping_json,
+                )
+                .await;
+                let refresh_note =
+                    merge_refresh_results(provider_refresh, mapping_refresh, "model mappings");
                 set_result.set(format!(
-                    "save_provider ok\nset_active_provider failed: {error}"
+                    "save_provider ok\n{}",
+                    format_backend_mutation_error("update_model_mappings", &error, refresh_note)
                 ));
+                return;
+            }
+
+            if let Err(error) = set_active_provider_and_sync(
+                summary.provider_id.clone(),
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+                set_readiness_snapshot,
+                set_restart_required,
+            )
+            .await
+            {
+                set_result.set(format!("save_provider ok\n{error}"));
                 return;
             }
 
             match commands::apply_detected_local_config().await {
                 Ok(apply_result) => {
+                    set_restart_required.set(apply_result.success);
                     if let Ok(next_providers) = commands::list_providers().await {
                         set_providers.set(next_providers);
+                    }
+                    if apply_result.success {
+                        if let Ok(snapshot) = commands::health().await {
+                            set_gateway_status_text.set(format_gateway_health(&snapshot.gateway));
+                            set_readiness_snapshot.set(Some(snapshot));
+                        }
+                    }
+                    if let Ok(status) = commands::get_proxy_status().await {
+                        set_proxy_port.set(status.port.to_string());
+                        set_proxy_status.set(Some(status));
                     }
                     let steps = apply_result
                         .steps
@@ -874,11 +1264,12 @@ pub fn App() -> impl IntoView {
             if snapshot.settings.language == "zh" || snapshot.settings.language == "en" {
                 set_language.set(snapshot.settings.language.clone());
             }
-            if snapshot.settings.theme == "dark" || snapshot.settings.theme == "light" {
+            if is_supported_theme(&snapshot.settings.theme) {
                 set_theme.set(snapshot.settings.theme.clone());
             }
             set_proxy_port.set(snapshot.settings.proxy_port.to_string());
             set_update_url.set(snapshot.settings.update_url.clone());
+            set_active_provider_id.set(snapshot.active_provider.clone());
             set_selected_provider_id.set(snapshot.active_provider.clone().or_else(|| {
                 snapshot
                     .providers
@@ -889,12 +1280,13 @@ pub fn App() -> impl IntoView {
         }
         if let Ok(proxy) = commands::get_proxy_status().await {
             set_proxy_port.set(proxy.port.to_string());
+            set_proxy_status.set(Some(proxy));
         }
         if let Ok(settings) = commands::get_settings().await {
             if settings.language == "zh" || settings.language == "en" {
                 set_language.set(settings.language.clone());
             }
-            if settings.theme == "dark" || settings.theme == "light" {
+            if is_supported_theme(&settings.theme) {
                 set_theme.set(settings.theme.clone());
             }
             set_proxy_port.set(settings.proxy_port.to_string());
@@ -924,7 +1316,7 @@ pub fn App() -> impl IntoView {
                     <button class="dashboard-import-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
                         <span class="button-icon icon-svg icon-import" aria-hidden="true"></span><span>"导入 CC Switch 配置"</span>
                     </button>
-                    <button class="dashboard-clear-button" type="button" on:click=move |_| set_active_page.set(AppPage::Desktop)>
+                    <button class="dashboard-clear-button" type="button" on:click=clear_desktop_config>
                         <span class="button-icon icon-svg icon-trash" aria-hidden="true"></span><span>"清除桌面版配置"</span>
                     </button>
                 </div>
@@ -975,7 +1367,18 @@ pub fn App() -> impl IntoView {
                     }>
                         <span class=move || if theme.get() == "dark" { "icon-svg icon-sun" } else { "icon-svg icon-moon" } aria-hidden="true"></span>
                     </button>
-                    <button class="round-add" type="button" aria-label="Add provider" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>
+                    <button class="round-add" type="button" aria-label="Add provider" on:click=move |_| {
+                        reset_provider_form(
+                            set_editing_provider_id,
+                            set_selected_preset_id,
+                            set_provider_name,
+                            set_base_url,
+                            set_api_key,
+                            set_api_format,
+                            set_auth_scheme,
+                        );
+                        set_active_page.set(AppPage::ProvidersAdd);
+                    }>
                         <span class="icon-svg icon-plus" aria-hidden="true"></span>
                     </button>
                 </div>
@@ -1006,13 +1409,14 @@ pub fn App() -> impl IntoView {
                                         let provider_id_for_disabled = provider.provider_id.clone();
                                         let provider_id_for_apply = provider.provider_id.clone();
                                         let provider_id_for_test = provider.provider_id.clone();
+                                        let provider_id_for_test_disabled = provider.provider_id.clone();
                                         let provider_id_for_copy = provider.provider_id.clone();
                                         let provider_url_for_copy = provider.base_url.clone();
                                         let provider_id_for_delete = provider.provider_id.clone();
                                         let edit_provider = provider.clone();
                                         let logo_src = provider_logo_src(&provider.display_name);
                                         view! {
-                                            <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_card_class.as_str()))>
+                                            <article class=move || provider_switch_card_class(active_provider_id.get().as_deref() == Some(provider_id_for_card_class.as_str()))>
                                                 <span class="drag-handle"><span class="icon-svg icon-grip" aria-hidden="true"></span></span>
                                                 <span class="provider-logo"><img src=logo_src alt="" /></span>
                                                 <span class="provider-main">
@@ -1021,31 +1425,38 @@ pub fn App() -> impl IntoView {
                                                 </span>
                                                 <span class="provider-actions">
                                                     <button
-                                                        class=move || compact_enable_class(selected_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
+                                                        class=move || compact_enable_class(active_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
                                                         type="button"
-                                                        disabled=move || selected_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
+                                                        disabled=move || active_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
                                                         on:click=move |_| {
                                                             let provider_id = provider_id_for_apply.clone();
                                                             set_selected_provider_id.set(Some(provider_id.clone()));
                                                             set_result.set(format!("设置 active Provider 中: {provider_id}"));
                                                             spawn_local(async move {
-                                                                match commands::set_active_provider(provider_id.clone()).await {
-                                                                    Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
-                                                                    Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                                                                match set_active_provider_and_sync(
+                                                                    provider_id,
+                                                                    set_active_provider_id,
+                                                                    set_selected_provider_id,
+                                                                    set_providers,
+                                                                    set_readiness_snapshot,
+                                                                    set_restart_required,
+                                                                ).await {
+                                                                    Ok(message) => set_result.set(message),
+                                                                    Err(message) => set_result.set(message),
                                                                 }
                                                             });
                                                         }
                                                     >
                                                         <span class="icon-svg icon-play" aria-hidden="true"></span>
-                                                        <span>{move || if selected_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
+                                                        <span>{move || if active_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
                                                     </button>
-                                                    <button class="icon-action" type="button" title="Test speed" on:click=move |_| {
+                                                    <button
+                                                        class="icon-action"
+                                                        type="button"
+                                                        title="Test speed"
+                                                        disabled=move || active_provider_id.get().as_deref() != Some(provider_id_for_test_disabled.as_str())
+                                                        on:click=move |_| {
                                                         let provider_id = provider_id_for_test.clone();
-                                                        if selected_provider_id.get_untracked().as_deref() != Some(provider_id.as_str()) {
-                                                            set_selected_provider_id.set(Some(provider_id.clone()));
-                                                            set_result.set(format!("已选择 {provider_id}；如需真实测速，先启用后再检测。"));
-                                                            return;
-                                                        }
                                                         set_result.set(format!("运行 provider real smoke: {provider_id}"));
                                                         spawn_local(async move {
                                                             match commands::provider_real_smoke().await {
@@ -1071,6 +1482,7 @@ pub fn App() -> impl IntoView {
                                                     </button>
                                                     <button class="icon-action" type="button" title="Edit" on:click=move |_| {
                                                         set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                        set_editing_provider_id.set(Some(edit_provider.provider_id.clone()));
                                                         set_provider_name.set(edit_provider.display_name.clone());
                                                         set_base_url.set(edit_provider.base_url.clone());
                                                         set_api_format.set(api_format_value(&edit_provider.api_format));
@@ -1089,15 +1501,34 @@ pub fn App() -> impl IntoView {
                                                         set_result.set(format!("删除 Provider 中: {provider_id}"));
                                                         spawn_local(async move {
                                                             match commands::delete_provider(provider_id.clone()).await {
-                                                                Ok(changed) => match commands::list_providers().await {
-                                                                    Ok(next_providers) => {
-                                                                        set_selected_provider_id.set(next_providers.first().map(|provider| provider.provider_id.clone()));
+                                                                Ok(changed) => match commands::get_config_snapshot().await {
+                                                                    Ok(snapshot) => {
+                                                                        mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                        set_active_provider_id.set(snapshot.active_provider.clone());
+                                                                        set_selected_provider_id.set(snapshot.active_provider.clone().or_else(|| snapshot.providers.first().map(|provider| provider.provider_id.clone())));
+                                                                        let next_providers = snapshot.providers;
                                                                         set_providers.set(next_providers.clone());
                                                                         set_result.set(format!("delete_provider changed={changed}\n{}", format_provider_list(&next_providers)));
                                                                     }
-                                                                    Err(error) => set_result.set(format!("delete_provider changed={changed}\nlist_providers failed: {error}")),
+                                                                    Err(error) => {
+                                                                        mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                        set_result.set(format!("delete_provider changed={changed}\nget_config_snapshot failed: {error}"));
+                                                                    }
                                                                 },
-                                                                Err(error) => set_result.set(format!("delete_provider failed: {error}")),
+                                                                Err(error) => {
+                                                                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                    let refresh_note = refresh_provider_state_from_backend(
+                                                                        set_active_provider_id,
+                                                                        set_selected_provider_id,
+                                                                        set_providers,
+                                                                    )
+                                                                    .await;
+                                                                    set_result.set(format_backend_mutation_error(
+                                                                        "delete_provider",
+                                                                        &error,
+                                                                        refresh_note,
+                                                                    ));
+                                                                }
                                                             }
                                                         });
                                                     }>
@@ -1119,12 +1550,24 @@ pub fn App() -> impl IntoView {
                                         <button class="primary-button" type="button" on:click=move |_| set_active_page.set(AppPage::Settings)>
                                             <span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入当前配置"</span>
                                         </button>
-                                        <button class="secondary-button" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>
+                                        <button class="secondary-button" type="button" on:click=move |_| {
+                                            reset_provider_form(
+                                                set_editing_provider_id,
+                                                set_selected_preset_id,
+                                                set_provider_name,
+                                                set_base_url,
+                                                set_api_key,
+                                                set_api_format,
+                                                set_auth_scheme,
+                                            );
+                                            set_active_page.set(AppPage::ProvidersAdd);
+                                        }>
                                             <span>"添加供应商"</span>
                                         </button>
                                     </div>
                                 </div>
                                 <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_editing_provider_id.set(None);
                                     set_selected_preset_id.set("deepseek".to_owned());
                                     set_provider_name.set("DeepSeek".to_owned());
                                     set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
@@ -1139,6 +1582,7 @@ pub fn App() -> impl IntoView {
                                     <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                 </button>
                                 <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_editing_provider_id.set(None);
                                     set_selected_preset_id.set("kimi".to_owned());
                                     set_provider_name.set("Kimi（月之暗面）".to_owned());
                                     set_base_url.set("https://api.moonshot.cn/v1".to_owned());
@@ -1153,6 +1597,7 @@ pub fn App() -> impl IntoView {
                                     <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                 </button>
                                 <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_editing_provider_id.set(None);
                                     set_selected_preset_id.set("qiniu".to_owned());
                                     set_provider_name.set("七牛云 AI".to_owned());
                                     set_base_url.set("https://api.qnaigc.com/v1".to_owned());
@@ -1167,6 +1612,7 @@ pub fn App() -> impl IntoView {
                                     <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                 </button>
                                 <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                    set_editing_provider_id.set(None);
                                     set_selected_preset_id.set("zhipu".to_owned());
                                     set_provider_name.set("智谱 GLM".to_owned());
                                     set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
@@ -1191,6 +1637,7 @@ pub fn App() -> impl IntoView {
                                 </div>
                                 <div class="provider-preset-grid">
                                     <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_editing_provider_id.set(None);
                                         set_selected_preset_id.set("deepseek".to_owned());
                                         set_provider_name.set("DeepSeek".to_owned());
                                         set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
@@ -1205,6 +1652,7 @@ pub fn App() -> impl IntoView {
                                         <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                     </button>
                                     <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_editing_provider_id.set(None);
                                         set_selected_preset_id.set("kimi".to_owned());
                                         set_provider_name.set("Kimi（月之暗面）".to_owned());
                                         set_base_url.set("https://api.moonshot.cn/v1".to_owned());
@@ -1219,6 +1667,7 @@ pub fn App() -> impl IntoView {
                                         <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                     </button>
                                     <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_editing_provider_id.set(None);
                                         set_selected_preset_id.set("qiniu".to_owned());
                                         set_provider_name.set("七牛云 AI".to_owned());
                                         set_base_url.set("https://api.qnaigc.com/v1".to_owned());
@@ -1233,6 +1682,7 @@ pub fn App() -> impl IntoView {
                                         <span class="provider-actions"><span class="compact-enable ghost"><span class="icon-svg icon-plus" aria-hidden="true"></span><span>"添加提供商"</span></span></span>
                                     </button>
                                     <button class="provider-switch-card preset-card" type="button" on:click=move |_| {
+                                        set_editing_provider_id.set(None);
                                         set_selected_preset_id.set("zhipu".to_owned());
                                         set_provider_name.set("智谱 GLM".to_owned());
                                         set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
@@ -1267,7 +1717,7 @@ pub fn App() -> impl IntoView {
                                 <span class="label-line">
                                     <span>"API Base URL"</span>
                                     <button class="link-action" type="button" on:click=run_provider_static_smoke>
-                                        <span class="icon-svg icon-lightning" aria-hidden="true"></span><span>"管理与测速"</span>
+                                        <span class="icon-svg icon-lightning" aria-hidden="true"></span><span>"检查已启用 Provider"</span>
                                     </button>
                                 </span>
                                 <input
@@ -1317,9 +1767,9 @@ pub fn App() -> impl IntoView {
                                 </div>
                                 <div class="detect-format-row">
                                     <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>
-                                        <span class="icon-svg icon-search" aria-hidden="true"></span><span>"识别协议类型"</span>
+                                        <span class="icon-svg icon-search" aria-hidden="true"></span><span>"检查已启用 Provider"</span>
                                     </button>
-                                    <span class="detect-format-status">"保存前仅做静态检查；真实连通在 smoke 中验证。"</span>
+                                    <span class="detect-format-status">"此检查读取当前已启用 Provider；新增草稿需先保存并启用。"</span>
                                 </div>
                             </details>
 
@@ -1329,7 +1779,13 @@ pub fn App() -> impl IntoView {
                                         <h2>{move || copy("model_mapping")}</h2>
                                         <p>"把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。"</p>
                                     </div>
-                                    <button class="provider-mapping-fetch" type="button" on:click=load_model_mappings>
+                                    <button
+                                        class="provider-mapping-fetch"
+                                        type="button"
+                                        disabled=move || editing_provider_id.get().is_none()
+                                        title="Edit an existing provider before loading mappings"
+                                        on:click=load_editing_model_mappings
+                                    >
                                         <span class="icon-svg icon-download" aria-hidden="true"></span><span>"读取映射"</span>
                                     </button>
                                 </div>
@@ -1363,7 +1819,7 @@ pub fn App() -> impl IntoView {
                                                     <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
-                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检查已启用"</button></div>
                                         </article>
                                         <article class="form-mapping-row">
                                             <div class="form-mapping-left">
@@ -1378,7 +1834,7 @@ pub fn App() -> impl IntoView {
                                                     <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
-                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检查已启用"</button></div>
                                         </article>
                                         <article class="form-mapping-row">
                                             <div class="form-mapping-left">
@@ -1393,11 +1849,19 @@ pub fn App() -> impl IntoView {
                                                     <button class="provider-model-trigger" type="button" disabled=true><span class="icon-svg icon-chevron-down" aria-hidden="true"></span></button>
                                                 </div>
                                             </div>
-                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检测"</button></div>
+                                            <div class="form-mapping-actions"><button class="secondary-button compact" type="button" on:click=run_provider_static_smoke>"检查已启用"</button></div>
                                         </article>
                                     </div>
                                     <div class="provider-mapping-footer">
-                                        <button class="secondary-button compact" type="button" on:click=save_model_mappings><span class="icon-svg icon-save" aria-hidden="true"></span><span>"保存映射"</span></button>
+                                        <button
+                                            class="secondary-button compact"
+                                            type="button"
+                                            disabled=move || editing_provider_id.get().is_none()
+                                            title="Edit an existing provider before saving mappings"
+                                            on:click=save_editing_model_mappings
+                                        >
+                                            <span class="icon-svg icon-save" aria-hidden="true"></span><span>"保存映射"</span>
+                                        </button>
                                     </div>
                                 </div>
                                 <div class="apply-explain">
@@ -1410,12 +1874,15 @@ pub fn App() -> impl IntoView {
                                 <button class="primary-button form-action" type="button" on:click=apply_provider_to_desktop><span class="icon-svg icon-magic" aria-hidden="true"></span><span>"一键应用到 Claude 桌面版"</span></button>
                                 <button class="secondary-button form-action" type="button" on:click=save_provider><span class="icon-svg icon-save" aria-hidden="true"></span><span>"仅保存"</span></button>
                                 <button class="secondary-button form-action" type="button" on:click=move |_| {
-                                    set_provider_name.set(String::new());
-                                    set_base_url.set(String::new());
-                                    set_api_key.set(String::new());
-                                    set_api_format.set("anthropic".to_owned());
-                                    set_auth_scheme.set("bearer".to_owned());
-                                    set_selected_preset_id.set(String::new());
+                                    reset_provider_form(
+                                        set_editing_provider_id,
+                                        set_selected_preset_id,
+                                        set_provider_name,
+                                        set_base_url,
+                                        set_api_key,
+                                        set_api_format,
+                                        set_auth_scheme,
+                                    );
                                     set_active_page.set(AppPage::Providers);
                                 }>"取消"</button>
                             </div>
@@ -1423,10 +1890,7 @@ pub fn App() -> impl IntoView {
 
                         <div class="provider-list">
                             <div class="provider-list-toolbar">
-                                <button class="secondary-button compact" type="button" on:click=refresh_providers>"List"</button>
-                                <button class="secondary-button compact" type="button" on:click=set_selected_active>"Set active"</button>
-                                <button class="secondary-button compact" type="button" on:click=delete_selected_provider>"Delete"</button>
-                                <button class="secondary-button compact" type="button" on:click=move_selected_provider_first>"Move first"</button>
+                                <button class="secondary-button compact" type="button" on:click=refresh_providers>"刷新列表"</button>
                             </div>
                             <For
                                 each=move || providers.get()
@@ -1444,6 +1908,7 @@ pub fn App() -> impl IntoView {
                                             <div class="provider-actions">
                                                 <button class="secondary-button compact" type="button" on:click=move |_| {
                                                     set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                    set_editing_provider_id.set(Some(edit_provider.provider_id.clone()));
                                                     set_provider_name.set(edit_provider.display_name.clone());
                                                     set_base_url.set(edit_provider.base_url.clone());
                                                     set_api_format.set(api_format_value(&edit_provider.api_format));
@@ -1451,8 +1916,23 @@ pub fn App() -> impl IntoView {
                                                     set_api_key.set(String::new());
                                                 }>"Edit"</button>
                                                 <button class="secondary-button compact" type="button" on:click=move |_| {
-                                                    set_selected_provider_id.set(Some(active_provider.provider_id.clone()));
-                                                }>"Select"</button>
+                                                    let provider_id = active_provider.provider_id.clone();
+                                                    set_selected_provider_id.set(Some(provider_id.clone()));
+                                                    set_result.set(format!("设置 active Provider 中: {provider_id}"));
+                                                    spawn_local(async move {
+                                                        match set_active_provider_and_sync(
+                                                            provider_id,
+                                                            set_active_provider_id,
+                                                            set_selected_provider_id,
+                                                            set_providers,
+                                                            set_readiness_snapshot,
+                                                            set_restart_required,
+                                                        ).await {
+                                                            Ok(message) => set_result.set(message),
+                                                            Err(message) => set_result.set(message),
+                                                        }
+                                                    });
+                                                }>"设为默认"</button>
                                             </div>
                                         </div>
                                     }
@@ -1466,6 +1946,7 @@ pub fn App() -> impl IntoView {
                         <p class="preset-help">"选择后会自动填入 API 地址和推荐模型，API Key 仍由你自己填写。"</p>
                         <div class="preset-list">
                             <button class=move || preset_item_class(selected_preset_id.get() == "deepseek") type="button" on:click=move |_| {
+                                set_editing_provider_id.set(None);
                                 set_selected_preset_id.set("deepseek".to_owned());
                                 set_provider_name.set("DeepSeek".to_owned());
                                 set_base_url.set("https://api.deepseek.com/anthropic".to_owned());
@@ -1478,6 +1959,7 @@ pub fn App() -> impl IntoView {
                                 <span class=move || if selected_preset_id.get() == "deepseek" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
                             <button class=move || preset_item_class(selected_preset_id.get() == "kimi") type="button" on:click=move |_| {
+                                set_editing_provider_id.set(None);
                                 set_selected_preset_id.set("kimi".to_owned());
                                 set_provider_name.set("Kimi（月之暗面）".to_owned());
                                 set_base_url.set("https://api.moonshot.cn/v1".to_owned());
@@ -1490,6 +1972,7 @@ pub fn App() -> impl IntoView {
                                 <span class=move || if selected_preset_id.get() == "kimi" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
                             <button class=move || preset_item_class(selected_preset_id.get() == "qiniu") type="button" on:click=move |_| {
+                                set_editing_provider_id.set(None);
                                 set_selected_preset_id.set("qiniu".to_owned());
                                 set_provider_name.set("七牛云 AI".to_owned());
                                 set_base_url.set("https://api.qnaigc.com/v1".to_owned());
@@ -1502,6 +1985,7 @@ pub fn App() -> impl IntoView {
                                 <span class=move || if selected_preset_id.get() == "qiniu" { "icon-svg icon-check" } else { "icon-svg icon-chevron-right" } aria-hidden="true"></span>
                             </button>
                             <button class=move || preset_item_class(selected_preset_id.get() == "zhipu") type="button" on:click=move |_| {
+                                set_editing_provider_id.set(None);
                                 set_selected_preset_id.set("zhipu".to_owned());
                                 set_provider_name.set("智谱 GLM".to_owned());
                                 set_base_url.set("https://open.bigmodel.cn/api/paas/v4/".to_owned());
@@ -1558,8 +2042,18 @@ pub fn App() -> impl IntoView {
                     <article class="panel">
                         <h2>{move || copy("model_mapping")}</h2>
                         <div class="button-row">
-                            <button class="secondary-button" type="button" on:click=load_model_mappings>"Load mappings"</button>
-                            <button class="primary-button" type="button" on:click=save_model_mappings>"Save mappings"</button>
+                            <button
+                                class="secondary-button"
+                                type="button"
+                                disabled=move || editing_provider_id.get().is_none()
+                                on:click=load_model_mappings
+                            >"Load mappings"</button>
+                            <button
+                                class="primary-button"
+                                type="button"
+                                disabled=move || editing_provider_id.get().is_none()
+                                on:click=save_model_mappings
+                            >"Save mappings"</button>
                         </div>
                         <textarea
                             class="json-input mapping-input"
@@ -1589,7 +2083,18 @@ pub fn App() -> impl IntoView {
                             <h1>"提供商"</h1>
                             <p>"管理已配置的 API 提供商。"</p>
                         </div>
-                        <button class="primary-button" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"添加提供商"</button>
+                        <button class="primary-button" type="button" on:click=move |_| {
+                            reset_provider_form(
+                                set_editing_provider_id,
+                                set_selected_preset_id,
+                                set_provider_name,
+                                set_base_url,
+                                set_api_key,
+                                set_api_format,
+                                set_auth_scheme,
+                            );
+                            set_active_page.set(AppPage::ProvidersAdd);
+                        }>"添加提供商"</button>
                     </div>
                     <article class="panel table-panel">
                         <div class="provider-table-header">
@@ -1616,7 +2121,7 @@ pub fn App() -> impl IntoView {
                                     let provider_id_for_disabled = provider.provider_id.clone();
                                     let logo_src = provider_logo_src(&provider.display_name);
                                     view! {
-                                        <article class=move || provider_switch_card_class(selected_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
+                                        <article class=move || provider_switch_card_class(active_provider_id.get().as_deref() == Some(provider_id_for_class.as_str()))>
                                             <span class="drag-handle"><span class="icon-svg icon-grip" aria-hidden="true"></span></span>
                                             <span class="provider-logo"><img src=logo_src alt="" /></span>
                                             <span class="provider-main">
@@ -1628,25 +2133,46 @@ pub fn App() -> impl IntoView {
                                             </span>
                                             <span class="provider-actions">
                                                 <button
-                                                    class=move || compact_enable_class(selected_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
+                                                    class=move || compact_enable_class(active_provider_id.get().as_deref() == Some(provider_id_for_button_class.as_str()))
                                                     type="button"
-                                                    disabled=move || selected_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
+                                                    disabled=move || active_provider_id.get().as_deref() == Some(provider_id_for_disabled.as_str())
                                                     on:click=move |_| {
                                                         let provider_id = select_provider.provider_id.clone();
                                                         set_selected_provider_id.set(Some(provider_id.clone()));
+                                                        set_result.set(format!("设置 active Provider 中: {provider_id}"));
+                                                        spawn_local(async move {
+                                                            match set_active_provider_and_sync(
+                                                                provider_id,
+                                                                set_active_provider_id,
+                                                                set_selected_provider_id,
+                                                                set_providers,
+                                                                set_readiness_snapshot,
+                                                                set_restart_required,
+                                                            ).await {
+                                                                Ok(message) => set_result.set(message),
+                                                                Err(message) => set_result.set(message),
+                                                            }
+                                                        });
                                                     }
                                                 >
                                                     <span class="icon-svg icon-play" aria-hidden="true"></span>
-                                                    <span>{move || if selected_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
+                                                    <span>{move || if active_provider_id.get().as_deref() == Some(provider_id_for_button_label.as_str()) { "默认" } else { "启用" }}</span>
                                                 </button>
                                                 <button class="icon-action" type="button" title="Set active" on:click=move |_| {
                                                     let provider_id = active_provider.provider_id.clone();
                                                     set_selected_provider_id.set(Some(provider_id.clone()));
                                                     set_result.set(format!("设置 active Provider 中: {provider_id}"));
                                                     spawn_local(async move {
-                                                        match commands::set_active_provider(provider_id.clone()).await {
-                                                            Ok(changed) => set_result.set(format!("set_active_provider changed={changed}\nactiveProvider={provider_id}")),
-                                                            Err(error) => set_result.set(format!("set_active_provider failed: {error}")),
+                                                        match set_active_provider_and_sync(
+                                                            provider_id,
+                                                            set_active_provider_id,
+                                                            set_selected_provider_id,
+                                                            set_providers,
+                                                            set_readiness_snapshot,
+                                                            set_restart_required,
+                                                        ).await {
+                                                            Ok(message) => set_result.set(message),
+                                                            Err(message) => set_result.set(message),
                                                         }
                                                     });
                                                 }>
@@ -1654,6 +2180,7 @@ pub fn App() -> impl IntoView {
                                                 </button>
                                                 <button class="icon-action" type="button" title="Edit" on:click=move |_| {
                                                     set_selected_provider_id.set(Some(edit_provider.provider_id.clone()));
+                                                    set_editing_provider_id.set(Some(edit_provider.provider_id.clone()));
                                                     set_provider_name.set(edit_provider.display_name.clone());
                                                     set_base_url.set(edit_provider.base_url.clone());
                                                     set_api_format.set(api_format_value(&edit_provider.api_format));
@@ -1684,15 +2211,34 @@ pub fn App() -> impl IntoView {
                                                     set_result.set(format!("删除 Provider 中: {provider_id}"));
                                                     spawn_local(async move {
                                                         match commands::delete_provider(provider_id.clone()).await {
-                                                            Ok(changed) => match commands::list_providers().await {
-                                                                Ok(next_providers) => {
-                                                                    set_selected_provider_id.set(next_providers.first().map(|provider| provider.provider_id.clone()));
+                                                            Ok(changed) => match commands::get_config_snapshot().await {
+                                                                Ok(snapshot) => {
+                                                                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                    set_active_provider_id.set(snapshot.active_provider.clone());
+                                                                    set_selected_provider_id.set(snapshot.active_provider.clone().or_else(|| snapshot.providers.first().map(|provider| provider.provider_id.clone())));
+                                                                    let next_providers = snapshot.providers;
                                                                     set_providers.set(next_providers.clone());
                                                                     set_result.set(format!("delete_provider changed={changed}\n{}", format_provider_list(&next_providers)));
                                                                 }
-                                                                Err(error) => set_result.set(format!("delete_provider changed={changed}\nlist_providers failed: {error}")),
+                                                                Err(error) => {
+                                                                    mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                    set_result.set(format!("delete_provider changed={changed}\nget_config_snapshot failed: {error}"));
+                                                                }
                                                             },
-                                                            Err(error) => set_result.set(format!("delete_provider failed: {error}")),
+                                                            Err(error) => {
+                                                                mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                                                                let refresh_note = refresh_provider_state_from_backend(
+                                                                    set_active_provider_id,
+                                                                    set_selected_provider_id,
+                                                                    set_providers,
+                                                                )
+                                                                .await;
+                                                                set_result.set(format_backend_mutation_error(
+                                                                    "delete_provider",
+                                                                    &error,
+                                                                    refresh_note,
+                                                                ));
+                                                            }
                                                         }
                                                     });
                                                 }>
@@ -1706,9 +2252,6 @@ pub fn App() -> impl IntoView {
                         </div>
                         <div class="button-row provider-list-toolbar">
                             <button class="secondary-button compact" type="button" on:click=refresh_providers><span class="icon-svg icon-refresh" aria-hidden="true"></span><span>"刷新"</span></button>
-                            <button class="secondary-button compact" type="button" on:click=set_selected_active><span class="icon-svg icon-play" aria-hidden="true"></span><span>"设为默认"</span></button>
-                            <button class="secondary-button compact" type="button" on:click=move_selected_provider_first><span class="icon-svg icon-arrow-up" aria-hidden="true"></span><span>"移到首位"</span></button>
-                            <button class="secondary-button compact danger-outline" type="button" on:click=delete_selected_provider><span class="icon-svg icon-trash" aria-hidden="true"></span><span>"删除"</span></button>
                         </div>
                     </article>
                 </section>
@@ -1725,8 +2268,8 @@ pub fn App() -> impl IntoView {
                         <div>
                             <article class="panel desktop-card">
                                 <h2>"Claude 桌面版配置"</h2>
-                                <div class="configured-row">
-                                    <span class="circle-check">"✓"</span>
+                                <div class=move || configured_row_class(readiness_snapshot.get().as_ref(), provider_saved.get())>
+                                    <span class="circle-check">{move || desktop_status_mark(readiness_snapshot.get().as_ref(), provider_saved.get())}</span>
                                     <strong>{move || desktop_status_value(readiness_snapshot.get().as_ref(), provider_saved.get())}</strong>
                                 </div>
                                 <div class="apply-explain desktop-explain">
@@ -1735,6 +2278,12 @@ pub fn App() -> impl IntoView {
                                 </div>
                                 <button class="primary-button wide-button" type="button" on:click=apply>"应用到 Claude 桌面版"</button>
                                 <button class="secondary-button wide-button" type="button" on:click=probe_desktop_config>"读取配置详情"</button>
+                                <button class="secondary-button wide-button" type="button" on:click=restart_claude_desktop>"重启 Claude Desktop"</button>
+                                <button class="danger-button wide-button" type="button" on:click=clear_desktop_config>"清除桌面版配置"</button>
+                                <div class=move || restart_reminder_class(restart_required.get())>
+                                    <strong>"需要重启 Claude Desktop"</strong>
+                                    <p>"Claude Desktop 配置已变更。重启后才会读取最新 claude-* 模型列表、gateway 地址或清理结果。"</p>
+                                </div>
                             </article>
                             <article class="panel details-panel">
                                 <div class="panel-header">
@@ -1758,8 +2307,8 @@ pub fn App() -> impl IntoView {
                 <section class=move || page_section_class(active_page.get(), AppPage::Proxy)>
                     <article class="proxy-status-card">
                         <div class="proxy-status-left">
-                            <span class=move || gateway_status_dot_class(readiness_snapshot.get().as_ref())></span>
-                            <strong>{move || gateway_status_label(readiness_snapshot.get().as_ref())}</strong>
+                            <span class=move || proxy_status_dot_class(proxy_status.get().as_ref(), readiness_snapshot.get().as_ref())></span>
+                            <strong class=move || proxy_status_text_class(proxy_status.get().as_ref(), readiness_snapshot.get().as_ref())>{move || proxy_status_label(proxy_status.get().as_ref(), readiness_snapshot.get().as_ref())}</strong>
                             <span>"本机监听"</span>
                         </div>
                         <div class="proxy-status-controls">
@@ -1777,16 +2326,33 @@ pub fn App() -> impl IntoView {
                             <button class="dark-toolbar-button" type="button" on:click=check_health><span>"⌁"</span><span>"运行诊断"</span></button>
                             <button class="dark-toolbar-button" type="button" on:click=dry_run><span class="icon-svg icon-magic" aria-hidden="true"></span><span>"Dry-run"</span></button>
                             <button class="dark-toolbar-button" type="button" on:click=export_diagnostics_package><span class="icon-svg icon-info" aria-hidden="true"></span><span>"导出诊断包"</span></button>
-                            <label class="auto-scroll-toggle"><span>"自动滚动"</span><input type="checkbox" checked=true /></label>
+                            <label class="auto-scroll-toggle"><span>"自动滚动"</span><input type="checkbox" prop:checked=move || auto_scroll_logs.get() on:change=move |event| set_auto_scroll_logs.set(event_target_checked(&event)) /></label>
                         </div>
-                        <pre class="proxy-log-body">{move || proxy_logs_text.get()}</pre>
+                        <div class="proxy-log-body" node_ref=proxy_log_body_ref>
+                            <div class=move || log_empty_class(proxy_logs.get().is_empty())>{move || proxy_logs_text.get()}</div>
+                            <For
+                                each=move || proxy_log_entries(proxy_logs.get())
+                                key=|entry| entry.key.clone()
+                                children=move |entry| {
+                                    let level_class = log_level_class(&entry.level);
+                                    view! {
+                                        <div class="log-line">
+                                            <span class="log-time">{entry.timestamp}</span>
+                                            <span class=level_class>{entry.level}</span>
+                                            <span class="log-code">{entry.code}</span>
+                                            <span class="log-message">{entry.message}</span>
+                                        </div>
+                                    }
+                                }
+                            />
+                        </div>
                     </article>
 
                     <div class="proxy-metrics-grid">
-                        <article class="metric-card"><span class="metric-icon icon-svg icon-sliders" aria-hidden="true"></span><strong>"总请求"</strong><b>"0"</b></article>
-                        <article class="metric-card"><span class="metric-icon icon-svg icon-check" aria-hidden="true"></span><strong>"成功"</strong><b>"0"</b></article>
-                        <article class="metric-card"><span class="metric-icon">"×"</span><strong>"失败"</strong><b>"0"</b></article>
-                        <article class="metric-card"><span class="metric-icon icon-svg icon-dashboard" aria-hidden="true"></span><strong>"今日"</strong><b>"0"</b></article>
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-sliders" aria-hidden="true"></span><strong>"总请求"</strong><b>{move || proxy_stat_total(proxy_status.get().as_ref()).to_string()}</b></article>
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-check" aria-hidden="true"></span><strong>"成功"</strong><b>{move || proxy_stat_success(proxy_status.get().as_ref()).to_string()}</b></article>
+                        <article class="metric-card"><span class="metric-icon">"×"</span><strong>"失败"</strong><b>{move || proxy_stat_failed(proxy_status.get().as_ref()).to_string()}</b></article>
+                        <article class="metric-card"><span class="metric-icon icon-svg icon-dashboard" aria-hidden="true"></span><strong>"今日"</strong><b>{move || proxy_stat_today(proxy_status.get().as_ref()).to_string()}</b></article>
                     </div>
                 </section>
 
@@ -1796,11 +2362,11 @@ pub fn App() -> impl IntoView {
                             <label>"主题"</label>
                             <div class="theme-swatches">
                                 <button class=move || theme_swatch_class(theme.get() == "light", "blue") type="button" on:click=move |_| set_theme.set("light".to_owned())><span></span></button>
-                                <button class=move || theme_swatch_class(false, "green") type="button"><span></span></button>
-                                <button class=move || theme_swatch_class(false, "orange") type="button"><span></span></button>
-                                <button class=move || theme_swatch_class(false, "slate") type="button"><span></span></button>
+                                <button class=move || theme_swatch_class(theme.get() == "green", "green") type="button" on:click=move |_| set_theme.set("green".to_owned())><span></span></button>
+                                <button class=move || theme_swatch_class(theme.get() == "orange", "orange") type="button" on:click=move |_| set_theme.set("orange".to_owned())><span></span></button>
+                                <button class=move || theme_swatch_class(theme.get() == "slate", "slate") type="button" on:click=move |_| set_theme.set("slate".to_owned())><span></span></button>
                                 <button class=move || theme_swatch_class(theme.get() == "dark", "dark") type="button" on:click=move |_| set_theme.set("dark".to_owned())><span></span></button>
-                                <button class=move || theme_swatch_class(false, "white") type="button"><span></span></button>
+                                <button class=move || theme_swatch_class(theme.get() == "white", "white") type="button" on:click=move |_| set_theme.set("white".to_owned())><span></span></button>
                             </div>
                         </div>
                         <div class="settings-row">
@@ -1815,33 +2381,24 @@ pub fn App() -> impl IntoView {
                             <input prop:value=move || proxy_port.get() on:input=move |event| set_proxy_port.set(event_target_value(&event)) />
                         </div>
                         <div class="settings-row">
-                            <label>"管理端口"</label>
-                            <input value="18081" />
-                        </div>
-                        <div class="settings-row">
-                            <label>"开机自启"</label>
-                            <label class="switch"><input type="checkbox" /><span></span></label>
-                        </div>
-                        <div class="settings-row">
                             <label>"更新地址"</label>
-                            <input prop:value=move || update_url.get() on:input=move |event| set_update_url.set(event_target_value(&event)) />
-                        </div>
-                        <div class="settings-row settings-proxy-row">
-                            <label>"上游代理"</label>
                             <div>
-                                <div class="inline-switch-input">
-                                    <label class="mini-switch"><input type="checkbox" /><span></span></label>
-                                    <input value="127.0.0.1:7890" />
+                                <input prop:value=move || update_url.get() on:input=move |event| {
+                                    set_update_url.set(event_target_value(&event));
+                                    set_update_download_path.set(None);
+                                } />
+                                <div class="button-row compact-row">
+                                    <button class="secondary-button compact" type="button" on:click=check_update_now><span class="icon-svg icon-search" aria-hidden="true"></span><span>"检查更新"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=download_update_now><span class="icon-svg icon-download" aria-hidden="true"></span><span>"下载并验证"</span></button>
+                                    <button class="secondary-button compact" type="button" prop:disabled=move || update_download_path.get().is_none() on:click=install_update_now><span>"▣"</span><span>"启动安装器"</span></button>
                                 </div>
-                                <button class="secondary-button compact" type="button" on:click=run_provider_static_smoke><span class="icon-svg icon-search" aria-hidden="true"></span><span>"自动检测"</span></button>
-                                <p>"用于访问上游 API 的 HTTP 代理。留空则使用系统环境变量。格式：host:port 或 http://host:port"</p>
                             </div>
                         </div>
                         <div class="settings-row">
                             <label>"第三方兼容"</label>
                             <div>
                                 <button class="secondary-button compact" type="button" on:click=run_gateway_smoke><span class="icon-svg icon-info" aria-hidden="true"></span><span>"检查兼容性"</span></button>
-                                <p>"Anthropic 兼容接口是稳定主线；OpenAI Chat、new-api、CPA、OpenCode Go 属于实验适配，工具调用需要单独验证。"</p>
+                                <p>"Anthropic 兼容接口是稳定主线；OpenAI Chat/new-api 会做工具调用转换，具体服务仍需用诊断验证。"</p>
                             </div>
                         </div>
                         <div class="settings-row">
@@ -1852,7 +2409,7 @@ pub fn App() -> impl IntoView {
                                     <button class="secondary-button compact" type="button" on:click=copy_diagnostics_summary><span>"▣"</span><span>"诊断摘要"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=save_diagnostics_package><span class="icon-svg icon-info" aria-hidden="true"></span><span>"导出诊断包"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=save_diagnostics_package_as><span class="icon-svg icon-download" aria-hidden="true"></span><span>"另存诊断包"</span></button>
-                                    <button class="secondary-button compact" type="button" on:click=copy_diagnostics_to_clipboard><span>"▣"</span><span>"复制诊断包"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=copy_diagnostics_to_clipboard><span>"▣"</span><span>"复制诊断摘要"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=preview_issue_draft><span class="icon-svg icon-edit" aria-hidden="true"></span><span>"Issue 草稿"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=open_issue><span class="icon-svg icon-terminal" aria-hidden="true"></span><span>"打开 Issue"</span></button>
                                 </div>
@@ -1867,21 +2424,12 @@ pub fn App() -> impl IntoView {
                                     <button class="secondary-button compact" type="button" on:click=create_backup_now><span class="icon-svg icon-info" aria-hidden="true"></span><span>"立即备份"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=list_config_backups><span class="icon-svg icon-refresh" aria-hidden="true"></span><span>"备份列表"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=save_provider_export_as><span class="icon-svg icon-download" aria-hidden="true"></span><span>"导出配置"</span></button>
-                                    <button class="secondary-button compact" type="button" on:click=move |_| preview_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入配置"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=move |_| preview_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"预览导入"</span></button>
+                                    <button class="secondary-button compact" type="button" on:click=move |_| apply_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入新增项"</span></button>
                                     <button class="secondary-button compact" type="button" on:click=save_settings><span class="icon-svg icon-save" aria-hidden="true"></span><span>"保存设置"</span></button>
                                 </div>
                                 <textarea class="json-input settings-import-json" placeholder="粘贴 CC Switch / CC Desktop Switch 配置 JSON" prop:value=move || import_json.get() on:input=move |event| set_import_json.set(event_target_value(&event))></textarea>
                                 <pre class="settings-result">{move || import_preview_text.get()}</pre>
-                            </div>
-                        </div>
-                        <div class="settings-row">
-                            <label>"CC-Switch 导入"</label>
-                            <div>
-                                <div class="button-row">
-                                    <button class="secondary-button compact" type="button" on:click=load_provider_template_example><span class="icon-svg icon-search" aria-hidden="true"></span><span>"检测配置"</span></button>
-                                    <button class="secondary-button compact" type="button" on:click=move |_| apply_import(false, true)><span class="icon-svg icon-import" aria-hidden="true"></span><span>"导入兼容项"</span></button>
-                                </div>
-                                <p>"只导入 Anthropic 兼容配置；OpenAI 格式会显示为暂不导入，避免转换风险。"</p>
                             </div>
                         </div>
                     </article>
@@ -1900,7 +2448,18 @@ pub fn App() -> impl IntoView {
                         <article class="timeline-card"><span>"2"</span><strong>"一键应用"</strong><p>"保存 Provider、设为默认、启动 gateway 并写入 Claude Desktop。"</p></article>
                         <article class="timeline-card"><span>"3"</span><strong>"重启 Claude Desktop"</strong><p>"重启后 Claude Desktop 只看到 claude-* safe route。"</p></article>
                     </div>
-                    <button class="primary-button guide-start" type="button" on:click=move |_| set_active_page.set(AppPage::ProvidersAdd)>"开始使用"</button>
+                    <button class="primary-button guide-start" type="button" on:click=move |_| {
+                        reset_provider_form(
+                            set_editing_provider_id,
+                            set_selected_preset_id,
+                            set_provider_name,
+                            set_base_url,
+                            set_api_key,
+                            set_api_format,
+                            set_auth_scheme,
+                        );
+                        set_active_page.set(AppPage::ProvidersAdd);
+                    }>"开始使用"</button>
                 </section>
             </main>
         </div>
@@ -1931,16 +2490,319 @@ fn auth_scheme_value(auth_scheme: &commands::AuthScheme) -> String {
 }
 
 fn format_gateway_health(health: &commands::GatewayHealth) -> String {
-    format!("{} running={}", health.base_url, health.running)
+    format!(
+        "{} running={} auth=required(Bearer/x-api-key)",
+        health.base_url, health.running
+    )
 }
 
-fn parse_proxy_port(value: &str) -> u16 {
+fn is_supported_theme(value: &str) -> bool {
+    matches!(
+        value,
+        "light" | "green" | "orange" | "slate" | "dark" | "white"
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reset_provider_form(
+    set_editing_provider_id: WriteSignal<Option<String>>,
+    set_selected_preset_id: WriteSignal<String>,
+    set_provider_name: WriteSignal<String>,
+    set_base_url: WriteSignal<String>,
+    set_api_key: WriteSignal<String>,
+    set_api_format: WriteSignal<String>,
+    set_auth_scheme: WriteSignal<String>,
+) {
+    set_editing_provider_id.set(None);
+    set_selected_preset_id.set(String::new());
+    set_provider_name.set(String::new());
+    set_base_url.set(String::new());
+    set_api_key.set(String::new());
+    set_api_format.set("anthropic".to_owned());
+    set_auth_scheme.set("bearer".to_owned());
+}
+
+fn mark_desktop_readiness_stale(
+    set_readiness_snapshot: WriteSignal<Option<commands::ReadinessSnapshot>>,
+    set_restart_required: WriteSignal<bool>,
+) {
+    set_readiness_snapshot.set(None);
+    set_restart_required.set(false);
+}
+
+async fn refresh_provider_state_from_backend(
+    set_active_provider_id: WriteSignal<Option<String>>,
+    set_selected_provider_id: WriteSignal<Option<String>>,
+    set_providers: WriteSignal<Vec<ProviderSummary>>,
+) -> Result<(), String> {
+    refresh_provider_state_from_backend_preserving_selection(
+        set_active_provider_id,
+        set_selected_provider_id,
+        set_providers,
+        None,
+    )
+    .await
+}
+
+async fn refresh_provider_state_from_backend_preserving_selection(
+    set_active_provider_id: WriteSignal<Option<String>>,
+    set_selected_provider_id: WriteSignal<Option<String>>,
+    set_providers: WriteSignal<Vec<ProviderSummary>>,
+    preferred_selected_provider_id: Option<String>,
+) -> Result<(), String> {
+    match commands::get_config_snapshot().await {
+        Ok(snapshot) => {
+            let preferred_exists =
+                preferred_selected_provider_id
+                    .as_ref()
+                    .is_some_and(|provider_id| {
+                        snapshot
+                            .providers
+                            .iter()
+                            .any(|provider| provider.provider_id == *provider_id)
+                    });
+            let selected_provider = if preferred_exists {
+                preferred_selected_provider_id
+            } else {
+                snapshot.active_provider.clone().or_else(|| {
+                    snapshot
+                        .providers
+                        .first()
+                        .map(|provider| provider.provider_id.clone())
+                })
+            };
+            set_active_provider_id.set(snapshot.active_provider);
+            set_selected_provider_id.set(selected_provider);
+            set_providers.set(snapshot.providers);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn set_active_provider_and_sync(
+    provider_id: String,
+    set_active_provider_id: WriteSignal<Option<String>>,
+    set_selected_provider_id: WriteSignal<Option<String>>,
+    set_providers: WriteSignal<Vec<ProviderSummary>>,
+    set_readiness_snapshot: WriteSignal<Option<commands::ReadinessSnapshot>>,
+    set_restart_required: WriteSignal<bool>,
+) -> Result<String, String> {
+    match commands::set_active_provider(provider_id.clone()).await {
+        Ok(true) => {
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+            set_active_provider_id.set(Some(provider_id.clone()));
+            Ok(format!(
+                "set_active_provider changed=true\nactiveProvider={provider_id}"
+            ))
+        }
+        Ok(false) => {
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+            let refresh_note = refresh_provider_state_from_backend(
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+            )
+            .await;
+            Err(format_backend_mutation_error(
+                "set_active_provider",
+                &format!("provider not found: {provider_id}"),
+                refresh_note,
+            ))
+        }
+        Err(error) => {
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+            let refresh_note = refresh_provider_state_from_backend(
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+            )
+            .await;
+            Err(format_backend_mutation_error(
+                "set_active_provider",
+                &error,
+                refresh_note,
+            ))
+        }
+    }
+}
+
+async fn refresh_settings_state_from_backend(
+    set_language: WriteSignal<String>,
+    set_theme: WriteSignal<String>,
+    set_proxy_port: WriteSignal<String>,
+    set_update_url: WriteSignal<String>,
+    set_proxy_status: WriteSignal<Option<commands::ProxyStatus>>,
+) -> Result<(), String> {
+    match commands::get_settings().await {
+        Ok(settings) => {
+            if settings.language == "zh" || settings.language == "en" {
+                set_language.set(settings.language);
+            }
+            if is_supported_theme(&settings.theme) {
+                set_theme.set(settings.theme);
+            }
+            set_proxy_port.set(settings.proxy_port.to_string());
+            set_update_url.set(settings.update_url);
+            if let Ok(status) = commands::get_proxy_status().await {
+                set_proxy_status.set(Some(status));
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn refresh_model_mappings_from_backend(
+    provider_id: String,
+    set_mapping_default: WriteSignal<String>,
+    set_mapping_opus: WriteSignal<String>,
+    set_mapping_sonnet: WriteSignal<String>,
+    set_mapping_haiku: WriteSignal<String>,
+    set_model_mapping_json: WriteSignal<String>,
+) -> Result<(), String> {
+    match commands::list_model_mappings(provider_id).await {
+        Ok(mappings) => {
+            for mapping in &mappings {
+                match &mapping.slot {
+                    ModelSlot::Default => set_mapping_default.set(mapping.upstream_model.clone()),
+                    ModelSlot::Opus => set_mapping_opus.set(mapping.upstream_model.clone()),
+                    ModelSlot::Sonnet => set_mapping_sonnet.set(mapping.upstream_model.clone()),
+                    ModelSlot::Haiku => set_mapping_haiku.set(mapping.upstream_model.clone()),
+                }
+            }
+            match serde_json::to_string_pretty(&mappings) {
+                Ok(raw) => {
+                    set_model_mapping_json.set(raw);
+                    Ok(())
+                }
+                Err(error) => Err(format!("format mappings failed: {error}")),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn load_model_mappings_for_provider(
+    provider_id: String,
+    set_mapping_default: WriteSignal<String>,
+    set_mapping_opus: WriteSignal<String>,
+    set_mapping_sonnet: WriteSignal<String>,
+    set_mapping_haiku: WriteSignal<String>,
+    set_model_mapping_json: WriteSignal<String>,
+    set_result: WriteSignal<String>,
+) {
+    match commands::list_model_mappings(provider_id).await {
+        Ok(mappings) => match serde_json::to_string_pretty(&mappings) {
+            Ok(raw) => {
+                for mapping in &mappings {
+                    match &mapping.slot {
+                        ModelSlot::Default => {
+                            set_mapping_default.set(mapping.upstream_model.clone())
+                        }
+                        ModelSlot::Opus => set_mapping_opus.set(mapping.upstream_model.clone()),
+                        ModelSlot::Sonnet => set_mapping_sonnet.set(mapping.upstream_model.clone()),
+                        ModelSlot::Haiku => set_mapping_haiku.set(mapping.upstream_model.clone()),
+                    }
+                }
+                set_model_mapping_json.set(raw.clone());
+                set_result.set(raw);
+            }
+            Err(error) => set_result.set(format!("format mappings failed: {error}")),
+        },
+        Err(error) => set_result.set(format!("list_model_mappings failed: {error}")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn save_model_mappings_for_provider(
+    provider_id: String,
+    provider_id_for_refresh: String,
+    mappings: Vec<ModelMappingDraft>,
+    set_active_provider_id: WriteSignal<Option<String>>,
+    set_selected_provider_id: WriteSignal<Option<String>>,
+    set_providers: WriteSignal<Vec<ProviderSummary>>,
+    set_mapping_default: WriteSignal<String>,
+    set_mapping_opus: WriteSignal<String>,
+    set_mapping_sonnet: WriteSignal<String>,
+    set_mapping_haiku: WriteSignal<String>,
+    set_model_mapping_json: WriteSignal<String>,
+    set_readiness_snapshot: WriteSignal<Option<commands::ReadinessSnapshot>>,
+    set_restart_required: WriteSignal<bool>,
+    set_result: WriteSignal<String>,
+) {
+    match commands::update_model_mappings(provider_id, mappings).await {
+        Ok(saved) => match serde_json::to_string_pretty(&saved) {
+            Ok(raw) => {
+                mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+                set_model_mapping_json.set(raw.clone());
+                set_result.set(format!("update_model_mappings ok\n{raw}"));
+            }
+            Err(error) => set_result.set(format!("format mappings failed: {error}")),
+        },
+        Err(error) => {
+            mark_desktop_readiness_stale(set_readiness_snapshot, set_restart_required);
+            let provider_refresh = refresh_provider_state_from_backend_preserving_selection(
+                set_active_provider_id,
+                set_selected_provider_id,
+                set_providers,
+                Some(provider_id_for_refresh.clone()),
+            )
+            .await;
+            let mapping_refresh = refresh_model_mappings_from_backend(
+                provider_id_for_refresh,
+                set_mapping_default,
+                set_mapping_opus,
+                set_mapping_sonnet,
+                set_mapping_haiku,
+                set_model_mapping_json,
+            )
+            .await;
+            let refresh_note =
+                merge_refresh_results(provider_refresh, mapping_refresh, "model mappings");
+            set_result.set(format_backend_mutation_error(
+                "update_model_mappings",
+                &error,
+                refresh_note,
+            ));
+        }
+    }
+}
+
+fn merge_refresh_results(
+    primary: Result<(), String>,
+    secondary: Result<(), String>,
+    secondary_label: &str,
+) -> Result<(), String> {
+    match (primary, secondary) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(format!("{secondary_label} refresh failed: {error}")),
+        (Err(first), Err(second)) => Err(format!(
+            "{first}; {secondary_label} refresh failed: {second}"
+        )),
+    }
+}
+
+fn format_backend_mutation_error(
+    action: &str,
+    error: &str,
+    refresh_result: Result<(), String>,
+) -> String {
+    let refresh_note = match refresh_result {
+        Ok(()) => "backend config state refreshed after error".to_owned(),
+        Err(refresh_error) => format!("backend config refresh failed after error: {refresh_error}"),
+    };
+    format!("{action} failed: {error}\n{refresh_note}")
+}
+
+fn parse_proxy_port(value: &str) -> Result<u16, String> {
     value
         .trim()
         .parse::<u16>()
         .ok()
         .filter(|port| *port > 0)
-        .unwrap_or(18080)
+        .ok_or_else(|| "proxy_port_invalid: enter a port from 1 to 65535".to_owned())
 }
 
 fn update_url_or_default(value: &str) -> String {
@@ -1951,6 +2813,29 @@ fn update_url_or_default(value: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+fn format_update_check(check: &commands::UpdateCheckResult) -> String {
+    let asset = check
+        .asset
+        .as_ref()
+        .map(|asset| format!("asset={}\nurl={}", asset.name, asset.url))
+        .unwrap_or_else(|| "asset=<none>".to_owned());
+    format!(
+        "check_update ok\ncurrent={}\nlatest={}\navailable={}\nplatform={}\n{}",
+        check.current_version, check.latest_version, check.available, check.platform, asset
+    )
+}
+
+fn format_update_download(download: &commands::UpdateDownloadResult) -> String {
+    format!(
+        "download_update ok\nasset={}\nbytes={}\nsha256Verified={}\nsignatureVerified={}\nstagingDir={}",
+        download.asset_path,
+        download.bytes,
+        download.sha256_verified,
+        download.signature_verified,
+        download.staging_dir
+    )
 }
 
 fn format_proxy_logs(logs: &[commands::DiagnosticsLogEntry]) -> String {
@@ -2052,26 +2937,100 @@ fn compact_enable_class(active: bool) -> &'static str {
     }
 }
 
-fn gateway_status_label(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
-    if snapshot
-        .map(|snapshot| snapshot.gateway.running)
-        .unwrap_or(false)
-    {
+fn proxy_status_label(
+    status: Option<&commands::ProxyStatus>,
+    snapshot: Option<&commands::ReadinessSnapshot>,
+) -> &'static str {
+    if proxy_is_running(status, snapshot) {
         "运行中"
     } else {
         "已停止"
     }
 }
 
-fn gateway_status_dot_class(snapshot: Option<&commands::ReadinessSnapshot>) -> &'static str {
-    if snapshot
-        .map(|snapshot| snapshot.gateway.running)
-        .unwrap_or(false)
-    {
+fn proxy_status_dot_class(
+    status: Option<&commands::ProxyStatus>,
+    snapshot: Option<&commands::ReadinessSnapshot>,
+) -> &'static str {
+    if proxy_is_running(status, snapshot) {
         "proxy-status-dot running"
     } else {
         "proxy-status-dot"
     }
+}
+
+fn proxy_status_text_class(
+    status: Option<&commands::ProxyStatus>,
+    snapshot: Option<&commands::ReadinessSnapshot>,
+) -> &'static str {
+    if proxy_is_running(status, snapshot) {
+        "proxy-status-text running"
+    } else {
+        "proxy-status-text stopped"
+    }
+}
+
+fn proxy_is_running(
+    status: Option<&commands::ProxyStatus>,
+    snapshot: Option<&commands::ReadinessSnapshot>,
+) -> bool {
+    status
+        .map(|status| status.running)
+        .or_else(|| snapshot.map(|snapshot| snapshot.gateway.running))
+        .unwrap_or(false)
+}
+
+fn proxy_stat_total(status: Option<&commands::ProxyStatus>) -> u64 {
+    status.map(|status| status.stats.total).unwrap_or(0)
+}
+
+fn proxy_stat_success(status: Option<&commands::ProxyStatus>) -> u64 {
+    status.map(|status| status.stats.success).unwrap_or(0)
+}
+
+fn proxy_stat_failed(status: Option<&commands::ProxyStatus>) -> u64 {
+    status.map(|status| status.stats.failed).unwrap_or(0)
+}
+
+fn proxy_stat_today(status: Option<&commands::ProxyStatus>) -> u64 {
+    status.map(|status| status.stats.today).unwrap_or(0)
+}
+
+fn proxy_log_entries(logs: Vec<commands::DiagnosticsLogEntry>) -> Vec<ProxyLogRow> {
+    logs.into_iter()
+        .rev()
+        .take(80)
+        .enumerate()
+        .map(|(index, entry)| {
+            let key = if entry.id > 0 {
+                format!("log-{}", entry.id)
+            } else {
+                format!(
+                    "log-fallback-{index}-{}-{}-{}-{}",
+                    entry.timestamp_unix_ms, entry.level, entry.code, entry.message
+                )
+            };
+            ProxyLogRow {
+                key,
+                timestamp: entry.timestamp_unix_ms.to_string(),
+                level: entry.level,
+                code: entry.code,
+                message: entry.message,
+            }
+        })
+        .collect()
+}
+
+fn log_empty_class(visible: bool) -> &'static str {
+    if visible {
+        "log-empty"
+    } else {
+        "log-empty hidden"
+    }
+}
+
+fn log_level_class(level: &str) -> String {
+    format!("log-level {}", level.trim().to_ascii_lowercase())
 }
 
 fn segmented_button_class(active: bool) -> &'static str {
@@ -2206,6 +3165,41 @@ fn desktop_status_value(
         Some(_) => "未配置".to_owned(),
         None if provider_saved => "待应用".to_owned(),
         None => "未配置".to_owned(),
+    }
+}
+
+fn desktop_status_kind(
+    snapshot: Option<&commands::ReadinessSnapshot>,
+    provider_saved: bool,
+) -> &'static str {
+    match snapshot {
+        Some(snapshot) if snapshot.desktop_readback_passed => "passed",
+        Some(snapshot) if snapshot.provider_configured => "pending",
+        Some(_) => "failed",
+        None if provider_saved => "pending",
+        None => "failed",
+    }
+}
+
+fn configured_row_class(
+    snapshot: Option<&commands::ReadinessSnapshot>,
+    provider_saved: bool,
+) -> &'static str {
+    match desktop_status_kind(snapshot, provider_saved) {
+        "passed" => "configured-row passed",
+        "pending" => "configured-row pending",
+        _ => "configured-row failed",
+    }
+}
+
+fn desktop_status_mark(
+    snapshot: Option<&commands::ReadinessSnapshot>,
+    provider_saved: bool,
+) -> &'static str {
+    match desktop_status_kind(snapshot, provider_saved) {
+        "passed" => "✓",
+        "pending" => "!",
+        _ => "×",
     }
 }
 
@@ -2379,6 +3373,50 @@ fn desktop_managed_policy_note(managed: bool) -> &'static str {
     }
 }
 
+fn confirm_action(message: &str) -> bool {
+    web_sys::window()
+        .and_then(|window| window.confirm_with_message(message).ok())
+        .unwrap_or(false)
+}
+
+fn restart_reminder_class(required: bool) -> &'static str {
+    if required {
+        "restart-reminder"
+    } else {
+        "restart-reminder hidden"
+    }
+}
+
+fn format_desktop_clear_result(result: &commands::DesktopClearResult) -> String {
+    format!(
+        "success: {}\nconfigId: {}\nlocalConfigLibrary: {}\nremovedConfig: {}\nclearedActiveConfig: {}\npreservedMeta: {}\nreadbackCleared: {}\nissues: {}",
+        result.success,
+        result.config_id,
+        result.local_config_library,
+        result.removed_config,
+        result.cleared_active_config,
+        result.preserved_meta,
+        result.readback_cleared,
+        if result.issue_codes.is_empty() {
+            "none".to_owned()
+        } else {
+            result.issue_codes.join(", ")
+        }
+    )
+}
+
+fn format_desktop_restart_result(result: &commands::DesktopRestartResult) -> String {
+    format!(
+        "launched: {}\nplatform: {:?}\nstoppedProcesses: {}\nforcedProcesses: {}\nexecutable: {}\nmessage: {}",
+        result.launched,
+        result.platform,
+        result.stopped_processes,
+        result.forced_processes,
+        result.executable.as_deref().unwrap_or("unknown"),
+        result.message
+    )
+}
+
 fn default_provider_template_json() -> String {
     serde_json::to_string_pretty(&serde_json::json!({
         "schemaVersion": 1,
@@ -2465,6 +3503,13 @@ fn visible_model_mapping_drafts(
             supports_max: false,
         },
     ]
+}
+
+fn model_mapping_target_provider_id(
+    editing_provider_id: Option<String>,
+    _selected_provider_id: Option<String>,
+) -> Option<String> {
+    editing_provider_id
 }
 
 fn text(language: &str, key: &str) -> &'static str {

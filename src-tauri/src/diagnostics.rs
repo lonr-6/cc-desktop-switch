@@ -66,6 +66,8 @@ pub struct DiagnosticsDesktopSection {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsLogEntry {
+    #[serde(default)]
+    pub id: u64,
     pub timestamp_unix_ms: u128,
     pub level: String,
     pub code: String,
@@ -220,7 +222,10 @@ pub fn build_diagnostics_package(
                 .as_ref()
                 .map(|provider| provider.display_name.clone()),
             proxy_port: config.settings.proxy_port,
-            gateway_api_key_present: config.gateway_api_key.is_some(),
+            gateway_api_key_present: config
+                .gateway_api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty()),
             providers: config
                 .providers
                 .iter()
@@ -235,6 +240,7 @@ pub fn build_diagnostics_package(
         runtime_logs: runtime_logs
             .into_iter()
             .map(|entry| DiagnosticsLogEntry {
+                id: entry.id,
                 timestamp_unix_ms: entry.timestamp_unix_ms,
                 level: entry.level,
                 code: entry.code,
@@ -346,11 +352,12 @@ pub fn redact_diagnostics_text(input: &str) -> String {
     .expect("query secret redaction regex should compile")
     .replace_all(&output, "${1}[REDACTED:query]")
     .into_owned();
-    output =
-        regex::Regex::new(r"\b(?:sk|ak|pk|ccds)_[A-Za-z0-9._-]{6,}\b|\bsk-[A-Za-z0-9._-]{6,}\b")
-            .expect("token redaction regex should compile")
-            .replace_all(&output, "[REDACTED:key]")
-            .into_owned();
+    output = regex::Regex::new(
+        r"\b(?:sk|ak|pk|ccds)_[A-Za-z0-9._-]{6,}\b|\b(?:sk|ccds-gw)-[A-Za-z0-9._-]{6,}\b",
+    )
+    .expect("token redaction regex should compile")
+    .replace_all(&output, "[REDACTED:key]")
+    .into_owned();
     output = regex::Regex::new(r"(?im)^(authorization:\s*).+")
         .expect("authorization final marker regex should compile")
         .replace_all(&output, "${1}Bearer [REDACTED:authorization]")
@@ -456,6 +463,7 @@ mod tests {
         let input = r#"
 apiKey: sk-live-provider-secret
 gatewayApiKey=ccds_gateway_secret
+gatewayKey: ccds-gw-abcdefghijklmnopqrstuvwxyz1234567890
 Authorization: Bearer sk-auth-secret
 Cookie: session=secret-cookie
 X-Custom-Token: token-secret
@@ -468,6 +476,7 @@ upstream body: {"error":"sk-upstream-secret"}
         for secret in [
             "sk-live-provider-secret",
             "ccds_gateway_secret",
+            "ccds-gw-abcdefghijklmnopqrstuvwxyz1234567890",
             "sk-auth-secret",
             "secret-cookie",
             "token-secret",
@@ -571,6 +580,7 @@ upstream body: {"error":"sk-upstream-secret"}
             None,
             None,
             vec![DiagnosticsLogEntry {
+                id: 1,
                 timestamp_unix_ms: 123,
                 level: "error".to_owned(),
                 code: "gateway.start_failed".to_owned(),

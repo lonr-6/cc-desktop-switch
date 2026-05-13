@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use crate::desktop::{compare_desktop_readback, DesktopHealth, DesktopPlan, DesktopReadback};
 use crate::model_catalog::DesktopModel;
 
-const CCDS_LOCAL_CONFIG_ID: &str = "cc-desktop-switch-local-gateway";
+pub const CCDS_LOCAL_CONFIG_ID: &str = "cc-desktop-switch-local-gateway";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +45,32 @@ pub struct DesktopWriteResult {
     pub health: DesktopHealth,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopClearResult {
+    pub success: bool,
+    pub config_id: String,
+    pub local_config_library: PathBuf,
+    pub config_path: PathBuf,
+    pub meta_path: PathBuf,
+    pub removed_config: bool,
+    pub cleared_active_config: bool,
+    pub preserved_meta: bool,
+    pub readback_cleared: bool,
+    pub issue_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopRestartResult {
+    pub platform: DesktopPlatform,
+    pub stopped_processes: u32,
+    pub forced_processes: u32,
+    pub launched: bool,
+    pub executable: Option<String>,
+    pub message: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DesktopWriterError {
     #[error("I/O error: {0}")]
@@ -59,6 +85,8 @@ pub enum DesktopWriterError {
     UnsupportedPlatform,
     #[error("desktop.home_dir_missing: USERPROFILE or HOME is required")]
     HomeDirMissing,
+    #[error("desktop.restart_failed: {0}")]
+    RestartFailed(String),
 }
 
 pub fn probe_current_desktop_config() -> Result<DesktopConfigProbe, DesktopWriterError> {
@@ -260,9 +288,18 @@ pub fn write_local_config_library(
     let meta_path = root.join("_meta.json");
     let mut config = read_json_object_if_exists(&config_path)?.unwrap_or_default();
     apply_plan_to_config_object(&mut config, plan);
+    let previous_config_bytes = if config_path.exists() {
+        Some(fs::read(&config_path)?)
+    } else {
+        None
+    };
 
+    let meta = local_config_meta_for_root(root)?;
     write_json_file(&config_path, &Value::Object(config))?;
-    write_json_file(&meta_path, &local_config_meta())?;
+    if let Err(error) = write_json_file(&meta_path, &meta) {
+        restore_config_file_after_failed_meta_write(&config_path, previous_config_bytes)?;
+        return Err(error);
+    }
 
     let readback = read_local_config_library(root)?;
     let health = compare_desktop_readback(plan, &readback);
@@ -284,6 +321,171 @@ pub fn read_local_config_library(root: &Path) -> Result<DesktopReadback, Desktop
     let config = read_json_object(&config_path)?;
 
     Ok(read_desktop_config_object(&config))
+}
+
+pub fn clear_local_config_library(root: &Path) -> Result<DesktopClearResult, DesktopWriterError> {
+    let config_path = root.join(format!("{CCDS_LOCAL_CONFIG_ID}.json"));
+    let meta_path = root.join("_meta.json");
+    let mut cleared_active_config = false;
+    let mut preserved_meta = false;
+    let mut remove_meta = false;
+    let mut next_meta = None;
+    if meta_path.is_file() {
+        let mut meta = read_json_object(&meta_path)?;
+        if active_config_id(&meta).as_deref() == Some(CCDS_LOCAL_CONFIG_ID) {
+            for key in active_config_keys() {
+                if string_value(meta.get(*key)).as_deref() == Some(CCDS_LOCAL_CONFIG_ID) {
+                    meta.remove(*key);
+                }
+            }
+            cleared_active_config = true;
+            if meta.is_empty() {
+                remove_meta = true;
+            } else {
+                next_meta = Some(Value::Object(meta));
+                preserved_meta = true;
+            }
+        } else {
+            preserved_meta = true;
+        }
+    }
+    if remove_meta {
+        fs::remove_file(&meta_path)?;
+    } else if let Some(meta) = next_meta {
+        write_json_file(&meta_path, &meta)?;
+    }
+
+    let removed_config = if config_path.is_file() {
+        fs::remove_file(&config_path)?;
+        true
+    } else {
+        false
+    };
+
+    let active_after = if meta_path.is_file() {
+        Some(active_config_id(&read_json_object(&meta_path)?))
+    } else {
+        None
+    }
+    .flatten();
+    let readback_cleared =
+        !config_path.exists() && active_after.as_deref() != Some(CCDS_LOCAL_CONFIG_ID);
+    let mut issue_codes = Vec::new();
+    if !readback_cleared {
+        issue_codes.push("desktop.clear_readback_failed".to_owned());
+    }
+
+    Ok(DesktopClearResult {
+        success: readback_cleared,
+        config_id: CCDS_LOCAL_CONFIG_ID.to_owned(),
+        local_config_library: root.to_path_buf(),
+        config_path,
+        meta_path,
+        removed_config,
+        cleared_active_config,
+        preserved_meta,
+        readback_cleared,
+        issue_codes,
+    })
+}
+
+pub fn restart_claude_desktop() -> Result<DesktopRestartResult, DesktopWriterError> {
+    let platform = current_desktop_platform().ok_or(DesktopWriterError::UnsupportedPlatform)?;
+    restart_claude_desktop_for_platform(platform)
+}
+
+fn restart_claude_desktop_for_platform(
+    platform: DesktopPlatform,
+) -> Result<DesktopRestartResult, DesktopWriterError> {
+    match platform {
+        DesktopPlatform::Windows => restart_claude_desktop_windows(),
+        DesktopPlatform::Macos => restart_claude_desktop_macos(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn restart_claude_desktop_windows() -> Result<DesktopRestartResult, DesktopWriterError> {
+    let stopped_processes = windows_process_count("Claude.exe");
+    if stopped_processes > 0 {
+        let status = hidden_command("taskkill")
+            .args(["/IM", "Claude.exe", "/T"])
+            .status()
+            .map_err(|error| DesktopWriterError::RestartFailed(error.to_string()))?;
+        if !status.success() {
+            return Err(DesktopWriterError::RestartFailed(format!(
+                "taskkill returned {status}"
+            )));
+        }
+    }
+
+    let executable = windows_claude_executable_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            DesktopWriterError::RestartFailed(
+                "Claude.exe was not found in known install locations".to_owned(),
+            )
+        })?;
+    hidden_command(&executable)
+        .spawn()
+        .map_err(|error| DesktopWriterError::RestartFailed(error.to_string()))?;
+
+    Ok(DesktopRestartResult {
+        platform: DesktopPlatform::Windows,
+        stopped_processes,
+        forced_processes: 0,
+        launched: true,
+        executable: Some(executable.display().to_string()),
+        message: "Claude Desktop restart requested".to_owned(),
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn restart_claude_desktop_windows() -> Result<DesktopRestartResult, DesktopWriterError> {
+    Err(DesktopWriterError::UnsupportedPlatform)
+}
+
+#[cfg(target_os = "macos")]
+fn restart_claude_desktop_macos() -> Result<DesktopRestartResult, DesktopWriterError> {
+    let stopped_processes = macos_process_count("Claude");
+    if stopped_processes > 0 {
+        let status = Command::new("osascript")
+            .args([
+                "-e",
+                "tell application id \"com.anthropic.claudefordesktop\" to quit",
+            ])
+            .status()
+            .map_err(|error| DesktopWriterError::RestartFailed(error.to_string()))?;
+        if !status.success() {
+            return Err(DesktopWriterError::RestartFailed(format!(
+                "osascript quit returned {status}"
+            )));
+        }
+    }
+
+    let status = Command::new("open")
+        .args(["-b", "com.anthropic.claudefordesktop"])
+        .status()
+        .map_err(|error| DesktopWriterError::RestartFailed(error.to_string()))?;
+    if !status.success() {
+        return Err(DesktopWriterError::RestartFailed(format!(
+            "open returned {status}"
+        )));
+    }
+
+    Ok(DesktopRestartResult {
+        platform: DesktopPlatform::Macos,
+        stopped_processes,
+        forced_processes: 0,
+        launched: true,
+        executable: Some("com.anthropic.claudefordesktop".to_owned()),
+        message: "Claude Desktop restart requested".to_owned(),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_claude_desktop_macos() -> Result<DesktopRestartResult, DesktopWriterError> {
+    Err(DesktopWriterError::UnsupportedPlatform)
 }
 
 fn apply_plan_to_config_object(config: &mut Map<String, Value>, plan: &DesktopPlan) {
@@ -346,6 +548,15 @@ fn read_desktop_config_object(config: &Map<String, Value>) -> DesktopReadback {
         ),
         gateway_headers: parse_string_array(config.get("inferenceGatewayHeaders")),
     }
+}
+
+fn active_config_keys() -> &'static [&'static str] {
+    &[
+        "activeConfigId",
+        "active_config_id",
+        "appliedConfigId",
+        "selectedConfigId",
+    ]
 }
 
 fn inference_model_config_value(model: &DesktopModel) -> Value {
@@ -417,21 +628,97 @@ fn string_value(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn local_config_meta() -> Value {
-    serde_json::json!({
-        "activeConfigId": CCDS_LOCAL_CONFIG_ID
-    })
+fn local_config_meta_for_root(root: &Path) -> Result<Value, DesktopWriterError> {
+    let meta_path = root.join("_meta.json");
+    let mut meta = read_json_object_if_exists(&meta_path)?.unwrap_or_default();
+    for key in active_config_keys() {
+        meta.remove(*key);
+    }
+    meta.insert(
+        "activeConfigId".to_owned(),
+        Value::String(CCDS_LOCAL_CONFIG_ID.to_owned()),
+    );
+    Ok(Value::Object(meta))
 }
 
 fn active_config_id(meta: &Map<String, Value>) -> Option<String> {
-    [
-        "activeConfigId",
-        "active_config_id",
-        "appliedConfigId",
-        "selectedConfigId",
-    ]
-    .into_iter()
-    .find_map(|key| string_value(meta.get(key)))
+    active_config_keys()
+        .iter()
+        .find_map(|key| string_value(meta.get(*key)))
+}
+
+#[cfg(target_os = "windows")]
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    Command::new(program)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_process_count(image_name: &str) -> u32 {
+    let filter = format!("IMAGENAME eq {image_name}");
+    hidden_command("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| line.trim_start().starts_with(&format!("\"{image_name}\"")))
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_claude_executable_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let local_app_data = PathBuf::from(local_app_data);
+        candidates.push(local_app_data.join("AnthropicClaude").join("Claude.exe"));
+        candidates.push(
+            local_app_data
+                .join("Programs")
+                .join("Claude")
+                .join("Claude.exe"),
+        );
+        candidates.push(local_app_data.join("Claude").join("Claude.exe"));
+    }
+    if let Ok(program_files) = std::env::var("ProgramFiles") {
+        candidates.push(
+            PathBuf::from(program_files)
+                .join("Claude")
+                .join("Claude.exe"),
+        );
+    }
+    if let Ok(program_files_x86) = std::env::var("ProgramFiles(x86)") {
+        candidates.push(
+            PathBuf::from(program_files_x86)
+                .join("Claude")
+                .join("Claude.exe"),
+        );
+    }
+    candidates
+}
+
+#[cfg(target_os = "macos")]
+fn macos_process_count(process_name: &str) -> u32 {
+    Command::new("pgrep")
+        .args(["-x", process_name])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().count() as u32)
+        .unwrap_or(0)
 }
 
 fn read_json_object_if_exists(
@@ -458,6 +745,21 @@ fn write_json_file(path: &Path, value: &Value) -> Result<(), DesktopWriterError>
     let tmp_path = path.with_extension("json.tmp");
     fs::write(&tmp_path, serde_json::to_string_pretty(value)?)?;
     fs::rename(tmp_path, path)?;
+    Ok(())
+}
+
+fn restore_config_file_after_failed_meta_write(
+    config_path: &Path,
+    previous_config_bytes: Option<Vec<u8>>,
+) -> Result<(), DesktopWriterError> {
+    match previous_config_bytes {
+        Some(bytes) => fs::write(config_path, bytes)?,
+        None => {
+            if config_path.exists() {
+                fs::remove_file(config_path)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -573,10 +875,43 @@ mod tests {
     }
 
     #[test]
+    fn desktop_writer_preserves_unrelated_local_config_meta_values() {
+        let root = temp_root("preserve-meta");
+        fs::create_dir_all(&root).unwrap();
+        write_json_file(
+            &root.join("_meta.json"),
+            &serde_json::json!({
+                "activeConfigId": "manual-profile",
+                "selectedConfigId": "manual-profile",
+                "unrelatedMeta": "keep"
+            }),
+        )
+        .unwrap();
+
+        write_local_config_library(&root, &plan()).unwrap();
+        let saved = read_json_object(&root.join("_meta.json")).unwrap();
+
+        assert_eq!(
+            string_value(saved.get("activeConfigId")).as_deref(),
+            Some(CCDS_LOCAL_CONFIG_ID)
+        );
+        assert_eq!(saved.get("selectedConfigId"), None);
+        assert_eq!(saved["unrelatedMeta"], "keep");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn desktop_writer_reads_json_string_models_and_headers() {
         let root = temp_root("json-string");
         fs::create_dir_all(&root).unwrap();
-        write_json_file(&root.join("_meta.json"), &local_config_meta()).unwrap();
+        write_json_file(
+            &root.join("_meta.json"),
+            &serde_json::json!({
+                "activeConfigId": CCDS_LOCAL_CONFIG_ID
+            }),
+        )
+        .unwrap();
         write_json_file(
             &root.join(format!("{CCDS_LOCAL_CONFIG_ID}.json")),
             &serde_json::json!({
@@ -596,6 +931,97 @@ mod tests {
         assert_eq!(readback.inference_models[0].id, "claude-deepseek-v4-pro");
         assert!(readback.inference_models[0].supports_1m);
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clear_local_config_library_removes_only_ccds_config_and_active_meta() {
+        let root = temp_root("clear-ccds");
+        fs::create_dir_all(&root).unwrap();
+        let ccds_path = root.join(format!("{CCDS_LOCAL_CONFIG_ID}.json"));
+        let unrelated_path = root.join("manual-profile.json");
+        write_json_file(
+            &root.join("_meta.json"),
+            &serde_json::json!({
+                "activeConfigId": CCDS_LOCAL_CONFIG_ID
+            }),
+        )
+        .unwrap();
+        write_json_file(
+            &ccds_path,
+            &serde_json::json!({
+                "inferenceProvider": "gateway",
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080"
+            }),
+        )
+        .unwrap();
+        write_json_file(
+            &unrelated_path,
+            &serde_json::json!({
+                "name": "Manual profile"
+            }),
+        )
+        .unwrap();
+
+        let result = clear_local_config_library(&root).unwrap();
+
+        assert!(result.success);
+        assert!(result.removed_config);
+        assert!(result.cleared_active_config);
+        assert!(result.readback_cleared);
+        assert!(!ccds_path.exists());
+        assert!(unrelated_path.exists());
+        assert!(!root.join("_meta.json").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clear_local_config_library_preserves_unrelated_active_meta() {
+        let root = temp_root("clear-preserve-active");
+        fs::create_dir_all(&root).unwrap();
+        let ccds_path = root.join(format!("{CCDS_LOCAL_CONFIG_ID}.json"));
+        let unrelated_path = root.join("manual-profile.json");
+        write_json_file(
+            &root.join("_meta.json"),
+            &serde_json::json!({
+                "activeConfigId": "manual-profile",
+                "lastUsed": "keep"
+            }),
+        )
+        .unwrap();
+        write_json_file(&ccds_path, &serde_json::json!({"name": "CCDS"})).unwrap();
+        write_json_file(&unrelated_path, &serde_json::json!({"name": "Manual"})).unwrap();
+
+        let result = clear_local_config_library(&root).unwrap();
+        let meta = read_json_object(&root.join("_meta.json")).unwrap();
+
+        assert!(result.success);
+        assert!(result.removed_config);
+        assert!(!result.cleared_active_config);
+        assert!(result.preserved_meta);
+        assert_eq!(
+            string_value(meta.get("activeConfigId")).as_deref(),
+            Some("manual-profile")
+        );
+        assert_eq!(string_value(meta.get("lastUsed")).as_deref(), Some("keep"));
+        assert!(!ccds_path.exists());
+        assert!(unrelated_path.exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clear_local_config_library_does_not_delete_config_when_meta_parse_fails() {
+        let root = temp_root("clear-invalid-meta");
+        fs::create_dir_all(&root).unwrap();
+        let ccds_path = root.join(format!("{CCDS_LOCAL_CONFIG_ID}.json"));
+        fs::write(root.join("_meta.json"), "{not valid json").unwrap();
+        write_json_file(&ccds_path, &serde_json::json!({"name": "CCDS"})).unwrap();
+
+        let _error = clear_local_config_library(&root).unwrap_err();
+
+        assert!(ccds_path.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -10,6 +10,7 @@ pub mod model_catalog;
 pub mod provider;
 pub mod release_gate;
 pub mod state;
+pub mod update;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -113,6 +114,8 @@ pub fn run() {
             commands::get_proxy_logs,
             commands::clear_proxy_logs,
             commands::desktop_config_probe,
+            commands::clear_desktop_config,
+            commands::restart_claude_desktop,
             commands::export_diagnostics_package,
             commands::copy_diagnostics_summary,
             commands::copy_diagnostics_summary_to_clipboard,
@@ -124,8 +127,10 @@ pub fn run() {
             commands::provider_static_smoke,
             commands::gateway_smoke,
             commands::provider_real_smoke,
+            commands::check_update,
+            commands::download_update,
+            commands::install_update,
             commands::apply_dry_run,
-            commands::apply_local_config,
             commands::apply_detected_local_config,
             commands::configure_desktop
         ])

@@ -2,6 +2,10 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$InputDirectory,
 
+  [string]$Phase = "P83",
+
+  [string]$ExpectedCommit = "",
+
   [string]$OutputPath = ""
 )
 
@@ -42,6 +46,20 @@ function Get-Field {
   return $match.Groups[1].Value.Trim()
 }
 
+function Resolve-ExpectedCommit {
+  param([string]$Commit)
+
+  if (-not [string]::IsNullOrWhiteSpace($Commit)) {
+    return $Commit.Trim()
+  }
+
+  $resolved = (& git -C $repoRoot rev-parse HEAD 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) {
+    throw "ExpectedCommit was not provided and git rev-parse HEAD failed under $repoRoot"
+  }
+  return $resolved.Trim()
+}
+
 function Find-Evidence {
   param(
     [object[]]$EvidenceFiles,
@@ -73,6 +91,10 @@ function Find-Evidence {
     Assert-Contains -Content $content -Needle "DMG passed hdiutil verify" -Context $context
     Assert-Contains -Content $content -Needle "PKG was created with pkgbuild" -Context $context
     Assert-Contains -Content $content -Needle "PKG expanded with pkgutil --expand" -Context $context
+    $commit = Get-Field -Content $content -Name "commit" -Context $context
+    if ($commit -ne $ExpectedCommit) {
+      throw "$context commit expected '$ExpectedCommit' but got '$commit'"
+    }
 
     return [pscustomobject]@{
       Arch = $Arch
@@ -80,7 +102,7 @@ function Find-Evidence {
       ExpectedUname = $ExpectedUname
       ActualUname = Get-Field -Content $content -Name "actual_uname" -Context $context
       WorkflowRun = Get-Field -Content $content -Name "workflow_run" -Context $context
-      Commit = Get-Field -Content $content -Name "commit" -Context $context
+      Commit = $commit
       Version = Get-Field -Content $content -Name "version" -Context $context
       EvidencePath = $file.FullName
       ExpectedArtifact = "rust-mainline-macos-$Arch"
@@ -89,6 +111,8 @@ function Find-Evidence {
 
   throw "No platform-smoke-evidence.md file matched platform: macOS $Arch"
 }
+
+$ExpectedCommit = Resolve-ExpectedCommit -Commit $ExpectedCommit
 
 $evidenceFiles = @(Get-ChildItem -LiteralPath $inputRoot -Recurse -Filter "platform-smoke-evidence.md" -File)
 if ($evidenceFiles.Count -lt 2) {
@@ -135,12 +159,16 @@ Date: $today
 Pass
 
 fingerprint: platform.macos_arm64_x64_smoke_path
+phase: $Phase
+expected_commit: $ExpectedCommit
 macos-14
 macos-15-intel
 workflow_run_arm64: $($arm64.WorkflowRun)
 workflow_run_x64: $($x64.WorkflowRun)
 artifact_arm64: $($arm64.ExpectedArtifact)
 artifact_x64: $($x64.ExpectedArtifact)
+commit_arm64: $($arm64.Commit)
+commit_x64: $($x64.Commit)
 
 ## arm64
 

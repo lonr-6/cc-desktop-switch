@@ -400,6 +400,14 @@ impl AppConfig {
         }
     }
 
+    pub fn export_provider_package_redacted(&self) -> ProviderExportPackage {
+        let mut package = self.export_provider_package();
+        for provider in &mut package.providers {
+            provider.api_key.clear();
+        }
+        package
+    }
+
     pub fn preview_provider_import(
         &self,
         raw_json: &str,
@@ -1216,6 +1224,7 @@ fn normalize_imported_providers(providers: &mut [ConfigProvider]) -> Result<(), 
 
 fn normalize_imported_model_mappings(provider: &mut ConfigProvider) -> Result<(), ConfigError> {
     let provider_for_routes = provider.as_provider();
+    let mut route_ids = HashSet::new();
     for mapping in &mut provider.model_mappings {
         mapping.upstream_model = mapping.upstream_model.trim().to_owned();
         if mapping.upstream_model.is_empty() {
@@ -1236,9 +1245,14 @@ fn normalize_imported_model_mappings(provider: &mut ConfigProvider) -> Result<()
             .filter(|route_id| !route_id.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| route_for_model(&provider_for_routes, &mapping.upstream_model));
-        if !route_id.starts_with("claude-") {
+        if let Err(error) = validate_desktop_route_id(&route_id, &mapping.upstream_model) {
+            return Err(ConfigError::InvalidProviderImport(format!(
+                "provider.import_raw_route_id: {error}"
+            )));
+        }
+        if !route_ids.insert(route_id.clone()) {
             return Err(ConfigError::InvalidProviderImport(
-                "provider.import_raw_route_id".to_owned(),
+                "provider.import_duplicate_route_id".to_owned(),
             ));
         }
         mapping.route_id = Some(route_id);
@@ -1991,6 +2005,32 @@ mod tests {
     }
 
     #[test]
+    fn provider_export_redacted_package_omits_api_keys_for_ui() {
+        let loaded = AppConfig::load_json(&legacy_config()).unwrap();
+
+        let full = loaded.config.export_provider_package();
+        let redacted = loaded.config.export_provider_package_redacted();
+
+        assert!(full
+            .providers
+            .iter()
+            .any(|provider| !provider.api_key.is_empty()));
+        assert!(redacted
+            .providers
+            .iter()
+            .all(|provider| provider.api_key.is_empty()));
+        assert_eq!(redacted.active_provider, full.active_provider);
+        assert_eq!(
+            redacted.providers[0].provider_id,
+            full.providers[0].provider_id
+        );
+        assert_eq!(
+            redacted.providers[0].model_mappings,
+            full.providers[0].model_mappings
+        );
+    }
+
+    #[test]
     fn provider_import_preview_blocks_conflict_until_replace_is_requested() {
         let provider = Provider {
             provider_id: "provider-deepseek".to_owned(),
@@ -2140,6 +2180,30 @@ mod tests {
         assert!(raw_route_error
             .to_string()
             .contains("provider.import_raw_route_id"));
+
+        let mut default_route_package = loaded.config.export_provider_package();
+        default_route_package.providers[0].model_mappings[0].route_id =
+            Some("claude-default".to_owned());
+        let default_route = serde_json::to_string(&default_route_package).unwrap();
+        let default_route_error = AppConfig::empty()
+            .preview_provider_import(&default_route, false)
+            .unwrap_err();
+        assert!(default_route_error
+            .to_string()
+            .contains("provider.import_raw_route_id"));
+
+        let mut duplicate_route_package = loaded.config.export_provider_package();
+        let duplicate_mapping = duplicate_route_package.providers[0].model_mappings[0].clone();
+        duplicate_route_package.providers[0]
+            .model_mappings
+            .push(duplicate_mapping);
+        let duplicate_route = serde_json::to_string(&duplicate_route_package).unwrap();
+        let duplicate_route_error = AppConfig::empty()
+            .preview_provider_import(&duplicate_route, false)
+            .unwrap_err();
+        assert!(duplicate_route_error
+            .to_string()
+            .contains("provider.import_duplicate_route_id"));
     }
 
     #[test]

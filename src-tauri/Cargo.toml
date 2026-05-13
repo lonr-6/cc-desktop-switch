@@ -21,6 +21,7 @@ base64 = "0.22"
 bytes = "1"
 futures-util = "0.3"
 regex = "1"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rsa = { version = "0.9", features = ["sha2"] }
 serde.workspace = true
@@ -33,5 +34,4 @@ thiserror.workspace = true
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
-rand = "0.8"
 tower = { version = "0.5", features = ["util"] }
