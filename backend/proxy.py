@@ -335,7 +335,7 @@ def _redact_sensitive_text(value: str, limit: int = 500) -> str:
         text,
     )
     text = re.sub(r"(?i)\b(sk-[a-z0-9_-]{8,}|ccds_[a-z0-9_-]{8,})\b", "******", text)
-    text = re.sub(r"(https?://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text)
+    text = re.sub(r"([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text, flags=re.IGNORECASE)
     text = " ".join(text.split())
     return text[:limit]
 
@@ -387,6 +387,23 @@ def _log_invalid_upstream_response(response: httpx.Response, preview: str):
             f"preview={preview or '(empty)'}"
         ),
     )
+
+
+def _is_socks_dependency_error(exc: Exception) -> bool:
+    text = f"{exc.__class__.__name__}: {exc}".lower()
+    return "socks" in text and ("socksio" in text or "httpx[socks]" in text)
+
+
+def _socks_dependency_error_message() -> str:
+    return (
+        "当前上游代理使用了 SOCKS 地址，但安装包缺少 SOCKS 代理依赖。"
+        "请升级到包含 SOCKS 支持的版本；临时解决办法是改用 HTTP 代理，"
+        "或关闭“上游代理”。"
+    )
+
+
+def _proxy_log_value(proxy: str) -> str:
+    return _redact_sensitive_text(proxy, 300)
 
 
 def _stream_content_type_compatible(response: httpx.Response) -> bool:
@@ -502,7 +519,7 @@ async def forward_request(
 
     proxy = _get_http_proxy()
     if proxy:
-        log_buffer.add("INFO", f"使用上游代理: {proxy}")
+        log_buffer.add("INFO", f"使用上游代理: {_proxy_log_value(proxy)}")
 
     try:
         async with httpx.AsyncClient(timeout=120.0, proxy=proxy) as client:
@@ -565,6 +582,14 @@ async def forward_request(
     except Exception as e:
         stats.record(False)
         message = f"{e.__class__.__name__}: {str(e)}".rstrip()
+        if _is_socks_dependency_error(e):
+            log_buffer.add("ERROR", f"SOCKS 代理依赖缺失: {message}")
+            return {
+                "error": {
+                    "type": "socks_proxy_dependency_missing",
+                    "message": _socks_dependency_error_message(),
+                }
+            }
         log_buffer.add("ERROR", f"请求失败: {message}")
         return {
             "error": {
@@ -598,7 +623,7 @@ async def forward_request_stream(
 
     proxy = _get_http_proxy()
     if proxy:
-        log_buffer.add("INFO", f"使用上游代理: {proxy}")
+        log_buffer.add("INFO", f"使用上游代理: {_proxy_log_value(proxy)}")
 
     try:
         async with httpx.AsyncClient(timeout=300.0, proxy=proxy) as client:
@@ -728,6 +753,17 @@ async def forward_request_stream(
     except Exception as e:
         stats.record(False)
         message = f"{e.__class__.__name__}: {str(e)}".rstrip()
+        if _is_socks_dependency_error(e):
+            log_buffer.add("ERROR", f"SOCKS 代理依赖缺失: {message}")
+            error_event = {
+                "type": "error",
+                "error": {
+                    "type": "socks_proxy_dependency_missing",
+                    "message": _socks_dependency_error_message(),
+                },
+            }
+            yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            return
         log_buffer.add("ERROR", f"流式请求失败: {message}")
         error_event = {
             "type": "error",
@@ -776,7 +812,7 @@ def _get_http_proxy() -> Optional[str]:
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.23")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.24")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""

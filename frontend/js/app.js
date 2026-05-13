@@ -235,7 +235,8 @@
 
   function healthMessages(health) {
     const issues = Array.isArray(health?.issues) ? health.issues : [];
-    return issues.map((issue) => healthIssueMessage(issue, health)).filter(Boolean);
+    const warnings = Array.isArray(health?.warnings) ? health.warnings : [];
+    return [...issues, ...warnings].map((issue) => healthIssueMessage(issue, health)).filter(Boolean);
   }
 
   function displayConfigValue(value) {
@@ -419,6 +420,24 @@
     return JSON.stringify(normalizeCapabilities(left)) === JSON.stringify(normalizeCapabilities(right));
   }
 
+  function capabilityEntriesForCurrentMappings(required = {}, currentMappings = collectProviderMappings()) {
+    const requiredCapabilities = normalizeCapabilities(required);
+    const usedModelIds = new Set(Object.values(normalizeMappings(currentMappings)).filter(Boolean));
+    const relevantEntries = Object.entries(requiredCapabilities).filter(([modelId]) => usedModelIds.has(modelId));
+    return relevantEntries.length ? relevantEntries : Object.entries(requiredCapabilities);
+  }
+
+  function capabilitiesInclude(required = {}, current = {}, currentMappings = collectProviderMappings()) {
+    const currentCapabilities = normalizeCapabilities(current);
+    const entries = capabilityEntriesForCurrentMappings(required, currentMappings);
+    return entries.length > 0 && entries.every(([modelId, capability]) => {
+      const currentCapability = currentCapabilities[modelId];
+      if (!currentCapability) return false;
+      if (capability.supports1m === true && currentCapability.supports1m !== true) return false;
+      return true;
+    });
+  }
+
   function mergeCapabilities(base = {}, extra = {}) {
     return {
       ...normalizeCapabilities(base),
@@ -441,7 +460,7 @@
     const modelsOk = !hasModels || modelsMatch(option.models, currentMappings);
     const requestOptionsOk = !hasRequestOptions || requestOptionsMatch(option.requestOptions, formRequestOptions);
     const optionChangesModels = hasModels && !modelsMatch(option.models, selectedPreset?.models || {});
-    const capabilitiesOk = !hasCapabilities || optionChangesModels || capabilitiesMatch(option.modelCapabilities, formModelCapabilities);
+    const capabilitiesOk = !hasCapabilities || optionChangesModels || capabilitiesInclude(option.modelCapabilities, formModelCapabilities, currentMappings);
     if (hasModels || hasRequestOptions || hasCapabilities) {
       return modelsOk && requestOptionsOk && capabilitiesOk;
     }
@@ -545,18 +564,31 @@
     return providerFormModelSlots.filter((slot) => !used.has(slot.key));
   }
 
+  function selectedFirstOptions(options = [], currentValue = "") {
+    const selected = String(currentValue || "").trim();
+    const normalized = options
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    if (!selected) return normalized;
+    return [
+      ...normalized.filter((value) => value === selected),
+      ...normalized.filter((value) => value !== selected),
+    ];
+  }
+
   function providerModelOptionsMarkup(currentValue = "") {
-    return providerAvailableModels.map((modelId) => (`
+    const selectedValue = String(currentValue || "").trim();
+    return selectedFirstOptions(providerAvailableModels, selectedValue).map((modelId) => (`
       <button
-        class="mapping-slot-option ${modelId === currentValue ? "selected" : ""}"
+        class="mapping-slot-option ${modelId === selectedValue ? "selected" : ""}"
         type="button"
         role="option"
         data-action="select-provider-model-option"
         data-model-value="${escapeHtml(modelId)}"
-        aria-selected="${modelId === currentValue ? "true" : "false"}"
+        aria-selected="${modelId === selectedValue ? "true" : "false"}"
       >
         <span>${escapeHtml(modelId)}</span>
-        ${modelId === currentValue ? '<i class="bi bi-check2"></i>' : ""}
+        ${modelId === selectedValue ? '<i class="bi bi-check2"></i>' : ""}
       </button>
     `)).join("");
   }

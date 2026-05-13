@@ -134,6 +134,12 @@ Release 会提供 `.sha256` 和 `.sig` 文件，用来校验下载文件没有�
 
 不要完全退出。v1.0.18 默认让 Claude Desktop 连接本机转发服务，所以使用第三方 provider 时需要保持本工具在后台运行。Windows 可以关闭窗口让它留在系统托盘；macOS 可以关闭窗口让它隐藏到后台。
 
+### 能不能恢复 Claude Desktop 原本的 Connectors / Skills？
+
+本工具主要负责第三方模型 gateway 和模型映射。Claude Desktop 原本的 Connectors / Skills 有一部分属于 Claude 账号、企业策略或远程 MCP 配置能力，不是本机 gateway 能完整替代的。
+
+如果 Claude Desktop 发起普通 tools 请求，本工具会尽量按当前 provider 的能力转发；但某些官方 Connector 或企业扩展需要额外账号权限和服务端配置。
+
 ### `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 要不要设置？
 
 这个环境变量只用于 Claude Code 的 prompt cache 兼容，不是 Claude Desktop 第三方推理配置项。它不能代替本工具后台转发，也不会解决 Claude Desktop 的本机 provider 连接问题。参考官方说明：[Claude Code env vars](https://code.claude.com/docs/en/env-vars)。

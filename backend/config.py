@@ -16,7 +16,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.23",
+    "version": "1.0.24",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -158,6 +158,17 @@ BUILTIN_PRESETS = [
             "opus": "",
             "default": "mimo-v2.5-pro",
         },
+        "modelOptions": {
+            "mimo_1m": {
+                "label": "启用 MiMo 1M 上下文",
+                "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
+                "modelCapabilities": {
+                    "mimo-v2.5-pro": {"supports1m": True},
+                    "mimo-v2-pro": {"supports1m": True},
+                },
+            },
+        },
+        "modelCapabilities": {},
         "isBuiltin": True,
     },
     {
@@ -187,6 +198,17 @@ BUILTIN_PRESETS = [
             "opus": "",
             "default": "mimo-v2.5-pro",
         },
+        "modelOptions": {
+            "mimo_1m": {
+                "label": "启用 MiMo 1M 上下文",
+                "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
+                "modelCapabilities": {
+                    "mimo-v2.5-pro": {"supports1m": True},
+                    "mimo-v2-pro": {"supports1m": True},
+                },
+            },
+        },
+        "modelCapabilities": {},
         "isBuiltin": True,
     },
     {

@@ -183,7 +183,7 @@ def _redact_text(value: str, limit: int = 500) -> str:
         text,
     )
     text = re.sub(r"(?i)\b(sk-[a-z0-9_-]{8,}|ccds_[a-z0-9_-]{8,})\b", REDACTED, text)
-    text = re.sub(r"(https?://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text)
+    text = re.sub(r"([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@", r"\1******:******@", text, flags=re.IGNORECASE)
     return text[:limit]
 
 
@@ -335,6 +335,17 @@ def _diagnostics_checks(payload: dict) -> list[dict]:
         "message": "桌面版配置与当前 provider 一致" if not health.get("needsApply") else "桌面版配置需要重新应用",
         "issues": health.get("issues") or [],
     })
+    helper_warnings = [
+        item
+        for item in health.get("warnings") or []
+        if item.get("code") == "claude_code_helper_missing"
+    ]
+    if helper_warnings:
+        checks.append({
+            "code": "claude_code_helper",
+            "ok": False,
+            "message": helper_warnings[0].get("message") or "Claude Desktop 本地 helper 不可用",
+        })
     checks.append({
         "code": "local_gateway",
         "ok": bool(payload.get("proxy", {}).get("running")),
@@ -385,6 +396,44 @@ def _parse_policy_list(value) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [str(item).strip() for item in parsed if str(item or "").strip()]
+
+
+def _policy_enabled(value) -> bool:
+    """把 Desktop policy 里的 bool/int/string 统一判断为开启。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "enabled"}
+
+
+def _claude_code_helper_candidates() -> list[Path]:
+    """返回 Claude Desktop 3P helper 可能所在位置。"""
+    override = os.environ.get("CCDS_CLAUDE_CODE_HELPER_PATHS", "").strip()
+    if override:
+        return [Path(item) for item in override.split(os.pathsep) if item.strip()]
+
+    home = Path.home()
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if not local_app_data:
+            return []
+        return list(Path(local_app_data).glob("Claude-3p/claude-code/*/claude.exe"))
+    if sys.platform == "darwin":
+        return list((home / "Library/Application Support/Claude-3p/claude-code").glob("*/claude"))
+    return []
+
+
+def _claude_code_helper_status(keys: dict) -> dict:
+    enabled = _policy_enabled(keys.get("isClaudeCodeForDesktopEnabled"))
+    if not enabled:
+        return {"enabled": False, "available": True, "checked": 0}
+    candidates = _claude_code_helper_candidates()
+    return {
+        "enabled": True,
+        "available": any(path.is_file() for path in candidates),
+        "checked": len(candidates),
+    }
 
 
 def _inference_model_names(items: list) -> list[str]:
@@ -505,6 +554,7 @@ def _desktop_health(
     expected_base_url = str(target.get("baseUrl") or "").rstrip("/")
     actual_base_url = str(keys.get("inferenceGatewayBaseUrl") or "").rstrip("/")
     issues = []
+    warnings = []
 
     if actual_base_url and actual_base_url != expected_base_url:
         issues.append({
@@ -529,6 +579,17 @@ def _desktop_health(
         issues.append({
             "code": "cowork_egress_hosts_missing",
             "message": "Claude Cowork 网页访问放行规则尚未写入，请重新一键应用并重启 Claude 桌面版。",
+        })
+
+    helper_status = _claude_code_helper_status(keys)
+    if helper_status["enabled"] and not helper_status["available"]:
+        warnings.append({
+            "code": "claude_code_helper_missing",
+            "message": (
+                "Claude Desktop 的本地 Claude Code helper 尚未下载完成或被安全软件拦截。"
+                "如果桌面端提示 Host Claude Code binary not available，请检查 downloads.claude.ai 网络访问、"
+                "Claude Desktop 下载状态和系统安全策略。"
+            ),
         })
 
     inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
@@ -581,6 +642,7 @@ def _desktop_health(
         "mode": target.get("mode"),
         "requiresProxy": bool(target.get("requiresProxy")),
         "issues": issues,
+        "warnings": warnings,
     }
 
 
@@ -614,7 +676,7 @@ def _sync_desktop_for_active_provider() -> dict:
         **result,
     }
     if result.get("success") and target["requiresProxy"]:
-        proxy_started = _start_proxy_server(proxy_port)
+        proxy_started = _start_proxy_server(proxy_port, restart=True)
         response["proxyStarted"] = bool(proxy_started)
         if not proxy_started:
             response["success"] = False
@@ -811,7 +873,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.23")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.24")
 
     @app.middleware("http")
     async def require_local_admin_auth(request: Request, call_next):
@@ -1252,7 +1314,7 @@ def create_admin_app() -> FastAPI:
             "proxyPort": proxy_port,
         }
         if result.get("success") and target["requiresProxy"]:
-            proxy_started = _start_proxy_server(proxy_port)
+            proxy_started = _start_proxy_server(proxy_port, restart=True)
             response["proxyStarted"] = bool(proxy_started)
             if not proxy_started:
                 response["success"] = False
@@ -1288,13 +1350,12 @@ def create_admin_app() -> FastAPI:
         if requested_port:
             cfg.update_settings({"proxyPort": int(requested_port)})
 
-        if _proxy_running:
-            return {"success": True, "message": "代理已在运行中", "port": _proxy_port or cfg.get_settings().get("proxyPort", 18080)}
-
         port = cfg.get_settings().get("proxyPort", 18080)
+        healthy_before = _proxy_server_accepting(port)
         success = _start_proxy_server(port)
         if success:
-            return {"success": True, "message": f"代理已启动，端口: {port}", "port": port}
+            message = "代理已在运行中" if healthy_before else f"代理已启动，端口: {port}"
+            return {"success": True, "message": message, "port": port}
         return JSONResponse(
             status_code=500,
             content={"success": False, "message": "代理启动失败"},
@@ -1435,6 +1496,27 @@ _proxy_running = False
 _proxy_thread: Optional[threading.Thread] = None
 _proxy_server = None
 _proxy_port: Optional[int] = None
+_proxy_lock = threading.RLock()
+
+
+def _proxy_server_accepting(port: int) -> bool:
+    """确认当前记录的代理线程仍在监听端口。"""
+    with _proxy_lock:
+        thread = _proxy_thread
+        server = _proxy_server
+        running = _proxy_running
+        current_port = _proxy_port
+    if not running or current_port != int(port):
+        return False
+    if not thread or not thread.is_alive():
+        return False
+    if not server or getattr(server, "should_exit", False):
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.2):
+            return True
+    except OSError:
+        return False
 
 
 def _wait_for_proxy_server_start(server, thread: threading.Thread, port: int, timeout: float = 2.0) -> bool:
@@ -1458,17 +1540,21 @@ def _wait_for_proxy_server_start(server, thread: threading.Thread, port: int, ti
     return bool(thread.is_alive())
 
 
-def _start_proxy_server(port: int) -> bool:
+def _start_proxy_server(port: int, restart: bool = False) -> bool:
     """在新线程中启动代理服务器"""
     global _proxy_running, _proxy_thread, _proxy_server, _proxy_port
 
     requested_port = int(port)
-    if _proxy_running:
-        if _proxy_port == requested_port:
+    with _proxy_lock:
+        already_running = bool(_proxy_running)
+        current_port = _proxy_port
+        current_thread = _proxy_thread
+    if already_running:
+        if current_port == requested_port and not restart and _proxy_server_accepting(requested_port):
             return True
         _stop_proxy_server()
-        if _proxy_thread and _proxy_thread.is_alive():
-            _proxy_thread.join(timeout=1.0)
+    elif current_thread and current_thread.is_alive():
+        _stop_proxy_server()
 
     proxy_app = create_proxy_app()
 
@@ -1481,32 +1567,52 @@ def _start_proxy_server(port: int) -> bool:
         log_config=None,
     )
     server = uvicorn.Server(config)
-    _proxy_server = server
+    with _proxy_lock:
+        _proxy_server = server
 
     def run():
         global _proxy_running, _proxy_port
         try:
             server.run()
         finally:
-            if _proxy_server is server:
-                _proxy_running = False
-                _proxy_port = None
+            with _proxy_lock:
+                if _proxy_server is server:
+                    _proxy_running = False
+                    _proxy_port = None
 
     _proxy_thread = threading.Thread(target=run, daemon=True)
     _proxy_thread.start()
-    _proxy_running = _wait_for_proxy_server_start(server, _proxy_thread, requested_port)
-    if not _proxy_running:
+    started = _wait_for_proxy_server_start(server, _proxy_thread, requested_port)
+    with _proxy_lock:
+        _proxy_running = bool(started)
+    if not started:
         server.should_exit = True
-        _proxy_port = None
+        if _proxy_thread.is_alive():
+            _proxy_thread.join(timeout=1.0)
+        with _proxy_lock:
+            if _proxy_server is server:
+                _proxy_server = None
+            _proxy_port = None
     else:
-        _proxy_port = requested_port
-    return _proxy_running
+        with _proxy_lock:
+            _proxy_port = requested_port
+    return bool(started)
 
 
-def _stop_proxy_server():
+def _stop_proxy_server(wait: bool = True):
     """停止代理服务器"""
-    global _proxy_running, _proxy_server, _proxy_port
-    if _proxy_server:
-        _proxy_server.should_exit = True
-    _proxy_running = False
-    _proxy_port = None
+    global _proxy_running, _proxy_thread, _proxy_server, _proxy_port
+    with _proxy_lock:
+        server = _proxy_server
+        thread = _proxy_thread
+        if server:
+            server.should_exit = True
+        _proxy_running = False
+        _proxy_port = None
+    if wait and thread and thread.is_alive() and thread is not threading.current_thread():
+        thread.join(timeout=2.0)
+    with _proxy_lock:
+        if _proxy_thread is thread and (not thread or not thread.is_alive()):
+            _proxy_thread = None
+        if _proxy_server is server and (not thread or not thread.is_alive()):
+            _proxy_server = None

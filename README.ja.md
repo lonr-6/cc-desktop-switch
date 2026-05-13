@@ -57,7 +57,7 @@ v1.0.18 以降、Claude Desktop は `127.0.0.1` のローカル CC Desktop Switc
 - Claude Desktop には明示的にマッピングした Claude-safe route だけを表示。
 - 未設定の Claude model route は内部 Default に黙ってフォールバックせず、明確にエラーを返す。
 - Anthropic 互換の CC-Switch 設定をインポート。
-- provider 接続チェック、モデル疎通チェック、SSE streaming、上流 HTTP proxy に対応。
+- provider 接続チェック、モデル疎通チェック、SSE streaming、上流 HTTP/SOCKS proxy に対応。
 - Windows ではショートカットを再度起動しても既存ウィンドウを前面に戻し、二重起動を防止。
 
 ## Download

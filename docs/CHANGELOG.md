@@ -7,6 +7,16 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+## v1.0.24
+
+Release notes: [docs/release-notes-v1.0.24.md](release-notes-v1.0.24.md)
+
+- Added SOCKS upstream proxy dependency support for packaged Windows and macOS builds.
+- Added a Claude Code helper health warning for Claude Desktop `Host Claude Code binary not available` errors.
+- Added an explicit Xiaomi MiMo 1M context option for mapped `mimo-v2.5-pro` routes.
+- Improved the macOS menu bar icon and Dock hiding behavior.
+- Clarified local gateway background-running and Connectors/Skills boundaries.
+
 ## v1.0.23
 
 Release notes: [docs/release-notes-v1.0.23.md](release-notes-v1.0.23.md)

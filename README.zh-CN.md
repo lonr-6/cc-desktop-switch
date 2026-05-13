@@ -57,7 +57,7 @@ v1.0.18 起，Claude Desktop 默认会连接 CC Desktop Switch 的本机 gateway
 - Claude Desktop 模型菜单只显示显式映射的 Claude-safe 路由名。
 - 未映射模型会明确报错，不再静默回退到内部 Default。
 - 支持导入 Anthropic 兼容的 CC-Switch 配置。
-- 支持 provider 连通检测、模型可用性检测、SSE 流式转发和自定义上游 HTTP 代理。
+- 支持 provider 连通检测、模型可用性检测、SSE 流式转发和自定义上游 HTTP/SOCKS 代理。
 - Windows 下重复点击桌面快捷方式只会唤起已有窗口，不会再启动第二个实例。
 
 ## 下载

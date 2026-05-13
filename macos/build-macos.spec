@@ -81,6 +81,7 @@ a = Analysis(
         "backend.proxy",
         "backend.update",
         "backend.i18n",
+        "socksio",
     ] + WEBVIEW_HIDDENIMPORTS + PYSTRAY_HIDDENIMPORTS,
     hookspath=[],
     hooksconfig={},

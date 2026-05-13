@@ -57,7 +57,7 @@ Since v1.0.18, Claude Desktop is configured to call the local CC Desktop Switch 
 - Shows only explicitly mapped Claude-safe model routes in Claude Desktop.
 - Rejects unmapped Claude model routes instead of silently falling back to an internal default.
 - Imports Anthropic-compatible CC-Switch configurations while leaving OpenAI-format entries opt-in.
-- Provides provider connectivity checks, model availability checks, SSE streaming, and custom upstream HTTP proxy support.
+- Provides provider connectivity checks, model availability checks, SSE streaming, and custom upstream HTTP/SOCKS proxy support.
 - Prevents duplicate Windows app instances: launching the shortcut again brings the existing window forward.
 
 ## Download

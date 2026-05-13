@@ -3,10 +3,12 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -32,6 +34,7 @@ from main import (
 )
 from backend import config as cfg
 from backend import ccswitch_import
+from backend import main as backend_main
 from backend import provider_tools
 from backend import registry
 from backend import update as updater
@@ -208,6 +211,14 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(deepseek_1m["models"]["default"], "deepseek-v4-pro[1m]")
         self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-pro[1m]"]["supports1m"])
         self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-flash"]["supports1m"])
+        mimo_1m = presets["xiaomi-mimo-token-plan"]["modelOptions"]["mimo_1m"]
+        self.assertTrue(mimo_1m["modelCapabilities"]["mimo-v2.5-pro"]["supports1m"])
+        self.assertTrue(mimo_1m["modelCapabilities"]["mimo-v2-pro"]["supports1m"])
+        mimo_payg_1m = presets["xiaomi-mimo-payg"]["modelOptions"]["mimo_1m"]
+        self.assertTrue(mimo_payg_1m["modelCapabilities"]["mimo-v2.5-pro"]["supports1m"])
+        self.assertTrue(mimo_payg_1m["modelCapabilities"]["mimo-v2-pro"]["supports1m"])
+        self.assertEqual(presets["xiaomi-mimo-token-plan"]["modelCapabilities"], {})
+        self.assertEqual(presets["xiaomi-mimo-payg"]["modelCapabilities"], {})
         deepseek_max = presets["deepseek"]["requestOptionPresets"]["deepseek_max_effort"]
         self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["output_config"]["effort"], "max")
         self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["thinking"]["type"], "enabled")
@@ -277,6 +288,46 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertNotIn("claude-sonnet-4-5", by_name)
         self.assertNotIn("qwen3.6-plus", by_name)
         self.assertNotIn("qwen3.6-flash", by_name)
+
+    def test_registry_inference_models_mark_mimo_1m_only_for_mapped_routes(self):
+        provider = {
+            "models": {
+                "default": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+            },
+            "modelCapabilities": {
+                "mimo-v2.5-pro": {"supports1m": True},
+            },
+        }
+
+        models = registry.provider_inference_models(provider)
+        by_name = {item["name"]: item for item in models}
+
+        self.assertEqual(set(by_name), {"claude-sonnet-4-6"})
+        self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertNotIn("mimo-v2.5-pro", by_name)
+
+    def test_registry_inference_models_mark_mimo_v2_pro_1m_only_for_mapped_routes(self):
+        provider = {
+            "models": {
+                "default": "mimo-v2-pro",
+                "sonnet": "mimo-v2-pro",
+                "haiku": "mimo-v2-omni",
+            },
+            "modelCapabilities": {
+                "mimo-v2.5-pro": {"supports1m": True},
+                "mimo-v2-pro": {"supports1m": True},
+            },
+        }
+
+        models = registry.provider_inference_models(provider)
+        by_name = {item["name"]: item for item in models}
+
+        self.assertEqual(set(by_name), {"claude-sonnet-4-6", "claude-haiku-4-5"})
+        self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertNotIn("supports1m", by_name["claude-haiku-4-5"])
+        self.assertNotIn("mimo-v2-pro", by_name)
+        self.assertNotIn("mimo-v2.5-pro", by_name)
 
     def test_desktop_config_target_uses_local_proxy_for_anthropic_provider(self):
         provider = {
@@ -1153,6 +1204,37 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(missing_egress["needsApply"])
         self.assertIn("cowork_egress_hosts_missing", missing_egress_codes)
 
+    def test_desktop_health_warns_when_claude_code_helper_is_missing(self):
+        provider = {
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro"},
+        }
+        status = {
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": registry.serialize_inference_models(provider),
+                "coworkEgressAllowedHosts": '["*"]',
+                "isClaudeCodeForDesktopEnabled": "1",
+            },
+        }
+
+        with patch.dict(os.environ, {"CCDS_CLAUDE_CODE_HELPER_PATHS": os.path.join(self.temp_dir.name, "missing-helper")}, clear=False):
+            health = _desktop_health(status, 18080, provider)
+
+        warning_codes = {warning["code"] for warning in health["warnings"]}
+        self.assertFalse(health["needsApply"])
+        self.assertIn("claude_code_helper_missing", warning_codes)
+
+        helper_path = os.path.join(self.temp_dir.name, "claude.exe")
+        Path(helper_path).write_text("placeholder", encoding="utf-8")
+        with patch.dict(os.environ, {"CCDS_CLAUDE_CODE_HELPER_PATHS": helper_path}, clear=False):
+            ready = _desktop_health(status, 18080, provider)
+
+        self.assertEqual(ready["warnings"], [])
+
     def test_desktop_health_allows_safe_routes_that_match_upstream_model_ids(self):
         provider = {
             "baseUrl": "https://example-gateway.test/v1",
@@ -1496,6 +1578,84 @@ class ProviderToolsTests(unittest.TestCase):
         self.assertEqual(items[0]["used"], 2.0)
 
 
+class ProxyLifecycleTests(unittest.TestCase):
+    def tearDown(self):
+        backend_main._stop_proxy_server()
+
+    def test_start_proxy_reuses_healthy_same_port_server(self):
+        class HealthyThread:
+            alive = True
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout=None):
+                self.alive = False
+
+        class HealthyServer:
+            should_exit = False
+
+        with patch("backend.main._proxy_server_accepting", return_value=True):
+            with patch("backend.main.create_proxy_app") as create_app:
+                backend_main._proxy_running = True
+                backend_main._proxy_port = 18080
+                backend_main._proxy_thread = HealthyThread()
+                backend_main._proxy_server = HealthyServer()
+
+                self.assertTrue(backend_main._start_proxy_server(18080))
+
+        create_app.assert_not_called()
+
+    def test_start_proxy_restarts_stale_same_port_server(self):
+        class DeadThread:
+            def is_alive(self):
+                return False
+
+        class StaleServer:
+            should_exit = False
+
+        class FakeServer:
+            def __init__(self, _config):
+                self.started = False
+                self.should_exit = False
+
+            def run(self):
+                self.started = True
+                while not self.should_exit:
+                    time.sleep(0.01)
+
+        stale_server = StaleServer()
+        backend_main._proxy_running = True
+        backend_main._proxy_port = 18080
+        backend_main._proxy_thread = DeadThread()
+        backend_main._proxy_server = stale_server
+
+        with patch("backend.main.uvicorn.Server", FakeServer):
+            self.assertTrue(backend_main._start_proxy_server(18080))
+
+        self.assertTrue(stale_server.should_exit)
+        self.assertTrue(backend_main._proxy_running)
+
+    def test_start_proxy_restarts_healthy_server_when_requested(self):
+        class FakeServer:
+            def __init__(self, _config):
+                self.started = False
+                self.should_exit = False
+
+            def run(self):
+                self.started = True
+                while not self.should_exit:
+                    time.sleep(0.01)
+
+        with patch("backend.main.uvicorn.Server", FakeServer):
+            self.assertTrue(backend_main._start_proxy_server(18080))
+            first_server = backend_main._proxy_server
+            self.assertTrue(backend_main._start_proxy_server(18080, restart=True))
+
+        self.assertTrue(first_server.should_exit)
+        self.assertTrue(backend_main._proxy_running)
+
+
 class AdminApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -1656,6 +1816,19 @@ class AdminApiTests(unittest.TestCase):
         check_codes = {item["code"] for item in check.json()["checks"]}
         self.assertIn("proxy_recent_errors", check_codes)
 
+    def test_diagnostics_export_redacts_socks_proxy_credentials(self):
+        log_buffer.clear()
+        log_buffer.add("INFO", "使用上游代理: socks5://proxy-user:proxy-pass@127.0.0.1:1080")
+
+        allowed = self.client.post("/api/diagnostics/export", headers=admin_headers())
+        payload = allowed.json()["diagnostics"]
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        self.assertEqual(allowed.status_code, 200)
+        self.assertNotIn("proxy-user", serialized)
+        self.assertNotIn("proxy-pass", serialized)
+        self.assertIn("socks5://******:******@127.0.0.1:1080", serialized)
+
     def test_diagnostics_check_flags_recent_non_json_upstream_response(self):
         provider = cfg.add_provider({
             "name": "AnyRouter",
@@ -1681,6 +1854,41 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(check.status_code, 200)
         self.assertFalse(payload["ok"])
         self.assertIn("upstream_response", codes)
+
+    def test_diagnostics_check_flags_missing_claude_code_helper(self):
+        provider = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "provider-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+        config = cfg.load_config()
+        config["activeProvider"] = provider["id"]
+        cfg.save_config(config)
+        desktop_status = {
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": registry.serialize_inference_models(provider),
+                "coworkEgressAllowedHosts": '["*"]',
+                "isClaudeCodeForDesktopEnabled": "1",
+            },
+        }
+
+        with patch("backend.main.registry.get_config_status", return_value=desktop_status):
+            with patch.dict(os.environ, {"CCDS_CLAUDE_CODE_HELPER_PATHS": os.path.join(self.temp_dir.name, "missing-helper")}, clear=False):
+                check = self.client.post("/api/diagnostics/check", headers=admin_headers())
+
+        payload = check.json()
+        codes = {item["code"] for item in payload["checks"]}
+        desktop_check = next(item for item in payload["checks"] if item["code"] == "desktop_health")
+
+        self.assertEqual(check.status_code, 200)
+        self.assertIn("claude_code_helper", codes)
+        self.assertTrue(desktop_check["ok"])
+        self.assertFalse(payload["ok"])
 
     def test_autofill_models_route_updates_provider_mapping(self):
         provider = cfg.add_provider({
@@ -1971,7 +2179,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(data["desktopSync"]["attempted"])
         self.assertTrue(data["desktopSync"]["success"])
         self.assertTrue(data["desktopSync"]["proxyStarted"])
-        start_proxy.assert_called_once_with(18080)
+        start_proxy.assert_called_once_with(18080, restart=True)
         self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
         self.assertTrue(apply_config.call_args.kwargs["gateway_api_key"].startswith("ccds_"))
         self.assertEqual(apply_config.call_args.kwargs["auth_scheme"], "bearer")
@@ -2038,6 +2246,24 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(data["mode"], "local_proxy")
         self.assertIn("本机转发服务启动失败", data["message"])
         self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
+        start_proxy.assert_called_once_with(18080, restart=True)
+
+    def test_proxy_start_route_rechecks_stale_running_state(self):
+        backend_main._proxy_running = True
+        backend_main._proxy_port = 18080
+        backend_main._proxy_thread = None
+        backend_main._proxy_server = None
+
+        try:
+            with patch("backend.main._proxy_server_accepting", return_value=False) as accepting:
+                with patch("backend.main._start_proxy_server", return_value=True) as start_proxy:
+                    response = self.client.post("/api/proxy/start", headers=admin_headers())
+        finally:
+            backend_main._stop_proxy_server()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["port"], 18080)
+        accepting.assert_called_once_with(18080)
         start_proxy.assert_called_once_with(18080)
 
     def test_configure_desktop_fails_without_explicit_claude_model_routes(self):
@@ -2249,7 +2475,7 @@ class AdminApiTests(unittest.TestCase):
 
 
 class ReleaseManifestTests(unittest.TestCase):
-    VERSION = "1.0.23"
+    VERSION = "1.0.24"
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -2288,6 +2514,15 @@ class ReleaseManifestTests(unittest.TestCase):
             f"CC-Desktop-Switch-v{self.VERSION}-macOS-x64.dmg",
         ):
             self._touch_asset(name)
+
+    def test_build_metadata_includes_socks_proxy_dependency(self):
+        requirements = (self.root / "requirements.txt").read_text(encoding="utf-8")
+        build_spec = (self.root / "build.spec").read_text(encoding="utf-8")
+        macos_spec = (self.root / "macos" / "build-macos.spec").read_text(encoding="utf-8")
+
+        self.assertIn("httpx[socks]", requirements)
+        self.assertIn('"socksio"', build_spec)
+        self.assertIn('"socksio"', macos_spec)
 
     def _run_manifest(self):
         script = self.root / "scripts" / "New-ReleaseManifest.ps1"
@@ -2902,6 +3137,126 @@ class ProxyConversionTests(unittest.TestCase):
         self.assertNotIn("refresh-secret-token", serialized)
         self.assertNotIn("client-secret-token", serialized)
         self.assertIn("******", serialized)
+
+    def test_socks_proxy_dependency_error_is_structured(self):
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                raise ImportError(
+                    "Using SOCKS proxy, but the 'socksio' package is not installed. "
+                    "Make sure to install httpx using `pip install httpx[socks]`."
+                )
+
+        provider = {
+            "name": "MiMo",
+            "baseUrl": "https://api.xiaomimimo.com/anthropic",
+            "apiKey": "provider-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            result = asyncio.run(forward_request(body, provider, "req-socks"))
+
+        self.assertEqual(result["error"]["type"], "socks_proxy_dependency_missing")
+        self.assertIn("SOCKS", result["error"]["message"])
+
+    def test_socks_proxy_dependency_error_streams_as_error_event(self):
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                raise ImportError(
+                    "Using SOCKS proxy, but the 'socksio' package is not installed. "
+                    "Make sure to install httpx using `pip install httpx[socks]`."
+                )
+
+        provider = {
+            "name": "MiMo",
+            "baseUrl": "https://api.xiaomimimo.com/anthropic",
+            "apiKey": "provider-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+            "stream": True,
+        }
+
+        async def collect():
+            chunks = []
+            async for chunk in forward_request_stream(body, provider, "req-socks-stream"):
+                chunks.append(chunk)
+            return "".join(chunks)
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            text = asyncio.run(collect())
+
+        self.assertIn("event: error", text)
+        self.assertIn("socks_proxy_dependency_missing", text)
+
+    def test_socks_proxy_credentials_are_redacted_in_proxy_logs(self):
+        class FakeElapsed:
+            def total_seconds(self):
+                return 0.01
+
+        class FakeResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "application/json"}
+            text = json.dumps({
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+            })
+            elapsed = FakeElapsed()
+
+            def json(self):
+                return json.loads(self.text)
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        provider = {
+            "name": "MiMo",
+            "baseUrl": "https://api.xiaomimimo.com/anthropic",
+            "apiKey": "provider-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
+        settings = cfg.get_settings()
+        settings["upstreamProxyEnabled"] = True
+        settings["upstreamProxy"] = "socks5://proxy-user:proxy-pass@127.0.0.1:1080"
+        cfg.update_settings(settings)
+        log_buffer.clear()
+
+        with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+            asyncio.run(forward_request(body, provider, "req-socks-redact"))
+
+        messages = "\n".join(item["message"] for item in log_buffer.get_all())
+        self.assertNotIn("proxy-user", messages)
+        self.assertNotIn("proxy-pass", messages)
+        self.assertIn("socks5://******:******@127.0.0.1:1080", messages)
 
     def test_openai_streaming_non_sse_success_response_returns_sse_error_event(self):
         class FakeStreamResponse:
@@ -3589,7 +3944,7 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertIsNone(observed["providers"])
         self.assertFalse(observed["expose_all"])
         self.assertIn("桌面版配置已同步", tray.icon.notifications[0][1])
-        start_proxy.assert_called_once_with(18080)
+        start_proxy.assert_called_once_with(18080, restart=True)
         restart_dialog.assert_not_called()
 
     def test_switch_provider_does_not_show_restart_dialog_when_provider_is_unchanged(self):
@@ -3711,10 +4066,18 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("requestOptionPresets", app_js + api_js)
         self.assertIn("modelsMatch(option.models", app_js)
         self.assertIn("capabilitiesMatch", app_js)
+        self.assertIn("function capabilitiesInclude", app_js)
+        self.assertIn("function capabilityEntriesForCurrentMappings", app_js)
+        self.assertIn("capabilitiesInclude(option.modelCapabilities, formModelCapabilities, currentMappings)", app_js)
+        self.assertIn("const usedModelIds = new Set(Object.values(mappings).filter(Boolean));", app_js)
+        self.assertIn("function selectedFirstOptions", app_js)
+        self.assertIn("selectedFirstOptions(providerAvailableModels, selectedValue)", app_js)
+        self.assertNotIn("delete explicitMappings.default", app_js)
         self.assertIn("reorderProviders", api_js)
         self.assertIn("desktopHealth", app_js + api_js)
         self.assertIn("healthMessages", app_js)
         self.assertIn("healthIssueMessage", app_js)
+        self.assertIn("health?.warnings", app_js)
         self.assertIn("activeSource", api_js)
         self.assertIn("keySources", api_js)
         self.assertNotIn("registryConfig.inferenceGatewayBaseUrl || `http://127.0.0.1:${proxyPort}`", api_js)
@@ -3748,6 +4111,27 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('data-action="toggle-model-menu-mode"', html)
         self.assertIn("renderModelMenuModeState", app_js)
         self.assertIn("providers.showAllModels", i18n)
+        self.assertIn("HTTP/SOCKS", html + i18n)
+
+    def test_provider_model_menu_sorts_selected_model_first(self):
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"(function selectedFirstOptions\(options = \[\], currentValue = \"\"\) \{[\s\S]*?\n  \})\n\n  function providerModelOptionsMarkup",
+            app_js,
+        )
+        self.assertIsNotNone(match)
+        script = (
+            f"{match.group(1)}\n"
+            "console.log(JSON.stringify({"
+            "selected: selectedFirstOptions(['model-b','model-a','model-c'], 'model-a'),"
+            "empty: selectedFirstOptions(['model-b','model-a'], '')"
+            "}));"
+        )
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["selected"], ["model-a", "model-b", "model-c"])
+        self.assertEqual(payload["empty"], ["model-b", "model-a"])
 
     def test_macos_build_hides_dock_and_uses_native_status_item(self):
         main_py = (self.root / "main.py").read_text(encoding="utf-8")
@@ -3756,6 +4140,12 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("NSStatusBar.systemStatusBar", main_py)
         self.assertIn("showApp_", main_py)
         self.assertIn("quitApp_", main_py)
+        self.assertIn("def _macos_hide_dock_icon", main_py)
+        self.assertIn("NSApplicationActivationPolicyAccessory", main_py)
+        self.assertIn("def _macos_status_bar_image", main_py)
+        self.assertIn("imageWithSystemSymbolName_accessibilityDescription_", main_py)
+        self.assertIn("image.setTemplate_(True)", main_py)
+        self.assertNotIn("initWithContentsOfFile_(str(controller.icon_path))", main_py)
         self.assertIn('"LSUIElement": True', macos_spec)
 
     def test_diagnostics_ui_and_api_hooks_exist(self):

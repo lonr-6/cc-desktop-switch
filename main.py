@@ -29,7 +29,7 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.23"
+APP_VERSION = "1.0.24"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
@@ -265,6 +265,34 @@ def _macos_should_quit_from_close_event() -> bool:
     return False
 
 
+def _macos_hide_dock_icon(AppKit) -> bool:
+    """把 macOS 应用保持为 accessory 模式，避免出现在 Dock 栏。"""
+    try:
+        policy = getattr(AppKit, "NSApplicationActivationPolicyAccessory")
+        AppKit.NSApp.setActivationPolicy_(policy)
+        return True
+    except Exception as exc:
+        safe_print(f"macOS dock hide unavailable: {exc}")
+        return False
+
+
+def _macos_status_bar_image(AppKit, Foundation):
+    """使用 macOS template image，让状态栏图标自动适配深浅色模式。"""
+    try:
+        image = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "arrow.triangle.2.circlepath",
+            APP_NAME,
+        )
+        if image is None:
+            return None
+        image.setTemplate_(True)
+        image.setSize_(Foundation.NSMakeSize(18, 18))
+        return image
+    except Exception as exc:
+        safe_print(f"macOS status item template image unavailable: {exc}")
+        return None
+
+
 def _install_macos_reopen_handler(window, controller):
     """Install Cocoa hooks for reopen and menu-bar status item behavior."""
     if sys.platform != "darwin":
@@ -313,15 +341,15 @@ def _install_macos_reopen_handler(window, controller):
         _macos_app_delegate = delegate
         _macos_status_delegate = status_delegate
         AppKit.NSApplication.sharedApplication().setDelegate_(delegate)
+        _macos_hide_dock_icon(AppKit)
         try:
             status_item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(
                 AppKit.NSVariableStatusItemLength
             )
             button = status_item.button()
             if button is not None:
-                image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(controller.icon_path))
+                image = _macos_status_bar_image(AppKit, Foundation)
                 if image is not None:
-                    image.setSize_(Foundation.NSMakeSize(18, 18))
                     button.setImage_(image)
                 else:
                     button.setTitle_("CCDS")
@@ -453,7 +481,7 @@ class DesktopTrayController:
                     gateway_headers=target["gatewayHeaders"],
                 )
                 if target.get("requiresProxy"):
-                    _start_proxy_server(settings.get("proxyPort", 18080))
+                    _start_proxy_server(settings.get("proxyPort", 18080), restart=True)
                 desktop_synced = bool(result.get("success"))
                 desktop_message = "，桌面版配置已同步，重启 Claude 后生效" if result.get("success") else "，请重新一键应用到 Claude 桌面版"
         except Exception as exc:
@@ -513,6 +541,7 @@ class DesktopTrayController:
             if sys.platform == "darwin":
                 try:
                     import AppKit
+                    _macos_hide_dock_icon(AppKit)
                     AppKit.NSApp.activateIgnoringOtherApps_(True)
                 except Exception:
                     pass
