@@ -429,6 +429,7 @@ fn install_command(installer_path: &Path) -> Command {
     command
 }
 
+#[cfg(target_os = "windows")]
 fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension()
         .and_then(|value| value.to_str())

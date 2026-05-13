@@ -657,11 +657,6 @@ fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     command
 }
 
-#[cfg(not(target_os = "windows"))]
-fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
-    Command::new(program)
-}
-
 #[cfg(target_os = "windows")]
 fn windows_process_count(image_name: &str) -> u32 {
     let filter = format!("IMAGENAME eq {image_name}");
