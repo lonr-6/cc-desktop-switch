@@ -1,0 +1,14 @@
+{
+  "id": "kimi",
+  "name": "Kimi (月之暗面)",
+  "baseUrl": "https://api.moonshot.cn/anthropic",
+  "authScheme": "bearer",
+  "apiFormat": "anthropic",
+  "models": {
+    "sonnet": "kimi-k2.6",
+    "haiku": "kimi-k2.6",
+    "opus": "kimi-k2.6",
+    "default": "kimi-k2.6"
+  },
+  "isBuiltin": true
+}

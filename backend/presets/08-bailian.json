@@ -1,0 +1,30 @@
+{
+  "id": "bailian",
+  "name": "阿里云百炼",
+  "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+  "authScheme": "x-api-key",
+  "apiFormat": "anthropic",
+  "models": {
+    "sonnet": "qwen3.6-plus",
+    "haiku": "qwen3.6-flash",
+    "opus": "qwen3.6-max-preview",
+    "default": "qwen3.6-plus"
+  },
+  "modelOptions": {
+    "qwen_1m": {
+      "label": "开启千问 1M 上下文",
+      "description": "阿里云文档确认 qwen3.6-plus / qwen3.6-flash 支持 1M。勾选后会把 1M 能力写入 Claude 桌面版；不勾选则按普通上下文显示。",
+      "modelCapabilities": {
+        "qwen3.6-plus": {
+          "supports1m": true
+        },
+        "qwen3.6-flash": {
+          "supports1m": true
+        }
+      }
+    }
+  },
+  "modelCapabilities": {},
+  "requestOptions": {},
+  "isBuiltin": true
+}

@@ -52,10 +52,12 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(FRONTEND), "frontend"),
+        (str(ROOT / "backend" / "presets"), "backend/presets"),
         (str(ROOT / "LICENSE.txt"), "."),
     ] + WEBVIEW_DATAS + PYSTRAY_DATAS,
     hiddenimports=[
         "backend", "backend.main", "backend.config",
+        "backend.preset_loader",
         "backend.api_adapters", "backend.ccswitch_import", "backend.model_alias",
         "backend.provider_tools", "backend.registry", "backend.proxy", "backend.update", "backend.i18n",
         "socksio",

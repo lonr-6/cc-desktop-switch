@@ -1,0 +1,54 @@
+{
+  "id": "deepseek",
+  "name": "DeepSeek",
+  "baseUrl": "https://api.deepseek.com/anthropic",
+  "authScheme": "bearer",
+  "apiFormat": "anthropic",
+  "models": {
+    "sonnet": "deepseek-v4-pro",
+    "haiku": "deepseek-v4-flash",
+    "opus": "deepseek-v4-pro",
+    "default": "deepseek-v4-pro"
+  },
+  "modelOptions": {
+    "deepseek_1m": {
+      "label": "解锁 1M 上下文",
+      "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]，Haiku/Flash 也会标记 1M 能力。",
+      "models": {
+        "sonnet": "deepseek-v4-pro[1m]",
+        "haiku": "deepseek-v4-flash",
+        "opus": "deepseek-v4-pro[1m]",
+        "default": "deepseek-v4-pro[1m]"
+      },
+      "modelCapabilities": {
+        "deepseek-v4-pro[1m]": {
+          "supports1m": true
+        },
+        "deepseek-v4-flash": {
+          "supports1m": true
+        }
+      }
+    }
+  },
+  "requestOptions": {},
+  "requestOptionPresets": {
+    "deepseek_max_effort": {
+      "label": "DeepSeek Max 思维",
+      "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 DeepSeek Max 转发；未勾选则使用 Claude 当前默认配置。",
+      "requestOptions": {
+        "anthropic": {
+          "thinking": {
+            "type": "enabled"
+          },
+          "output_config": {
+            "effort": "max"
+          }
+        }
+      }
+    }
+  },
+  "extraHeaders": {
+    "x-api-key": "{apiKey}"
+  },
+  "isBuiltin": true
+}

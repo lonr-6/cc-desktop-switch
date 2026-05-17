@@ -35,6 +35,7 @@ from main import (
 from backend import config as cfg
 from backend import ccswitch_import
 from backend import main as backend_main
+from backend import preset_loader
 from backend import provider_tools
 from backend import registry
 from backend import update as updater
@@ -224,6 +225,68 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["thinking"]["type"], "enabled")
         self.assertIn("Low：更快更省", deepseek_max["description"])
         self.assertIn("未勾选则使用 Claude 当前默认配置", deepseek_max["description"])
+
+    def test_builtin_preset_loader_skips_invalid_schema_entries(self):
+        schema = {
+            "type": "object",
+            "required": ["id", "name", "baseUrl", "authScheme", "apiFormat", "models", "isBuiltin"],
+            "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "name": {"type": "string", "minLength": 1},
+                "baseUrl": {"type": "string"},
+                "authScheme": {"type": "string"},
+                "apiFormat": {"type": "string"},
+                "models": {
+                    "type": "object",
+                    "required": ["default"],
+                    "additionalProperties": {"type": "string"},
+                },
+                "isBuiltin": {"type": "boolean", "enum": [True]},
+            },
+            "additionalProperties": True,
+        }
+        valid_preset = {
+            "id": "valid",
+            "name": "Valid Preset",
+            "baseUrl": "https://example.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"default": "model-a", "sonnet": "model-a"},
+            "isBuiltin": True,
+        }
+        invalid_preset = {
+            "id": "invalid",
+            "baseUrl": "https://example.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"default": "model-b"},
+            "isBuiltin": True,
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            presets_dir = Path(temp_dir)
+            (presets_dir / "schema.json").write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
+            (presets_dir / "01-valid.json").write_text(json.dumps(valid_preset, ensure_ascii=False, indent=2), encoding="utf-8")
+            (presets_dir / "02-invalid.json").write_text(json.dumps(invalid_preset, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            with patch.object(preset_loader, "PRESETS_DIR", presets_dir), patch.object(preset_loader, "PRESET_SCHEMA_FILE", presets_dir / "schema.json"):
+                with self.assertLogs("backend.preset_loader", level="WARNING") as logs:
+                    presets = cfg.get_presets()
+
+        self.assertEqual([preset["id"] for preset in presets], ["valid"])
+        self.assertIn("02-invalid.json", "\n".join(logs.output))
+        self.assertIn("missing required field", "\n".join(logs.output))
+
+    def test_presets_api_returns_file_backed_presets(self):
+        client = TestClient(create_admin_app())
+
+        response = client.get("/api/presets", headers=admin_headers())
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["presets"])
+        self.assertEqual(payload["presets"][0]["id"], "deepseek")
+        self.assertIn("bailian", {preset["id"] for preset in payload["presets"]})
 
     def test_registry_inference_models_mark_deepseek_1m(self):
         provider = {
@@ -2523,6 +2586,15 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertIn("httpx[socks]", requirements)
         self.assertIn('"socksio"', build_spec)
         self.assertIn('"socksio"', macos_spec)
+
+    def test_build_metadata_includes_builtin_preset_data_files(self):
+        build_spec = (self.root / "build.spec").read_text(encoding="utf-8")
+        macos_spec = (self.root / "macos" / "build-macos.spec").read_text(encoding="utf-8")
+
+        self.assertIn('ROOT / "backend" / "presets"', build_spec)
+        self.assertIn('"backend/presets"', build_spec)
+        self.assertIn('ROOT / "backend" / "presets"', macos_spec)
+        self.assertIn('"backend/presets"', macos_spec)
 
     def _run_manifest(self):
         script = self.root / "scripts" / "New-ReleaseManifest.ps1"

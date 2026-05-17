@@ -1,0 +1,170 @@
+{
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "baseUrl",
+    "authScheme",
+    "apiFormat",
+    "models",
+    "isBuiltin"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseUrl": {
+      "type": "string"
+    },
+    "authScheme": {
+      "type": "string",
+      "enum": [
+        "bearer",
+        "x-api-key",
+        "none"
+      ]
+    },
+    "apiFormat": {
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "claude",
+        "messages",
+        "openai",
+        "openai_chat",
+        "chat_completions"
+      ]
+    },
+    "models": {
+      "type": "object",
+      "required": [
+        "default"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "baseUrlHint": {
+      "type": "string"
+    },
+    "baseUrlOptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extraHeaders": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "modelCapabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "supports1m": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "modelOptions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "label",
+          "description"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "modelCapabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "supports1m": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "requestOptions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "requestOptionPresets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "label",
+          "description",
+          "requestOptions"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "requestOptions": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "isBuiltin": {
+      "type": "boolean",
+      "enum": [
+        true
+      ]
+    }
+  },
+  "additionalProperties": false
+}

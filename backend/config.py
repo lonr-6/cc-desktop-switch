@@ -1,14 +1,15 @@
 """配置管理 - JSON 配置文件读写"""
 
+import copy
 import json
 import os
 import secrets
 import shutil
-import copy
 from datetime import datetime
 from typing import Optional
 
 from backend.model_alias import model_mappings_with_legacy_aliases, normalize_model_mappings
+from backend.preset_loader import load_builtin_presets
 
 CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -32,240 +33,6 @@ DEFAULT_CONFIG = {
         "upstreamProxyEnabled": False,
     },
 }
-
-BUILTIN_PRESETS = [
-    {
-        "id": "deepseek",
-        "name": "DeepSeek",
-        "baseUrl": "https://api.deepseek.com/anthropic",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "deepseek-v4-pro",
-            "haiku": "deepseek-v4-flash",
-            "opus": "deepseek-v4-pro",
-            "default": "deepseek-v4-pro",
-        },
-        "modelOptions": {
-            "deepseek_1m": {
-                "label": "解锁 1M 上下文",
-                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]，Haiku/Flash 也会标记 1M 能力。",
-                "models": {
-                    "sonnet": "deepseek-v4-pro[1m]",
-                    "haiku": "deepseek-v4-flash",
-                    "opus": "deepseek-v4-pro[1m]",
-                    "default": "deepseek-v4-pro[1m]",
-                },
-                "modelCapabilities": {
-                    "deepseek-v4-pro[1m]": {"supports1m": True},
-                    "deepseek-v4-flash": {"supports1m": True},
-                },
-            }
-        },
-        "requestOptions": {},
-        "requestOptionPresets": {
-            "deepseek_max_effort": {
-                "label": "DeepSeek Max 思维",
-                "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 DeepSeek Max 转发；未勾选则使用 Claude 当前默认配置。",
-                "requestOptions": {
-                    "anthropic": {
-                        "thinking": {"type": "enabled"},
-                        "output_config": {"effort": "max"},
-                    }
-                },
-            }
-        },
-        "extraHeaders": {"x-api-key": "{apiKey}"},
-        "isBuiltin": True,
-    },
-    {
-        "id": "third-party",
-        "name": "第三方模型",
-        "baseUrl": "",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "",
-            "haiku": "",
-            "opus": "",
-            "default": "",
-        },
-        "modelOptions": {
-            "third_party_1m": {
-                "label": "解锁 1M 上下文",
-                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用支持 1M 上下文的模型。",
-                "models": {
-                    "sonnet": "",
-                    "haiku": "",
-                    "opus": "",
-                    "default": "",
-                },
-                "modelCapabilities": {},
-            }
-        },
-        "requestOptions": {},
-        "requestOptionPresets": {
-            "third_party_max_effort": {
-                "label": "Max 思维",
-                "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 Max 思维转发；未勾选则使用 Claude 当前默认配置。",
-                "requestOptions": {
-                    "anthropic": {
-                        "thinking": {"type": "enabled"},
-                        "output_config": {"effort": "max"},
-                    }
-                },
-            }
-        },
-        "isBuiltin": True,
-    },
-    {
-        "id": "kimi",
-        "name": "Kimi (月之暗面)",
-        "baseUrl": "https://api.moonshot.cn/anthropic",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "kimi-k2.6",
-            "haiku": "kimi-k2.6",
-            "opus": "kimi-k2.6",
-            "default": "kimi-k2.6",
-        },
-        "isBuiltin": True,
-    },
-    {
-        "id": "kimi-code",
-        "name": "Kimi Code",
-        "baseUrl": "https://api.kimi.com/coding",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "kimi-for-coding",
-            "haiku": "kimi-for-coding",
-            "opus": "kimi-for-coding",
-            "default": "kimi-for-coding",
-        },
-        "isBuiltin": True,
-    },
-    {
-        "id": "xiaomi-mimo-payg",
-        "name": "Xiaomi MiMo (Pay for Token)",
-        "baseUrl": "https://api.xiaomimimo.com/anthropic",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "",
-            "haiku": "",
-            "opus": "",
-            "default": "mimo-v2.5-pro",
-        },
-        "modelOptions": {
-            "mimo_1m": {
-                "label": "启用 MiMo 1M 上下文",
-                "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
-                "modelCapabilities": {
-                    "mimo-v2.5-pro": {"supports1m": True},
-                    "mimo-v2-pro": {"supports1m": True},
-                },
-            },
-        },
-        "modelCapabilities": {},
-        "isBuiltin": True,
-    },
-    {
-        "id": "xiaomi-mimo-token-plan",
-        "name": "Xiaomi MiMo (Token Plan)",
-        "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "baseUrlOptions": [
-            {
-                "label": "中国集群",
-                "value": "https://token-plan-cn.xiaomimimo.com/anthropic",
-            },
-            {
-                "label": "新加坡集群",
-                "value": "https://token-plan-sgp.xiaomimimo.com/anthropic",
-            },
-            {
-                "label": "欧洲集群",
-                "value": "https://token-plan-ams.xiaomimimo.com/anthropic",
-            },
-        ],
-        "baseUrlHint": "请使用账号所属地区的 Base URL，若不清楚请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
-        "models": {
-            "sonnet": "",
-            "haiku": "",
-            "opus": "",
-            "default": "mimo-v2.5-pro",
-        },
-        "modelOptions": {
-            "mimo_1m": {
-                "label": "启用 MiMo 1M 上下文",
-                "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
-                "modelCapabilities": {
-                    "mimo-v2.5-pro": {"supports1m": True},
-                    "mimo-v2-pro": {"supports1m": True},
-                },
-            },
-        },
-        "modelCapabilities": {},
-        "isBuiltin": True,
-    },
-    {
-        "id": "zhipu",
-        "name": "智谱 GLM",
-        "baseUrl": "https://open.bigmodel.cn/api/anthropic",
-        "authScheme": "x-api-key",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "glm-5.1",
-            "haiku": "glm-4.7",
-            "opus": "glm-5.1",
-            "default": "glm-5.1",
-        },
-        "isBuiltin": True,
-    },
-    {
-        "id": "bailian",
-        "name": "阿里云百炼",
-        "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
-        "authScheme": "x-api-key",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "qwen3.6-plus",
-            "haiku": "qwen3.6-flash",
-            "opus": "qwen3.6-max-preview",
-            "default": "qwen3.6-plus",
-        },
-        "modelOptions": {
-            "qwen_1m": {
-                "label": "开启千问 1M 上下文",
-                "description": "阿里云文档确认 qwen3.6-plus / qwen3.6-flash 支持 1M。勾选后会把 1M 能力写入 Claude 桌面版；不勾选则按普通上下文显示。",
-                "modelCapabilities": {
-                    "qwen3.6-plus": {"supports1m": True},
-                    "qwen3.6-flash": {"supports1m": True},
-                },
-            }
-        },
-        "modelCapabilities": {},
-        "requestOptions": {},
-        "isBuiltin": True,
-    },
-    {
-        "id": "bailian-token-plan",
-        "name": "阿里云百炼 (Token Plan)",
-        "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
-        "authScheme": "bearer",
-        "apiFormat": "anthropic",
-        "models": {
-            "sonnet": "",
-            "haiku": "",
-            "opus": "",
-            "default": "qwen3.6-plus",
-        },
-        "isBuiltin": True,
-    },
-]
 
 
 def ensure_config_dir():
@@ -650,4 +417,4 @@ def update_settings(settings: dict) -> dict:
 
 def get_presets() -> list:
     """获取内置预设列表"""
-    return [_preset_with_legacy_model_aliases(preset) for preset in BUILTIN_PRESETS]
+    return [_preset_with_legacy_model_aliases(preset) for preset in load_builtin_presets()]

@@ -1,0 +1,14 @@
+{
+  "id": "zhipu",
+  "name": "智谱 GLM",
+  "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+  "authScheme": "x-api-key",
+  "apiFormat": "anthropic",
+  "models": {
+    "sonnet": "glm-5.1",
+    "haiku": "glm-4.7",
+    "opus": "glm-5.1",
+    "default": "glm-5.1"
+  },
+  "isBuiltin": true
+}

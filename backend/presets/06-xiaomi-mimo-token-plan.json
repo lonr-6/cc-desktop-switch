@@ -1,0 +1,44 @@
+{
+  "id": "xiaomi-mimo-token-plan",
+  "name": "Xiaomi MiMo (Token Plan)",
+  "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+  "authScheme": "bearer",
+  "apiFormat": "anthropic",
+  "baseUrlOptions": [
+    {
+      "label": "中国集群",
+      "value": "https://token-plan-cn.xiaomimimo.com/anthropic"
+    },
+    {
+      "label": "新加坡集群",
+      "value": "https://token-plan-sgp.xiaomimimo.com/anthropic"
+    },
+    {
+      "label": "欧洲集群",
+      "value": "https://token-plan-ams.xiaomimimo.com/anthropic"
+    }
+  ],
+  "baseUrlHint": "请使用账号所属地区的 Base URL，若不清楚请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
+  "models": {
+    "sonnet": "",
+    "haiku": "",
+    "opus": "",
+    "default": "mimo-v2.5-pro"
+  },
+  "modelOptions": {
+    "mimo_1m": {
+      "label": "启用 MiMo 1M 上下文",
+      "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
+      "modelCapabilities": {
+        "mimo-v2.5-pro": {
+          "supports1m": true
+        },
+        "mimo-v2-pro": {
+          "supports1m": true
+        }
+      }
+    }
+  },
+  "modelCapabilities": {},
+  "isBuiltin": true
+}
