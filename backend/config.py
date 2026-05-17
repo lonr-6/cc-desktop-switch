@@ -10,9 +10,18 @@ from typing import Optional
 
 from backend.model_alias import model_mappings_with_legacy_aliases, normalize_model_mappings
 
-CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
+
+def _resolve_config_paths() -> tuple[str, str, str]:
+    override = os.environ.get("CCDS_CONFIG_DIR", "").strip()
+    config_dir = os.path.abspath(os.path.expanduser(override or "~/.cc-desktop-switch"))
+    return (
+        config_dir,
+        os.path.join(config_dir, "config.json"),
+        os.path.join(config_dir, "backups"),
+    )
+
+
+CONFIG_DIR, CONFIG_FILE, BACKUP_DIR = _resolve_config_paths()
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {

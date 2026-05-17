@@ -7,6 +7,12 @@ echo ========================================
 
 cd /d "%~dp0"
 
+if not defined CCDS_CONFIG_DIR (
+    set "CCDS_CONFIG_DIR=%~dp0.tmp\dev-config"
+    echo [信息] 开发启动默认使用独立配置目录:
+    echo        %CCDS_CONFIG_DIR%
+)
+
 REM 检查 Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
