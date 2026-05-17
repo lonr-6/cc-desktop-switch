@@ -3046,6 +3046,12 @@ body {
   justify-self: start;
 }
 
+.settings-panel .settings-inline-switch {
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .settings-panel .settings-row .form-control,
 .settings-panel .settings-row .form-control-lg {
   height: 38px;

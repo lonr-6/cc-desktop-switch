@@ -57,6 +57,7 @@ from backend.proxy import (
     gateway_models_response,
     log_buffer,
     map_model,
+    rectify_claude_code_billing_header,
 )
 
 
@@ -197,6 +198,11 @@ class ProviderConfigTests(unittest.TestCase):
         cfg.BACKUP_DIR = os.path.join(self.temp_dir.name, "backups")
         cfg.save_config(copy.deepcopy(cfg.DEFAULT_CONFIG))
 
+    def test_billing_header_rectifier_setting_defaults_to_enabled(self):
+        settings = cfg.get_settings()
+
+        self.assertTrue(settings["enableBillingHeaderRectifier"])
+
     def test_builtin_presets_include_expected_provider_urls(self):
         presets = {preset["id"]: preset for preset in cfg.get_presets()}
 
@@ -227,14 +233,23 @@ class ProviderConfigTests(unittest.TestCase):
 
         deepseek_1m = presets["deepseek"]["modelOptions"]["deepseek_1m"]
         self.assertEqual(deepseek_1m["models"]["sonnet"], "deepseek-v4-pro[1m]")
+        self.assertEqual(deepseek_1m["models"]["haiku"], "deepseek-v4-flash")
         self.assertEqual(deepseek_1m["models"]["opus"], "deepseek-v4-pro[1m]")
         self.assertEqual(deepseek_1m["models"]["default"], "deepseek-v4-pro[1m]")
         self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-pro[1m]"]["supports1m"])
         self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-flash"]["supports1m"])
         mimo_1m = presets["xiaomi-mimo-token-plan"]["modelOptions"]["mimo_1m"]
+        self.assertEqual(mimo_1m["models"]["sonnet"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_1m["models"]["haiku"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_1m["models"]["opus"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_1m["models"]["default"], "mimo-v2.5-pro")
         self.assertTrue(mimo_1m["modelCapabilities"]["mimo-v2.5-pro"]["supports1m"])
         self.assertTrue(mimo_1m["modelCapabilities"]["mimo-v2-pro"]["supports1m"])
         mimo_payg_1m = presets["xiaomi-mimo-payg"]["modelOptions"]["mimo_1m"]
+        self.assertEqual(mimo_payg_1m["models"]["sonnet"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_payg_1m["models"]["haiku"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_payg_1m["models"]["opus"], "mimo-v2.5-pro")
+        self.assertEqual(mimo_payg_1m["models"]["default"], "mimo-v2.5-pro")
         self.assertTrue(mimo_payg_1m["modelCapabilities"]["mimo-v2.5-pro"]["supports1m"])
         self.assertTrue(mimo_payg_1m["modelCapabilities"]["mimo-v2-pro"]["supports1m"])
         self.assertEqual(presets["xiaomi-mimo-token-plan"]["modelCapabilities"], {})
@@ -387,6 +402,32 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(set(by_name), {"claude-sonnet-4-6"})
         self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertNotIn("mimo-v2.5-pro", by_name)
+
+    def test_registry_inference_models_mark_mimo_1m_for_option_mapped_slots(self):
+        provider = {
+            "models": {
+                "default": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+                "haiku": "mimo-v2.5-pro",
+                "opus": "mimo-v2.5-pro",
+            },
+            "modelCapabilities": {
+                "mimo-v2.5-pro": {"supports1m": True},
+            },
+        }
+
+        models = registry.provider_inference_models(provider)
+        by_name = {item["name"]: item for item in models}
+
+        self.assertEqual(set(by_name), {
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        })
+        self.assertTrue(by_name["claude-opus-4-7"]["supports1m"])
+        self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertTrue(by_name["claude-haiku-4-5"]["supports1m"])
         self.assertNotIn("mimo-v2.5-pro", by_name)
 
     def test_registry_inference_models_mark_mimo_v2_pro_1m_only_for_mapped_routes(self):
@@ -1309,6 +1350,9 @@ class ProviderConfigTests(unittest.TestCase):
         warning_codes = {warning["code"] for warning in health["warnings"]}
         self.assertFalse(health["needsApply"])
         self.assertIn("claude_code_helper_missing", warning_codes)
+        warning = next(item for item in health["warnings"] if item["code"] == "claude_code_helper_missing")
+        self.assertEqual(warning["severity"], "info")
+        self.assertTrue(warning["diagnosticOnly"])
 
         helper_path = os.path.join(self.temp_dir.name, "claude.exe")
         Path(helper_path).write_text("placeholder", encoding="utf-8")
@@ -1863,7 +1907,8 @@ class AdminApiTests(unittest.TestCase):
             (
                 "Authorization: Bearer sk-log-secret123456 "
                 "url=https://example.test?token=query-secret-token&"
-                "access_token=log-access-secret&refresh_token=log-refresh-secret&client_secret=log-client-secret"
+                "access_token=log-access-secret&refresh_token=log-refresh-secret&client_secret=log-client-secret "
+                "中文诊断提示：本机 helper 仅作为提示信息"
             ),
         )
 
@@ -1892,6 +1937,8 @@ class AdminApiTests(unittest.TestCase):
         self.assertNotIn("log-refresh-secret", serialized)
         self.assertNotIn("log-client-secret", serialized)
         self.assertIn("******", serialized)
+        self.assertIn("中文诊断提示", serialized)
+        self.assertNotIn("ä¸­æ", serialized)
         self.assertEqual(check.status_code, 200)
         self.assertIn("checks", check.json())
         self.assertFalse(check.json()["ok"])
@@ -1969,7 +2016,10 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(check.status_code, 200)
         self.assertIn("claude_code_helper", codes)
+        helper_check = next(item for item in payload["checks"] if item["code"] == "claude_code_helper")
         self.assertTrue(desktop_check["ok"])
+        self.assertTrue(helper_check["ok"])
+        self.assertEqual(helper_check["level"], "info")
         self.assertFalse(payload["ok"])
 
     def test_autofill_models_route_updates_provider_mapping(self):
@@ -2557,7 +2607,7 @@ class AdminApiTests(unittest.TestCase):
 
 
 class ReleaseManifestTests(unittest.TestCase):
-    VERSION = "1.0.24"
+    VERSION = "1.0.25"
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -2843,6 +2893,47 @@ class ProxyConversionTests(unittest.TestCase):
             build_upstream_url("https://api.moonshot.ai/v1/chat/completions", "openai"),
             "https://api.moonshot.ai/v1/chat/completions",
         )
+
+    def test_billing_header_rectifier_removes_system_string_header(self):
+        body = {
+            "model": "claude-sonnet-4-6",
+            "system": "x-anthropic-billing-header: dynamic-value\n\nKeep this system prompt.",
+            "messages": [
+                {"role": "user", "content": "x-anthropic-billing-header: do not touch user text"},
+            ],
+        }
+
+        removed = rectify_claude_code_billing_header(body)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(body["system"], "Keep this system prompt.")
+        self.assertIn("x-anthropic-billing-header", body["messages"][0]["content"])
+
+    def test_billing_header_rectifier_removes_only_matching_system_text_blocks(self):
+        body = {
+            "system": [
+                {"type": "text", "text": "x-ahthropic-billing-header: dynamic-value"},
+                {"type": "text", "text": "Keep this block."},
+                {"type": "image", "source": {"type": "base64", "data": "abc"}},
+            ],
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+
+        removed = rectify_claude_code_billing_header(body)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(body["system"], [
+            {"type": "text", "text": "Keep this block."},
+            {"type": "image", "source": {"type": "base64", "data": "abc"}},
+        ])
+
+    def test_billing_header_rectifier_can_be_disabled(self):
+        body = {"system": "x-anthropic-billing-header: dynamic-value"}
+
+        removed = rectify_claude_code_billing_header(body, enabled=False)
+
+        self.assertEqual(removed, 0)
+        self.assertEqual(body["system"], "x-anthropic-billing-header: dynamic-value")
 
     def test_anthropic_to_openai_body_flattens_text_blocks_without_mutating_input(self):
         body = {
@@ -3761,6 +3852,89 @@ class ProxyAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_messages_endpoint_rectifies_claude_code_billing_header(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+        observed = {}
+
+        async def fake_forward_request(body, _provider, _request_id):
+            observed["body"] = copy.deepcopy(body)
+            return {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+        with patch("backend.proxy.forward_request", fake_forward_request):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "system": [
+                        {"type": "text", "text": "x-anthropic-billing-header: dynamic-value"},
+                        {"type": "text", "text": "Keep this system prompt."},
+                    ],
+                    "messages": [
+                        {"role": "user", "content": "x-anthropic-billing-header: keep user text"},
+                    ],
+                    "max_tokens": 8,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed["body"]["system"], [{"type": "text", "text": "Keep this system prompt."}])
+        self.assertIn("x-anthropic-billing-header", observed["body"]["messages"][0]["content"])
+
+    def test_messages_endpoint_keeps_billing_header_when_rectifier_is_disabled(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+        cfg.update_settings({"enableBillingHeaderRectifier": False})
+        observed = {}
+
+        async def fake_forward_request(body, _provider, _request_id):
+            observed["body"] = copy.deepcopy(body)
+            return {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+        with patch("backend.proxy.forward_request", fake_forward_request):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "system": "x-anthropic-billing-header: dynamic-value",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 8,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed["body"]["system"], "x-anthropic-billing-header: dynamic-value")
+
     def test_messages_endpoint_rejects_unmapped_claude_route(self):
         cfg.add_provider({
             "name": "DeepSeek",
@@ -4311,6 +4485,10 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("checkDiagnostics", api_js)
         self.assertIn("renderDiagnosticsResult", app_js)
         self.assertIn("formatI18n(\"diagnostics.exported\"", app_js)
+        self.assertIn('warning?.diagnosticOnly !== true', app_js)
+        self.assertIn("settingsBillingHeaderRectifier", html + app_js)
+        self.assertIn("enableBillingHeaderRectifier", app_js)
+        self.assertIn("application/json;charset=utf-8", app_js)
         self.assertIn("Download started: {filename}", i18n)
 
     def test_current_guides_do_not_use_old_desktop_gateway_wording(self):

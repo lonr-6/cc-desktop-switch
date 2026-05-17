@@ -343,7 +343,8 @@ def _diagnostics_checks(payload: dict) -> list[dict]:
     if helper_warnings:
         checks.append({
             "code": "claude_code_helper",
-            "ok": False,
+            "ok": True,
+            "level": "info",
             "message": helper_warnings[0].get("message") or "Claude Desktop 本地 helper 不可用",
         })
     checks.append({
@@ -585,6 +586,9 @@ def _desktop_health(
     if helper_status["enabled"] and not helper_status["available"]:
         warnings.append({
             "code": "claude_code_helper_missing",
+            "severity": "info",
+            "diagnosticOnly": True,
+            "checked": helper_status.get("checked", 0),
             "message": (
                 "Claude Desktop 的本地 Claude Code helper 尚未下载完成或被安全软件拦截。"
                 "如果桌面端提示 Host Claude Code binary not available，请检查 downloads.claude.ai 网络访问、"
@@ -873,7 +877,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.24")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.25")
 
     @app.middleware("http")
     async def require_local_admin_auth(request: Request, call_next):

@@ -303,6 +303,71 @@ def apply_anthropic_request_options(upstream_body: dict, provider: dict) -> dict
     return upstream_body
 
 
+_BILLING_HEADER_PREFIXES = (
+    "x-anthropic-billing-header:",
+    "x-ahthropic-billing-header:",
+)
+
+
+def _is_billing_header_text(value: str) -> bool:
+    text = str(value or "").lstrip().lower()
+    return any(text.startswith(prefix) for prefix in _BILLING_HEADER_PREFIXES)
+
+
+def _strip_billing_header_from_text(value: str) -> tuple[str, int]:
+    """移除 Claude Code 注入的动态 billing header，保留同块后续有效 system 内容。"""
+    text = str(value or "")
+    lines = text.splitlines()
+    removed = 0
+    while lines and _is_billing_header_text(lines[0]):
+        lines.pop(0)
+        removed += 1
+    while removed and lines and not lines[0].strip():
+        lines.pop(0)
+    return "\n".join(lines), removed
+
+
+def rectify_claude_code_billing_header(body: dict, enabled: bool = True) -> int:
+    """清理 Claude Code 通过 LLM gateway 发送的动态 billing header。
+
+    只处理 system 字符串或 system 文本块，避免碰用户消息里的普通文本。
+    """
+    if not enabled or not isinstance(body, dict):
+        return 0
+
+    system = body.get("system")
+    if isinstance(system, str):
+        cleaned, removed = _strip_billing_header_from_text(system)
+        if removed:
+            if cleaned:
+                body["system"] = cleaned
+            else:
+                body.pop("system", None)
+        return removed
+
+    if not isinstance(system, list):
+        return 0
+
+    cleaned_blocks = []
+    removed = 0
+    for block in system:
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and _is_billing_header_text(block.get("text", ""))
+        ):
+            removed += 1
+            continue
+        cleaned_blocks.append(block)
+
+    if removed:
+        if cleaned_blocks:
+            body["system"] = cleaned_blocks
+        else:
+            body.pop("system", None)
+    return removed
+
+
 def _is_max_unsupported_error(status_code: int, error_text: str) -> bool:
     """判断上游错误是否因为不支持 max/thinking/output_config 导致。"""
     if status_code not in (400, 422):
@@ -823,7 +888,7 @@ def _get_http_proxy() -> Optional[str]:
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.24")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.25")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
@@ -899,6 +964,12 @@ def create_proxy_app() -> FastAPI:
             return gateway_auth_error()
 
         settings = get_settings()
+        removed_billing_headers = rectify_claude_code_billing_header(
+            body,
+            enabled=settings.get("enableBillingHeaderRectifier") is not False,
+        )
+        if removed_billing_headers:
+            log_buffer.add("INFO", f"已清理 Claude Code billing header: removedCount={removed_billing_headers}")
         expose_all = bool(settings.get("exposeAllProviderModels"))
         providers = get_providers() if expose_all else []
         # 获取当前激活的提供商；全量模型模式下允许模型别名路由到其它 provider。

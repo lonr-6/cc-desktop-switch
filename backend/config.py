@@ -26,7 +26,7 @@ CONFIG_DIR, CONFIG_FILE, BACKUP_DIR = _resolve_config_paths()
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.24",
+    "version": "1.0.25",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
         "updateUrl": DEFAULT_UPDATE_URL,
         "upstreamProxy": "",
         "upstreamProxyEnabled": False,
+        "enableBillingHeaderRectifier": True,
     },
 }
 

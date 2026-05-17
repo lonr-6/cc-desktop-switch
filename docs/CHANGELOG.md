@@ -7,6 +7,17 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+## v1.0.25
+
+Release notes: [docs/release-notes-v1.0.25.md](release-notes-v1.0.25.md)
+
+- Added a Claude Code billing header rectifier for third-party gateway prompt-cache stability.
+- Added an advanced setting to disable the billing header rectifier during troubleshooting.
+- Updated Xiaomi MiMo 1M presets so the checkbox maps Opus, Sonnet, and Haiku slots to `mimo-v2.5-pro`.
+- Changed missing Claude Code helper status from dashboard warning to diagnostics info.
+- Preserved UTF-8 Chinese text in redacted diagnostics exports.
+- Absorbed reviewed community PR work for JSON provider presets and `CCDS_CONFIG_DIR`.
+
 ## v1.0.24
 
 Release notes: [docs/release-notes-v1.0.24.md](release-notes-v1.0.24.md)

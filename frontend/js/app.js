@@ -236,7 +236,8 @@
   function healthMessages(health) {
     const issues = Array.isArray(health?.issues) ? health.issues : [];
     const warnings = Array.isArray(health?.warnings) ? health.warnings : [];
-    return [...issues, ...warnings].map((issue) => healthIssueMessage(issue, health)).filter(Boolean);
+    const visibleWarnings = warnings.filter((warning) => warning?.diagnosticOnly !== true && warning?.severity !== "info");
+    return [...issues, ...visibleWarnings].map((issue) => healthIssueMessage(issue, health)).filter(Boolean);
   }
 
   function displayConfigValue(value) {
@@ -1552,6 +1553,7 @@
     $("#settingsUpdateUrl").value = settings.updateUrl || "";
     $("#settingsUpstreamProxy").value = settings.upstreamProxy || "";
     $("#settingsUpstreamProxyEnabled").checked = settings.upstreamProxyEnabled !== false;
+    $("#settingsBillingHeaderRectifier").checked = settings.enableBillingHeaderRectifier !== false;
     renderModelMenuModeState(settings);
     await refreshBackupList();
     await refreshCcSwitchImportStatus();
@@ -1607,6 +1609,7 @@
       updateUrl: $("#settingsUpdateUrl").value.trim(),
       upstreamProxy: $("#settingsUpstreamProxy").value.trim(),
       upstreamProxyEnabled: $("#settingsUpstreamProxyEnabled").checked,
+      enableBillingHeaderRectifier: $("#settingsBillingHeaderRectifier").checked,
     };
     await CCApi.saveSettings(settings);
     $("#proxyPort").value = settings.proxyPort;
@@ -1629,7 +1632,7 @@
   }
 
   function downloadJson(filename, data) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1767,7 +1770,7 @@
           <strong>${escapeHtml(check.code)}</strong>
           <span>${escapeHtml(check.message || "")}</span>
         </div>
-        <em>${escapeHtml(check.ok ? t("diagnostics.ok") : t("diagnostics.warn"))}</em>
+        <em>${escapeHtml(check.level === "info" ? t("diagnostics.info") : (check.ok ? t("diagnostics.ok") : t("diagnostics.warn")))}</em>
       </article>
     `).join("");
   }
@@ -2491,6 +2494,7 @@
     $("#settingsAdminPort").addEventListener("change", saveSettingsFromForm);
     $("#settingsUpdateUrl").addEventListener("change", saveSettingsFromForm);
     $("#settingsUpstreamProxy").addEventListener("change", saveSettingsFromForm);
+    $("#settingsBillingHeaderRectifier").addEventListener("change", saveSettingsFromForm);
     $("#autoStart").addEventListener("change", saveSettingsFromForm);
     $("#exposeAllProviderModels").addEventListener("change", saveSettingsFromForm);
     $("#configImportFile")?.addEventListener("change", (event) => {

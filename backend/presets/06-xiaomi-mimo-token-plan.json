@@ -28,7 +28,13 @@
   "modelOptions": {
     "mimo_1m": {
       "label": "启用 MiMo 1M 上下文",
-      "description": "用于 Claude Code/长上下文场景。只会把已显式映射到 MiMo Pro 的 Claude 模型入口标记为 1M；Default 不会作为菜单项。",
+      "description": "用于 Claude Code/长上下文场景。勾选后把 Opus、Sonnet、Haiku 映射到 mimo-v2.5-pro 并标记为 1M；Default 只作为回退，不会作为菜单项。",
+      "models": {
+        "sonnet": "mimo-v2.5-pro",
+        "haiku": "mimo-v2.5-pro",
+        "opus": "mimo-v2.5-pro",
+        "default": "mimo-v2.5-pro"
+      },
       "modelCapabilities": {
         "mimo-v2.5-pro": {
           "supports1m": true

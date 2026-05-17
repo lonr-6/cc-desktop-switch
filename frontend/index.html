@@ -371,6 +371,12 @@
               <div class="settings-actions">
                 <button class="btn btn-outline-primary btn-sm" type="button" data-action="check-provider-compatibility"><i class="bi bi-patch-check"></i><span data-i18n="settings.checkCompatibility">检查兼容性</span></button>
               </div>
+              <label class="switch-label settings-inline-switch">
+                <span data-i18n="settings.billingHeaderRectifier">优化 Claude Code 第三方网关缓存</span>
+                <input type="checkbox" id="settingsBillingHeaderRectifier" checked>
+                <span class="switch-ui"></span>
+              </label>
+              <p class="settings-note" data-i18n="settings.billingHeaderRectifierHint">开启后，本机 gateway 会移除 Claude Code 注入的动态 billing header，减少第三方网关 prompt cache 被打散的概率。</p>
               <div class="compatibility-list" id="providerCompatibilityList"></div>
               <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">Anthropic 兼容接口是稳定主线；OpenAI Chat、new-api、CPA、OpenCode Go 属于实验适配，工具调用需要单独验证。</p>
             </div>
@@ -415,7 +421,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.24</strong></div>
+          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.25</strong></div>
           <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
