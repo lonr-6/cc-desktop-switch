@@ -1,0 +1,45 @@
+{
+  "name": "_example_responses_passthrough_error",
+  "description": "ResponsesPassthroughAdapter 上游 4xx 错误体字节级透传 — apiFormat=responses 自定义第三方 + /v1/responses 入站 → 上游返 400 + JSON error body → 客户端拿到原样 status code + body(防 forward.rs unwrap_or_default 静默吞错)。前缀 _ 不进 list_fixtures()。",
+  "provider": "custom-third-party",
+  "client_request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer sk-bad"
+    },
+    "body_json": {
+      "model": "gpt-5",
+      "stream": true,
+      "input": []
+    }
+  },
+  "upstream": [
+    {
+      "url_pattern": "https://api\\.openai\\.com/v1/responses",
+      "method": "POST",
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "stream": [
+          { "data": "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\",\"message\":\"Invalid API key for upstream\"}}" }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "status": 400,
+    "headers_contain": {
+      "content-type": "application/json"
+    },
+    "body_substrings": [
+      "invalid_request_error",
+      "invalid_api_key",
+      "Invalid API key for upstream"
+    ]
+  },
+  "notes": "关键证明:① upstream status 400 字节透传给客户端(代理不重写 status);② JSON error body 完整透传(error.type / error.code / error.message 全字段在);③ forward.rs::unwrap_or_default 已被本 PR 改成 telemetry warn,body 读失败不再静默吞错。"
+}

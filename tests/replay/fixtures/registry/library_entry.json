@@ -1,0 +1,21 @@
+{
+  "id": "library-fixture",
+  "name": "Library Fixture",
+  "baseUrl": "https://library.invalid/v1",
+  "authScheme": "bearer",
+  "apiFormat": "openai_chat",
+  "apiKey": "<redacted>",
+  "models": {
+    "default": "library-default",
+    "gpt_5_5": "",
+    "gpt_5_4": "",
+    "gpt_5_4_mini": "",
+    "gpt_5_3_codex": "",
+    "gpt_5_2": ""
+  },
+  "extraHeaders": {},
+  "modelCapabilities": {},
+  "requestOptions": {},
+  "isBuiltin": false,
+  "sortIndex": 0
+}

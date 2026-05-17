@@ -1,84 +1,55 @@
 # Changelog
 
-<p align="center">
-  <a href="../README.md">English</a> |
-  <a href="../README.zh-CN.md">简体中文</a> |
-  <a href="../README.ja.md">日本語</a> |
-  <a href="CHANGELOG.md">Changelog</a>
-</p>
+逐版本要点。详细变更见 [GitHub Releases](https://github.com/Cmochance/codex-app-transfer/releases) 与 `docs/release-notes/v*.md`。
 
-## v1.0.24
+## Unreleased — PR #153 draft
 
-Release notes: [docs/release-notes-v1.0.24.md](release-notes-v1.0.24.md)
+**Anthropic Messages 协议适配**:新增 canonical `apiFormat=anthropic_messages`,将 Codex CLI Responses 请求转换到 Anthropic `/v1/messages`,并把 Anthropic Messages SSE 还原为 Responses SSE。当前 PR 已覆盖 text、thinking、tool_use、tool_result repair、`previous_response_id`、compact response、upstream error、provider test/model list 与 UI 保存显示路径。
 
-- Added SOCKS upstream proxy dependency support for packaged Windows and macOS builds.
-- Added a Claude Code helper health warning for Claude Desktop `Host Claude Code binary not available` errors.
-- Added an explicit Xiaomi MiMo 1M context option for mapped `mimo-v2.5-pro` routes.
-- Improved the macOS menu bar icon and Dock hiding behavior.
-- Clarified local gateway background-running and Connectors/Skills boundaries.
+Claude preset 暂不开放:需要 P7 真实 Claude text、tool-call、`previous_response_id`、upstream error 验证通过后再加入默认 preset。
 
-## v1.0.23
+## v2.1.6 — 2026-05-12
 
-Release notes: [docs/release-notes-v1.0.23.md](release-notes-v1.0.23.md)
+**关键修复**:MiniMax `role=system` 整请求 400(close #139)/ grok_web 多轮历史完整化(`assistant.tool_calls` flatten + `session_cache` 类型层面禁止 foot-gun)/ cloud_code(Gemini OAuth)多轮历史 silent loss prod bug。
 
-- Fixed Windows in-app update installs where the package downloaded and the app exited but the installer did not appear.
-- Added update helper logging under `%TEMP%\CC-Desktop-Switch\updates\update-helper.log`.
-- Reduced startup blank-screen time by bundling Bootstrap, Bootstrap Icons, and font dependencies locally.
-- Hid the macOS Dock icon and added a native menu bar status item for show/quit actions.
-- Kept local update-test manifests out of the release asset set.
+**可观测性**:14+ 稳定 `error_id` token 暴露 sqlite + cache 失败路径,operator 可 grep / 聚合(`SESSIONS_DB_{INIT,SAVE,LOAD,...}_FAILED` / `CORE_INPUT_PREV_ID_{WITHOUT_CACHE,CACHE_MISS}` 等)。
 
-## v1.0.22
+完整 6 主线 + provider 矩阵:[Release v2.1.6](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.6)。
 
-Release notes: [docs/release-notes-v1.0.22.md](release-notes-v1.0.22.md)
+## v2.1.5 — 2026-05-11
 
-- Added `coworkEgressAllowedHosts` to Claude Desktop policy writes so Cowork/WebFetch can access external hosts after applying the local gateway config.
-- Accepted Claude's dated Haiku route `claude-haiku-4-5-20251001` as an internal alias for the mapped Haiku slot.
-- Preserved macOS `supports1m` metadata in JSON and `configLibrary` writes so DeepSeek 1M health checks can pass after re-applying.
-- Avoided injecting DeepSeek Max request options into non-official DeepSeek-like relays such as OpenCode/one-api/new-api endpoints.
-- Kept #7, #18, and #19 as support/diagnostics follow-ups; no issue replies or GitHub release are sent without maintainer approval.
+Gemini CLI OAuth UI 精修 + 后端硬化收官(三层锁 race-free + i18n 启动闪烁修复 + OAuth 用户邮箱回填 + Provider 卡片图标 / 文案对齐 Gemini 品牌)。[Release v2.1.5](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.5)。
 
-## v1.0.21
+## v2.1.4 — 2026-05-10
 
-Release notes: [docs/release-notes-v1.0.21.md](release-notes-v1.0.21.md)
+**Gemini Native 直转适配器**:Codex.app `/responses` 直接转 Google `:streamGenerateContent?alt=sse`,无 chat 中间形态。新 `apiFormat=gemini_native` + `authScheme=google_api_key`。Web Search / JSON Schema 兼容化 / 多轮 function_call round-trip / 错误流 SSE failure 全部对齐 Codex.app 预期。[Release v2.1.4](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.4)。
 
-- Fixed macOS fresh-environment writes by creating a `configLibrary` entry when none exists.
-- Added Intel macOS x64 release assets alongside Windows x64 and macOS arm64.
-- Added safe custom Claude route mappings that expose only `claude-*` model names to Claude Desktop.
-- Fixed Windows in-app update installs so the downloaded installer opens visibly.
-- Kept #7, #9, and #10 open for follow-up; this patch release does not claim those issues are fixed.
+## v2.1.3 — 2026-05-09
 
-## v1.0.20
+自定义第三方 + Responses 协议 direct 透传(适合 OpenAI 官方 / 原生 Responses 反代)/ 测速文案分级 / 全局 `tracing → proxy_telemetry.logs` 桥接根治 silent failure / Reasoning prefix provider applicability 收敛。[Release v2.1.3](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.3)。
 
-Release notes: [docs/release-notes-v1.0.20.md](release-notes-v1.0.20.md)
+## v2.1.2 — 2026-05-09
 
-- Corrected quick-start and usage docs so third-party providers are described as using the local gateway by default.
-- Added a Copilot FAQ: Copilot subscriptions are not directly supported; user-provided compatible endpoints are at the user's own risk.
-- Added structured GitHub issue forms for bug reports, provider requests, and questions.
-- Protected local Admin APIs with a runtime admin token while keeping `/api/ready` public and `/api/app/activate` compatible.
-- Added redacted diagnostics summary/export/check endpoints using `ccds.diagnostics.v1`.
-- Improved OpenAI/new-api relay diagnostics for non-JSON upstream responses, including streaming error events.
-- Reworked the release workflow so Windows and macOS assets are staged first and `latest.json` is generated only after both required platforms exist.
-- Added issue reply drafts for #3, #4, and #7 without claiming that #3 DeepSeek 1M behavior is fixed.
+chat 端原生 web_search 工具支持(MiMo / Kimi / DeepSeek / MiniMax 各家文档实证 + 跨 provider URL citation 通用入站)/ MiniMax builtin preset 卡片。[Release v2.1.2](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.2)。
 
-## v1.0.19
+## v2.1.1 — 2026-05-09
 
-Release notes: [docs/release-notes-v1.0.19.md](release-notes-v1.0.19.md)
+MCP 工具调用 + namespace(`type:"namespace"` 包递归展平 + function_call SSE `namespace` 字段补齐根治 Codex.app `unsupported call`)/ Auto-compact summary 9-section 强 schema 大幅增强。[Release v2.1.1](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.1)。
 
-- Claude Desktop model menu now shows only explicitly mapped Claude-safe routes.
-- `Default` is kept as an internal fallback and is no longer written as a Claude Desktop menu item.
-- Unmapped Claude routes now return a clear 400 error instead of silently falling back.
-- Health checks detect stale v1.0.18 routes and raw upstream model names.
-- Windows startup is single-instance: launching the shortcut again brings the existing window forward.
-- Windows and macOS arm64 release assets are available from GitHub Releases.
+## v2.1.0 — 2026-05-09
 
-## v1.0.18
+新增 macOS Intel x64 二进制(close #61)/ 会话历史持久化(L1 内存 LRU + L2 sqlite 30 天 TTL,Tauri 重启不丢历史)/ ws warmup 不打上游 + 立即 Close frame 防 Codex CLI 4 分 48 秒 idle timeout / 多模态 / vision 兼容(MiMo 纯图兜底 + DeepSeek 视觉剥离 + 白名单按模型级精确匹配)。[Release v2.1.0](https://github.com/Cmochance/codex-app-transfer/releases/tag/v2.1.0)。
 
-Release notes: [docs/release-notes-v1.0.18.md](release-notes-v1.0.18.md)
+## v2.0.x
 
-- Switched Claude Desktop configuration to the local CC Desktop Switch gateway by default.
-- Added Claude-safe model routes for newer Claude Desktop versions that reject raw upstream model names.
-- Kept real provider model IDs inside local gateway mapping.
+Python → Rust/Tauri 全栈重写,重写过程 7 阶段 + 30+ 修订日志见 [`docs/refactor/migration.md`](refactor/migration.md),核心结论 + 量化对比见 [`docs/release-notes/v2.0.0.md`](release-notes/v2.0.0.md)。
 
-## Earlier Releases
+逐版本 release notes:[v2.0.0](release-notes/v2.0.0.md) / [v2.0.2](release-notes/v2.0.2.md) / [v2.0.3](release-notes/v2.0.3.md) / [v2.0.4](release-notes/v2.0.4.md) / [v2.0.5](release-notes/v2.0.5.md) / [v2.0.6](release-notes/v2.0.6.md) / [v2.0.7](release-notes/v2.0.7.md) / [v2.0.8](release-notes/v2.0.8.md)(无 v2.0.1 release notes — 跟随 v2.0.0 工程修订发布)。
 
-Older release notes are available under `docs/release-notes-v*.md`.
+## v1.0.x(Python,已归档)
+
+Python + cryptography 验签时代,已被 v2.x Rust 主线全面取代,新装请直接用 v2.x。逐版本 release notes:[v1.0.0](release-notes/v1.0.0.md) / [v1.0.1](release-notes/v1.0.1.md) / [v1.0.2](release-notes/v1.0.2.md) / [v1.0.3](release-notes/v1.0.3.md)(v1.0.4 工程版本无独立 release notes,详见 [GitHub Releases](https://github.com/Cmochance/codex-app-transfer/releases))。
+
+---
+
+> Followup backlog(跨 session 长期持有的研究 / refactor / 观测 tickets)见 [`docs/followup-tracker.md`](followup-tracker.md) + `docs/followup/<id>-<slug>.md` 详情。

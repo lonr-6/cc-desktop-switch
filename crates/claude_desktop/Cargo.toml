@@ -1,0 +1,28 @@
+[package]
+name = "codex-app-transfer-claude-desktop"
+version = "0.1.0"
+description = "Claude Desktop 配置写入 + 7 个 Anthropic-compatible provider 内置预设(1:1 转写自 lonr-6/cc-desktop-switch backend/config.py + backend/registry.py 的 Rust 端口)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# plist 读写(macOS user defaults / Application Support 配置文件 round-trip)
+plist = "1"
+# 用户 home 路径解析(跨平台)
+dirs = "5"
+# Anthropic Messages 代理转发 — axum 接 Claude Desktop 请求,reqwest 转上游
+axum = { version = "0.8", features = ["tokio"] }
+tokio = { version = "1", features = ["sync", "rt", "net", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

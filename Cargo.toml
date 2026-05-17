@@ -1,0 +1,24 @@
+# Rust workspace 根。详见 docs/refactor/migration.md 第 4 节。
+
+[workspace]
+resolver = "2"
+members = [
+    "src-tauri",
+    "crates/registry",
+    "crates/proxy",
+    "crates/adapters",
+    "crates/codex_integration",
+    "crates/claude_desktop",
+    "crates/gemini_oauth",
+    "xtask",
+    # 后续阶段陆续启用:
+    # "crates/session_cache",
+    # "crates/update",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+authors = ["Codex App Transfer maintainers"]
+repository = "https://github.com/Cmochance/codex-app-transfer"

@@ -1,0 +1,17 @@
+{
+  "version": "1.0.4",
+  "activeProvider": null,
+  "gatewayApiKey": null,
+  "providers": [],
+  "settings": {
+    "theme": "default",
+    "language": "zh",
+    "proxyPort": 18080,
+    "adminPort": 18081,
+    "autoStart": false,
+    "autoApplyOnStart": true,
+    "exposeAllProviderModels": false,
+    "restoreCodexOnExit": true,
+    "updateUrl": "https://github.com/Cmochance/codex-app-transfer/releases/latest/download/latest.json"
+  }
+}

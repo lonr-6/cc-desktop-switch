@@ -1,0 +1,63 @@
+[package]
+name = "codex-app-transfer"
+version = "2.1.9"
+description = "Codex App Transfer - Tauri 2 shell"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# 二进制入口
+[[bin]]
+name = "codex-app-transfer"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+codex-app-transfer-registry = { path = "../crates/registry" }
+codex-app-transfer-codex-integration = { path = "../crates/codex_integration" }
+codex-app-transfer-claude-desktop = { path = "../crates/claude_desktop" }
+codex-app-transfer-proxy = { path = "../crates/proxy" }
+codex-app-transfer-adapters = { path = "../crates/adapters" }
+codex-app-transfer-gemini-oauth = { path = "../crates/gemini_oauth" }
+tokio = { version = "1", features = ["sync", "net", "rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+axum = { version = "0.8", features = ["http1", "tokio", "macros"] }
+base64 = "0.22"
+getrandom = "0.2"
+# 以下 5 项为 cas:// scheme 静态文件路由的跨平台依赖,
+# 之前误放在 [target.macos] 块下导致 Linux/Windows cargo check 失败。
+tower = "0.5"
+bytes = "1"
+include_dir = "0.7"
+mime_guess = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "http2"] }
+sha2 = "0.10"
+# cross-process file locking — config.json RMW 跨实例(双开 .app)防 lost-update。
+# 进程内 std::sync::Mutex 不管多 OS 进程,fs2::FileExt::lock_exclusive 走 fcntl
+# (POSIX) / LockFileEx (Windows),OS 级独占。
+fs2 = "0.4"
+# CDP WebSocket 连接（Codex Plugins 解锁器）
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# futures 用于 WebSocket Stream/Sink 的 split 操作
+futures = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-foundation = "0.2"
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSRunningApplication"] }
+
+[features]
+# 默认空,自定义 protocol 在打包时启用
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

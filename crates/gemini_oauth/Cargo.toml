@@ -1,0 +1,44 @@
+[package]
+name = "codex-app-transfer-gemini-oauth"
+version = "0.1.0"
+description = "Gemini CLI OAuth 2.0 流程实现 + Cloud Code Assist 项目 bootstrap(impersonate 官方 gemini-cli 客户端,无需 API key)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# 核心:HTTPS POST oauth2.googleapis.com/token + cloudcode-pa.googleapis.com/v1internal:* 两类调用
+# 选 rustls-tls 而非 native-tls,跨平台一致(避免 Windows schannel / macOS securetransport 行为差异)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# loopback redirect URI HTTP server(接 OAuth code grant callback)— axum 0.8 跟 proxy/forward.rs 一致版本
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+tokio = { version = "1", features = ["sync", "net", "rt-multi-thread", "time", "macros"] }
+# Token 存储 + 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Clock 用 std::time::SystemTime,不引 chrono(token expiry 是 UNIX ms-epoch)
+thiserror = "2"
+# tracing — 跟 workspace 其它 crate 一致(adapters/proxy 都 0.1)
+tracing = "0.1"
+# 浏览器自动打开 OAuth 授权 URL(macOS open / Windows start / Linux xdg-open)
+# 选 webbrowser crate:cross-platform、零依赖、API 简单(`webbrowser::open(url)` 就够)
+webbrowser = "1"
+# Crypto-secure RNG —— 给 OAuth `state` CSRF 防御 token 用(32 bytes hex)。
+# workspace 已 transitive 依赖 0.2,显式声明保证一致。
+getrandom = "0.2"
+# URL form-encode —— 构造 OAuth 授权 URL query + token endpoint POST body。
+# reqwest 内部依赖 url crate,这里直接复用 transitive。
+url = "2"
+# Workspace 内唯一 home 解析入口(`paths::resolve_home`),让 gemini-cli /
+# antigravity token store 路径与 `CodexPaths` / 主 config 行为一致(PR #115
+# 收敛 3 处独立实现 drift)。
+codex-app-transfer-registry = { path = "../registry" }
+
+[dev-dependencies]
+# 单测起 mock OAuth server / cloudcode-pa endpoint
+wiremock = "0.6"
+tempfile = "3"
+# 并发测试用 join_all
+futures-util = "0.3"

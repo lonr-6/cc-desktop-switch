@@ -1,0 +1,28 @@
+name = "codex-app-transfer-feedback"
+main = "worker.js"
+compatibility_date = "2024-12-01"
+
+# 反馈数据存这里:feedback/<日期>/<id>/{meta.json, screenshots/*, logs/*}
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "codex-app-transfer-feedback"
+
+# 按 IP 限流:每天 10 次/IP,KV TTL 24h 自动清理
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "e372cb1b0bf747dd9744c4a4cce4f42c"
+
+# 非敏感配置项。IP_HASH_SALT 用来对 IP 做 SHA-256 加盐 hash,
+# 我们在 R2 里只存 hash 不存原 IP;盐固定后同一 IP 的 hash 一致,
+# 方便去重/查重。盐泄漏不构成隐私问题,因为攻击者拿不到 R2 数据。
+[vars]
+IP_HASH_SALT = "cdc59c2fb2f4b248034a5b0dd95f72e98e12f948520cc76d"
+MAX_TOTAL_BYTES = "10485760"      # 10 MB 单次提交总上限
+MAX_FILE_BYTES  = "5242880"       # 5 MB 单文件上限
+DAILY_IP_LIMIT  = "10"            # 每 IP 每天最多 10 条
+
+# Secrets 通过 `wrangler secret put` 单独设置,不进 toml:
+#   RESEND_API_KEY
+#   NOTIFY_EMAIL_TO
+#   NOTIFY_EMAIL_FROM
+# 见 setup-secrets.sh

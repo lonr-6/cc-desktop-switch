@@ -1,0 +1,129 @@
+name: ci
+
+# 回归门禁分两层:
+# 1. rust-fast-check (always run, 无 apt) — fmt + workspace check/test (exclude
+#    src-tauri) + xtask gen-fixtures 反向 diff. 1-2 min, 覆盖 docs/xtask/普通
+#    crate 的 PR.
+# 2. rust-tauri-check (conditional run, 需 apt 装 webkit2gtk 等) — 仅 Tauri
+#    相关路径变动 (src-tauri/, frontend/, crates/, Cargo.{toml,lock}, 本
+#    workflow) 才跑 cargo check/test -p codex-app-transfer. 不跑就 skip 报
+#    success (job-level if 跳过 = 不卡 required check, 而 workflow-level
+#    paths filter 跳过会让 required check 永久 pending).
+#
+# 历史 job 演进:
+# - Leptos UI WASM build 已废弃 (v2.0.0 改 frontend/ + cas://)
+# - python-replay-tests 已废弃 (Phase 3 删 Python)
+# - 早期单一 rust-workspace-check 每 PR 都 apt (~7 min) → 拆成上述 2 层
+# 详见 docs/refactor/migration.md / docs/refactor/cleanup.md / 本仓 PR codex review
+
+on:
+  push:
+    branches: [main]
+  # branches 不限制, 让 stacked PR (base=feature/* 而非 main) 也跑 CI.
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 路径变动检测 (always runs, 极快 ~10s, 不装任何系统包).
+  # tauri 输出供 rust-tauri-check job-level if 用.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      tauri: ${{ steps.filter.outputs.tauri }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            tauri:
+              - 'src-tauri/**'
+              - 'frontend/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/**'
+
+  # 快速门禁: always runs, 无 apt. 覆盖 fmt + 非 Tauri crate 的 check/test +
+  # xtask gen-fixtures 反向 diff. 排除 codex-app-transfer (src-tauri 包名),
+  # 因 src-tauri 编译需要 webkit2gtk 等系统依赖, 留给 rust-tauri-check.
+  rust-fast-check:
+    name: Rust · fast workspace check (no Tauri sysdeps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: fast
+
+      - name: cargo fmt --check (workspace)
+        run: cargo fmt --all -- --check
+
+      - name: cargo check --workspace (exclude codex-app-transfer)
+        run: cargo check --workspace --all-targets --exclude codex-app-transfer
+
+      - name: cargo test --workspace (exclude codex-app-transfer)
+        run: cargo test --workspace --no-fail-fast --exclude codex-app-transfer
+
+      - name: Verify fixtures regenerable from Rust (xtask gen-fixtures)
+        run: |
+          cargo run -p xtask --release -- gen-fixtures
+          git diff --exit-code -- tests/replay/fixtures/registry/
+
+  # Tauri 相关检查: 仅 Tauri 路径有变动时才跑. 否则 skip = success, 不卡
+  # required check. apt 仍保留 retry + 8min timeout 兜底.
+  rust-tauri-check:
+    name: Rust · Tauri (src-tauri) check
+    needs: changes
+    if: needs.changes.outputs.tauri == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri Linux system deps (with retry)
+        timeout-minutes: 20
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            echo "::group::apt attempt $attempt"
+            if sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+                libwebkit2gtk-4.1-dev \
+                libssl-dev \
+                libayatana-appindicator3-dev \
+                librsvg2-dev \
+                patchelf \
+                build-essential \
+                curl \
+                wget \
+                file; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::apt attempt $attempt failed, sleeping 30s before retry"
+            sleep 30
+          done
+          echo "::error::apt failed after 3 attempts"
+          exit 1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: tauri
+
+      - name: cargo check -p codex-app-transfer
+        run: cargo check -p codex-app-transfer --all-targets
+
+      - name: cargo test -p codex-app-transfer
+        run: cargo test -p codex-app-transfer --no-fail-fast

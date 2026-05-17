@@ -1,0 +1,39 @@
+{
+  "version": "1.0.4",
+  "activeProvider": "fixture-provider",
+  "gatewayApiKey": "cas_<redacted>",
+  "providers": [
+    {
+      "id": "fixture-provider",
+      "name": "Fixture · 合成 Provider",
+      "baseUrl": "https://fixture.invalid/v1",
+      "authScheme": "bearer",
+      "apiFormat": "openai_chat",
+      "apiKey": "<redacted>",
+      "models": {
+        "default": "fixture-default",
+        "gpt_5_5": "fixture-gpt-5.5",
+        "gpt_5_4": "",
+        "gpt_5_4_mini": "",
+        "gpt_5_3_codex": "",
+        "gpt_5_2": ""
+      },
+      "extraHeaders": {},
+      "modelCapabilities": {},
+      "requestOptions": {},
+      "isBuiltin": false,
+      "sortIndex": 0
+    }
+  ],
+  "settings": {
+    "theme": "default",
+    "language": "zh",
+    "proxyPort": 18080,
+    "adminPort": 18081,
+    "autoStart": false,
+    "autoApplyOnStart": true,
+    "exposeAllProviderModels": false,
+    "restoreCodexOnExit": true,
+    "updateUrl": "https://github.com/Cmochance/codex-app-transfer/releases/latest/download/latest.json"
+  }
+}

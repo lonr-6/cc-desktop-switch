@@ -1,41 +1,81 @@
-.release-signing/
-.packaged-runtime-home/
-.onefile-runtime-home/
-.runtime-home/
-.tmp/
-.tmp-*/
-.playwright-mcp/
-.kiro-review/
-.claude/
-.DS_Store
+# Virtual environments
+.venv/
+
+# Python cache / artifacts
 __pycache__/
 *.pyc
-*.log
 .pytest_cache/
 .ruff_cache/
 
+# Python v1.4 残留 (v2 全栈 Rust 后已无, 但本地可能仍有)
+backend/
+scripts/__pycache__/
+
+# OS / editor noise
+.DS_Store
+**/.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+
+# Logs
+*.log
+
+# Build outputs and signed release artifacts
 build/
 dist/
 release/
-CC-Desktop-Switch/
 *.zip
 *.exe
 *.dmg
 *.pkg
+*.tar.gz
 *.sig
-latest.json
+
+# Generated NSIS installer at project root (named Codex-App-Transfer-Setup-<v>.exe)
+Codex-App-Transfer-Setup-*.exe
+
+# PyInstaller / signing runtime dirs
+.release-signing/
+.packaged-runtime-home/
+.onefile-runtime-home/
+.runtime-home/
+
+# Scratch / working directories
+.tmp/
+.tmp-*/
+
+# Claude Code harness state
+.claude/
+
+# Generated macOS icon assets (rebuilt by macos/prepare-icon.py)
 macos/assets/app-icon.icns
 macos/assets/app-icon.iconset/
 macos/assets/app-icon-prepared.png
-macos-packaging-plan.md
 
-# Local-only project materials and generated review screenshots.
-agent/
-prompt-codex.md
-image/
-ccds-*.png
-docs/promo/screenshots/*
-!docs/promo/screenshots/readme-*.png
+# Internal-only docs (kept locally; not part of the public repo)
+docs/grok/
+docs/litellm/
+docs/plan/
+反馈/
 
-# Failed favicon download kept locally for reference; the app uses zhipu.png.
-frontend/assets/providers/zhipu.ico
+# Feedback Worker secrets / 本地缓存
+feedback-worker/.env
+feedback-worker/.wrangler/
+feedback-worker/node_modules/
+
+# Rust / Tauri 2 工作区构建产物
+/target/
+**/target/
+src-tauri/gen/
+**/*.rs.bk
+
+# IDE / editor noise
+.vscode/
+.idea/
+*.iml
+
+# Tauri auto-generated mobile icons(本仓不发移动端;`cargo tauri icon` 重生即可)
+src-tauri/icons/android/
+src-tauri/icons/ios/

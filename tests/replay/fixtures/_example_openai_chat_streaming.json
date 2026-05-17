@@ -1,0 +1,49 @@
+{
+  "name": "_example_openai_chat_streaming",
+  "description": "样例 fixture(以 _ 开头不会被 list_fixtures 选中);展示 SSE 流式响应的最小结构",
+  "provider": "openai",
+  "client_request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "<redacted>"
+    },
+    "body_json": {
+      "model": "gpt-4o-mini",
+      "stream": true,
+      "messages": [
+        { "role": "user", "content": "hi" }
+      ]
+    }
+  },
+  "upstream": [
+    {
+      "url_pattern": "https://api\\.openai\\.com/v1/chat/completions",
+      "method": "POST",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "stream": [
+          { "data": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n" },
+          { "data": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" },
+          { "data": "data: [DONE]\n\n" }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "status": 200,
+    "headers_contain": {
+      "content-type": "text/event-stream"
+    },
+    "stream_substrings": [
+      "chatcmpl-1",
+      "\"content\":\"hi\"",
+      "[DONE]"
+    ]
+  },
+  "notes": "样例:此 fixture 仅用于验证测试基建本身,不接入真实代理 app。Stage 2 起会被同 provider 的真实抓取替换。"
+}

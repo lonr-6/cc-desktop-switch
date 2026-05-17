@@ -1,0 +1,66 @@
+{
+  "name": "deepseek_chat_minimal_streaming",
+  "description": "Real DeepSeek SSE response (max_tokens=1, prompt='hi')",
+  "provider": "deepseek",
+  "client_request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "<redacted>"
+    },
+    "body_json": {
+      "model": "deepseek-v4-pro",
+      "stream": true,
+      "max_tokens": 1,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    }
+  },
+  "upstream": [
+    {
+      "url_pattern": "https://api.deepseek.com/v1/chat/completions",
+      "method": "POST",
+      "response": {
+        "status": 402,
+        "headers": {
+          "server": "openresty",
+          "content-type": "application/json",
+          "vary": "origin, access-control-request-method, access-control-request-headers",
+          "access-control-allow-credentials": "true",
+          "x-ds-trace-id": "a26d14f804283985c277d845ad91e423",
+          "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+          "x-content-type-options": "nosniff",
+          "age": "0",
+          "content-length": "111",
+          "connection": "keep-alive",
+          "date": "Sun, 03 May 2026 16:23:27 GMT",
+          "eo-log-uuid": "15147664393226976714",
+          "eo-cache-status": "MISS"
+        },
+        "body_json": {
+          "error": {
+            "message": "Insufficient Balance",
+            "type": "unknown_error",
+            "code": "invalid_request_error"
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "status": 402,
+    "headers_contain": {
+      "content-type": "text/event-stream"
+    },
+    "stream_substrings": [
+      "chatcmpl-",
+      "[DONE]"
+    ]
+  },
+  "notes": "Recorded via .tmp/record/record_deepseek.py;authorization 已脱敏。"
+}

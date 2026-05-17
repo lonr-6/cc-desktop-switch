@@ -1,0 +1,167 @@
+[
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "baseUrl": "https://api.deepseek.com/anthropic",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "deepseek-v4-pro",
+      "haiku": "deepseek-v4-flash",
+      "opus": "deepseek-v4-pro",
+      "default": "deepseek-v4-pro"
+    },
+    "modelOptions": {
+      "deepseek_1m": {
+        "label": "解锁 1M 上下文",
+        "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]。",
+        "models": {
+          "sonnet": "deepseek-v4-pro[1m]",
+          "haiku": "deepseek-v4-flash",
+          "opus": "deepseek-v4-pro[1m]",
+          "default": "deepseek-v4-pro[1m]"
+        },
+        "modelCapabilities": {
+          "deepseek-v4-pro[1m]": {"supports1m": true}
+        }
+      }
+    },
+    "requestOptions": {},
+    "requestOptionPresets": {
+      "deepseek_max_effort": {
+        "label": "DeepSeek Max 思维",
+        "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 DeepSeek Max 转发；未勾选则使用 Claude 当前默认配置。",
+        "requestOptions": {
+          "anthropic": {
+            "thinking": {"type": "enabled"},
+            "output_config": {"effort": "max"}
+          }
+        }
+      }
+    },
+    "extraHeaders": {"x-api-key": "{apiKey}"},
+    "isBuiltin": true
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi (月之暗面)",
+    "baseUrl": "https://api.moonshot.cn/anthropic",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "kimi-k2.6",
+      "haiku": "kimi-k2.6",
+      "opus": "kimi-k2.6",
+      "default": "kimi-k2.6"
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "kimi-code",
+    "name": "Kimi Code",
+    "baseUrl": "https://api.kimi.com/coding",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "kimi-for-coding",
+      "haiku": "kimi-for-coding",
+      "opus": "kimi-for-coding",
+      "default": "kimi-for-coding"
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "xiaomi-mimo-payg",
+    "name": "Xiaomi MiMo (Pay for Token)",
+    "baseUrl": "https://api.xiaomimimo.com/anthropic",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "",
+      "haiku": "",
+      "opus": "",
+      "default": "mimo-v2.5-pro"
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "xiaomi-mimo-token-plan",
+    "name": "Xiaomi MiMo (Token Plan)",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "baseUrlOptions": [
+      {
+        "label": "官方默认",
+        "value": "https://token-plan-cn.xiaomimimo.com/anthropic"
+      },
+      {
+        "label": "活动专属",
+        "value": "https://token-plan-sgp.xiaomimimo.com/anthropic"
+      }
+    ],
+    "baseUrlHint": "如果是活动赠送会员请使用活动专属 Base URL，若仍无法获取模型请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
+    "models": {
+      "sonnet": "",
+      "haiku": "",
+      "opus": "",
+      "default": "mimo-v2.5-pro"
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "zhipu",
+    "name": "智谱 GLM",
+    "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+    "authScheme": "x-api-key",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "glm-5.1",
+      "haiku": "glm-4.7",
+      "opus": "glm-5.1",
+      "default": "glm-5.1"
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "anyrouter",
+    "name": "AnyRouter",
+    "baseUrl": "https://anyrouter.top",
+    "authScheme": "bearer",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "claude-sonnet-4-5",
+      "haiku": "claude-haiku-4-5",
+      "opus": "claude-opus-4-1",
+      "default": "claude-sonnet-4-5"
+    },
+    "baseUrlHint": "AnyRouter 是 Anthropic Messages API 中转,baseUrl 跟你购买的端点一致;模型 ID 跟 Anthropic 官方一致(claude-sonnet-* / claude-opus-* / claude-haiku-*)。",
+    "isBuiltin": true
+  },
+  {
+    "id": "bailian",
+    "name": "阿里云百炼",
+    "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "authScheme": "x-api-key",
+    "apiFormat": "anthropic",
+    "models": {
+      "sonnet": "qwen3.6-plus",
+      "haiku": "qwen3.6-flash",
+      "opus": "qwen3.6-max-preview",
+      "default": "qwen3.6-plus"
+    },
+    "modelOptions": {
+      "qwen_1m": {
+        "label": "开启千问 1M 上下文",
+        "description": "阿里云文档确认 qwen3.6-plus / qwen3.6-flash 支持 1M。勾选后会把 1M 能力写入 Claude 桌面版；不勾选则按普通上下文显示。",
+        "modelCapabilities": {
+          "qwen3.6-plus": {"supports1m": true},
+          "qwen3.6-flash": {"supports1m": true}
+        }
+      }
+    },
+    "modelCapabilities": {},
+    "requestOptions": {},
+    "isBuiltin": true
+  }
+]

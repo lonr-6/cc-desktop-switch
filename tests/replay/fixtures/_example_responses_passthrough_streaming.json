@@ -1,0 +1,53 @@
+{
+  "name": "_example_responses_passthrough_streaming",
+  "description": "ResponsesPassthroughAdapter 字节级透传 SSE 验证 —— 自定义第三方 provider apiFormat=responses + 入站 /v1/responses → upstream OpenAI Responses API SSE 原样返。前缀 _ 不进 list_fixtures()。",
+  "provider": "custom-third-party",
+  "client_request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "<redacted>"
+    },
+    "body_json": {
+      "model": "gpt-5",
+      "stream": true,
+      "input": [
+        { "role": "user", "content": [{"type": "input_text", "text": "hi"}] }
+      ]
+    }
+  },
+  "upstream": [
+    {
+      "url_pattern": "https://api\\.openai\\.com/v1/responses",
+      "method": "POST",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "stream": [
+          { "data": "event: response.created\ndata: {\"sequence_number\":0,\"type\":\"response.created\",\"response\":{\"id\":\"resp_passthrough_test\",\"object\":\"response\",\"status\":\"in_progress\",\"model\":\"gpt-5\"}}\n\n" },
+          { "data": "event: response.output_text.delta\ndata: {\"sequence_number\":1,\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" },
+          { "data": "event: response.completed\ndata: {\"sequence_number\":2,\"type\":\"response.completed\",\"response\":{\"id\":\"resp_passthrough_test\",\"object\":\"response\",\"status\":\"completed\"}}\n\n" }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "status": 200,
+    "headers_contain": {
+      "content-type": "text/event-stream"
+    },
+    "stream_substrings": [
+      "resp_passthrough_test",
+      "response.output_text.delta",
+      "\"delta\":\"hi\"",
+      "response.completed",
+      "\"sequence_number\":0",
+      "\"sequence_number\":1",
+      "\"sequence_number\":2"
+    ]
+  },
+  "notes": "关键证明:① 上游 sequence_number / event 类型字面值字节级穿透代理(没被 ChatToResponsesConverter 重写);② 上游 resp_id 直接保留(没被 chatcmpl→resp_ 重写);③ Responses API envelope 由上游产生,代理不参与构造。等价于 OpenAiChatAdapter 的 byte-level passthrough 行为,但适用 apiFormat=responses + /responses 入站路径。"
+}

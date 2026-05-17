@@ -1,0 +1,78 @@
+{
+  "name": "kimi_chat_minimal_streaming",
+  "description": "Real kimi SSE response (max_tokens=1, prompt='hi')",
+  "provider": "kimi",
+  "client_request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "<redacted>"
+    },
+    "body_json": {
+      "model": "kimi-k2.6",
+      "stream": true,
+      "max_tokens": 1,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    }
+  },
+  "upstream": [
+    {
+      "url_pattern": "https://api.moonshot.cn/v1/chat/completions",
+      "method": "POST",
+      "response": {
+        "status": 200,
+        "headers": {
+          "date": "Sun, 03 May 2026 16:24:01 GMT",
+          "content-type": "text/event-stream",
+          "transfer-encoding": "chunked",
+          "connection": "keep-alive",
+          "set-cookie": "<redacted>",
+          "vary": "Accept-Encoding, Origin",
+          "cache-control": "no-cache",
+          "msh-context-cache-token-saved": "8",
+          "msh-gid": "free",
+          "msh-org-id": "<redacted>",
+          "msh-project-id": "<redacted>",
+          "msh-request-id": "<redacted>",
+          "msh-trace-mode": "on",
+          "msh-uid": "<redacted>",
+          "strict-transport-security": "max-age=31536000; includeSubDomains"
+        },
+        "stream": [
+          {
+            "data": "data: {\"id\":\"chatcmpl-69f776a036cdc9a5a36b87cb\",\"object\":\"chat.completion.chunk\",\"created\":1777825440,\"model\":\"kimi-k2.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}],\"system_fingerprint\":\"fpv0_8cab9aba\"}\n\n",
+            "delay_ms": 0
+          },
+          {
+            "data": "data: {\"id\":\"chatcmpl-69f776a036cdc9a5a36b87cb\",\"object\":\"chat.completion.chunk\",\"created\":1777825440,\"model\":\"kimi-k2.6\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"The\"},\"finish_reason\":null}],\"system_fingerprint\":\"fpv0_8cab9aba\"}\n\n",
+            "delay_ms": 0
+          },
+          {
+            "data": "data: {\"id\":\"chatcmpl-69f776a036cdc9a5a36b87cb\",\"object\":\"chat.completion.chunk\",\"created\":1777825440,\"model\":\"kimi-k2.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\",\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":2,\"total_tokens\":10,\"cached_tokens\":8,\"prompt_tokens_details\":{\"cached_tokens\":8}}}],\"system_fingerprint\":\"fpv0_8cab9aba\"}\n\n",
+            "delay_ms": 0
+          },
+          {
+            "data": "data: [DONE]\n\n",
+            "delay_ms": 0
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "status": 200,
+    "headers_contain": {
+      "content-type": "text/event-stream"
+    },
+    "stream_substrings": [
+      "[DONE]"
+    ]
+  },
+  "notes": "Recorded once via .tmp/record/record_kimi.py;auth redacted."
+}

@@ -1,0 +1,95 @@
+name: no-ai-coauthor
+
+# 阻塞含 AI Co-Authored-By trailer 或 AI author email 的 commit 进入 main。
+# 配合 branch protection 把本 workflow 加进 required status checks 后,
+# 任何含 AI 署名的 PR 都无法 squash merge。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-ai-coauthor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine commit range
+        id: range
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -eu
+          if [ -n "${PR_HEAD_SHA:-}" ]; then
+            BASE="$PR_BASE_SHA"
+            HEAD="$PR_HEAD_SHA"
+          else
+            BASE="$PUSH_BEFORE"
+            HEAD="$PUSH_AFTER"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "range=$HEAD~1..$HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=$BASE..$HEAD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan commits for AI co-author / email
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: |
+          set -eu
+          echo "Scanning commits in range: $RANGE"
+          COMMITS=$(git log --format='%H' "$RANGE")
+          if [ -z "$COMMITS" ]; then
+            echo "No commits to scan."
+            exit 0
+          fi
+          COUNT=$(echo "$COMMITS" | wc -l | tr -d ' ')
+          echo "Commit count: $COUNT"
+
+          # AI co-author trailer pattern(全大小写;覆盖 anthropic / claude / cursor /
+          # copilot 子串)
+          TRAILER_RE='Co-[Aa]uthored-[Bb]y:.*<[^>]*(@anthropic\.com|cursor|[Cc]opilot|cursoragent|claude)'
+          # AI author email pattern
+          EMAIL_RE='@anthropic\.com|cursoragent@cursor|copilot-swe-agent|[Cc]ursor@users\.noreply|[Cc]opilot@users\.noreply'
+
+          FAILED=0
+          for sha in $COMMITS; do
+            short=$(git log -1 --format='%h' "$sha")
+            msg=$(git log -1 --format='%B' "$sha")
+            ae=$(git log -1 --format='%ae' "$sha")
+            ce=$(git log -1 --format='%ce' "$sha")
+
+            if echo "$msg" | grep -iE "$TRAILER_RE" > /dev/null; then
+              echo "::error::commit $short: AI Co-Authored-By trailer detected"
+              echo "$msg" | grep -iE "$TRAILER_RE" || true
+              FAILED=1
+            fi
+            if echo "$ae" | grep -iE "$EMAIL_RE" > /dev/null; then
+              echo "::error::commit $short: AI author email — $ae"
+              FAILED=1
+            fi
+            if echo "$ce" | grep -iE "$EMAIL_RE" > /dev/null; then
+              echo "::error::commit $short: AI committer email — $ce"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::Found AI co-author trailer or AI email in $RANGE."
+            echo "::error::Rewrite commit message (git commit --amend / rebase -i) to remove,"
+            echo "::error::or force-push with corrected history."
+            exit 1
+          fi
+          echo "✅ No AI co-author trailers or emails in $COUNT commits."

@@ -1,0 +1,423 @@
+[
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "baseUrl": "https://api.deepseek.com",
+    "docsUrl": "https://api-docs.deepseek.com/",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "deepseek-v4-pro"
+    },
+    "modelCapabilities": {
+      "deepseek-v4-pro": {
+        "context_window": 1000000,
+        "supports_vision": false
+      },
+      "deepseek-v4-flash": {
+        "context_window": 1000000,
+        "supports_vision": false
+      }
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "DeepSeek V4 全系模型（pro / flash）默认提供 1M 上下文，本应用直接透传，无需额外开关。"
+      }
+    ],
+    "requestOptions": {},
+    "requestOptionPresets": {
+      "deepseek_max_effort": {
+        "label": "DeepSeek Max 思维",
+        "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 DeepSeek Max 转发；未勾选则使用 Claude 当前默认配置。",
+        "requestOptions": {
+          "chat": {
+            "thinking": {
+              "type": "enabled"
+            },
+            "reasoning_effort": "max"
+          }
+        }
+      }
+    },
+    "extraHeaders": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi (月之暗面)",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "docsUrl": "https://platform.moonshot.cn/docs",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "kimi-k2.6"
+    },
+    "modelCapabilities": {
+      "kimi-k2.5": {
+        "context_window": 262144
+      },
+      "kimi-k2.6": {
+        "context_window": 262144
+      },
+      "moonshot-v1-8k": {
+        "context_window": 8192
+      },
+      "moonshot-v1-32k": {
+        "context_window": 32768
+      },
+      "moonshot-v1-128k": {
+        "context_window": 131072
+      },
+      "moonshot-v1-auto": {
+        "context_window": 131072
+      },
+      "moonshot-v1-8k-vision-preview": {
+        "context_window": 8192
+      },
+      "moonshot-v1-32k-vision-preview": {
+        "context_window": 32768
+      },
+      "moonshot-v1-128k-vision-preview": {
+        "context_window": 131072
+      }
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "kimi-code",
+    "name": "Kimi Code",
+    "baseUrl": "https://api.kimi.com/coding/v1",
+    "docsUrl": "https://platform.moonshot.cn/docs",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "extraHeaders": {
+      "User-Agent": "KimiCLI/1.40.0"
+    },
+    "models": {
+      "default": "kimi-for-coding"
+    },
+    "modelCapabilities": {
+      "kimi-for-coding": {
+        "context_window": 262144
+      }
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "xiaomi-mimo-payg",
+    "name": "Xiaomi MiMo (Pay for Token)",
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "docsUrl": "https://www.mimo-v2.com/zh/docs/quick-start/first-api-call",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "mimo-v2.5-pro"
+    },
+    "modelCapabilities": {
+      "mimo-v2-pro": {
+        "context_window": 1000000,
+        "supports_vision": false
+      },
+      "mimo-v2-flash": {
+        "context_window": 262144,
+        "supports_vision": false
+      },
+      "mimo-v2-omni": {
+        "context_window": 262144
+      },
+      "mimo-v2.5": {
+        "context_window": 1000000,
+        "supports_vision": false
+      },
+      "mimo-v2.5-pro": {
+        "context_window": 1000000,
+        "supports_vision": false
+      }
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "xiaomi-mimo-token-plan",
+    "name": "Xiaomi MiMo (Token Plan)",
+    "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+    "docsUrl": "https://www.mimo-v2.com/zh/docs/quick-start/first-api-call",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "baseUrlOptions": [
+      {
+        "label": "中国集群",
+        "value": "https://token-plan-cn.xiaomimimo.com/v1"
+      },
+      {
+        "label": "新加坡集群",
+        "value": "https://token-plan-sgp.xiaomimimo.com/v1"
+      },
+      {
+        "label": "欧洲集群",
+        "value": "https://token-plan-ams.xiaomimimo.com/v1"
+      }
+    ],
+    "baseUrlHint": "请使用账号所属地区的 Base URL，若不清楚请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
+    "models": {
+      "default": "mimo-v2.5-pro"
+    },
+    "modelCapabilities": {
+      "mimo-v2-pro": {
+        "context_window": 1000000
+      },
+      "mimo-v2-omni": {
+        "context_window": 262144
+      },
+      "mimo-v2.5": {
+        "context_window": 1000000,
+        "supports_vision": false
+      },
+      "mimo-v2.5-pro": {
+        "context_window": 1000000,
+        "supports_vision": false
+      }
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "zhipu",
+    "name": "智谱 GLM",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "docsUrl": "https://docs.bigmodel.cn/cn/guide/develop/openai/introduction",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "glm-5.1"
+    },
+    "modelCapabilities": {
+      "glm-5.1": {
+        "context_window": 200000
+      },
+      "glm-4.7": {
+        "context_window": 200000
+      }
+    },
+    "isBuiltin": true
+  },
+  {
+    "id": "bailian",
+    "name": "阿里云百炼",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "docsUrl": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "qwen3.6-plus"
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "Qwen 3.6 Plus / Flash 默认提供 1M 上下文，本应用直接透传，无需额外开关。"
+      }
+    ],
+    "modelCapabilities": {
+      "qwen3.6-plus": {
+        "context_window": 1000000
+      },
+      "qwen3.6-flash": {
+        "context_window": 1000000
+      }
+    },
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "bailian-token-plan",
+    "name": "阿里云百炼 (Token Plan)",
+    "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "docsUrl": "https://help.aliyun.com/zh/model-studio/token-plan-quickstart",
+    "authScheme": "bearer",
+    "apiFormat": "responses",
+    "models": {
+      "default": "qwen3.6-plus"
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "Token Plan 团队版 API Key 与按量计费/Coding Plan 不互通，请确保 Base URL 与 API Key 来自同一套餐。"
+      }
+    ],
+    "modelCapabilities": {
+      "qwen3.6-plus": {
+        "context_window": 1000000
+      },
+      "qwen3.6-flash": {
+        "context_window": 1000000
+      }
+    },
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "baseUrl": "https://api.minimaxi.com/v1",
+    "docsUrl": "https://platform.minimaxi.com/docs/api-reference/text/chat-completion",
+    "authScheme": "bearer",
+    "apiFormat": "openai_chat",
+    "models": {
+      "default": "MiniMax-M2.7"
+    },
+    "modelCapabilities": {
+      "MiniMax-M2.7": {
+        "context_window": 204800
+      }
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "MiniMax M2.x 走 OpenAI 兼容 chat completions 端点,代理自动剥不兼容字段(reasoning_effort / response_format / parallel_tool_calls 等)+ tool 剥 strict + 连续 system 合并;响应侧 reasoning_details 拆 reasoning + <think> 兜底拆分仅对 MiniMax 启用。"
+      },
+      {
+        "type": "info",
+        "text": "MiniMax chat completions API 当前不支持原生 web_search 工具(文档实证 2026-05-09)。如需联网搜索,推荐配 mcp_servers 使用 MCP 路径(参考 P5 namespace MCP 修复)。"
+      }
+    ],
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "grok-web",
+    "name": "Grok(Web)",
+    "baseUrl": "https://grok.com",
+    "docsUrl": "https://grok.com",
+    "authScheme": "grok_cookie",
+    "apiFormat": "grok_web",
+    "models": {
+      "default": "grok-420-computer-use-sa"
+    },
+    "modelCapabilities": {},
+    "notices": [
+      {
+        "type": "warning",
+        "text": "⚠️ **TOS 灰色 + 实验性功能**:本 provider 反向代理 grok.com Web 后端(不是 xAI 官方 API),用 SuperGrok / X Premium+ cookie 鉴权。属于灰色用法,仅限**个人本机使用自己付费的 SuperGrok 账号**,不应作为对外服务发布。grok.com 可能随时改协议导致 break,异常请走「反馈」提交 diagnostics bundle。"
+      },
+      {
+        "type": "info",
+        "text": "**配置步骤(只需 1 步)**:① 浏览器登录 https://grok.com(SuperGrok / X Premium+ 账号);② F12 → Application → Cookies → 复制 `sso` 值粘进下方输入框,保存即可。其他全部自动:`x-statsig-id` 每次请求动态生成(参考 chenyme/grok2api `dynamic_statsig`);`sso-rw` 复用 `sso`(实测同 JWT);User-Agent / Origin / Referer / Sec-Ch-* 后端硬编码默认值;`cf_clearance` 仅在网络遇到 Cloudflare challenge(403)时才需要补填(高级选项)。"
+      },
+      {
+        "type": "info",
+        "text": "**当前能力**:文本对话、reasoning summary、Web Search citations、Connectors / Collections / RAG Search 引用、MCP via `call_connected_tool`(三下划线 namespace 如 `test___ask_question`)、跨轮 `parent_response_id` 自动追踪。**已知限制**:inline `[N]` 精确位置 citation 暂未实现(仅追加在结尾);`cardAttachment` 帧未解析;sso JWT 失效时需重新登录 grok.com 重新复制 cookie。"
+      }
+    ],
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "google-ai-studio",
+    "name": "Google AI Studio",
+    "baseUrl": "https://generativelanguage.googleapis.com",
+    "docsUrl": "https://ai.google.dev/gemini-api/docs",
+    "authScheme": "google_api_key",
+    "apiFormat": "gemini_native",
+    "models": {
+      "default": "gemini-3.1-flash-lite"
+    },
+    "modelCapabilities": {
+      "gemini-3.1-flash-lite": {
+        "context_window": 1000000
+      }
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "Google AI Studio Gemini API 走 native `generateContent` / `streamGenerateContent` endpoint(`/v1alpha` for Gemini 3+, `/v1beta` for 2.x)。鉴权用 GEMINI_API_KEY(走 `x-goog-api-key` header,不是 Bearer)。代理把 Codex.app 的 Responses API 入站直接转 Gemini 原生 wire,响应侧 Gemini SSE 直转 OpenAI Responses SSE,不走 OpenAI compat 中间层。"
+      },
+      {
+        "type": "info",
+        "text": "Gemini 3.x 默认 dynamic thinking 已开启(Pro/Flash 默认 high)。代理把 Codex.app `reasoning.effort` 映射成 Gemini 3 用 `thinkingLevel`(low/medium/high),Gemini 2.x 用 `thinkingBudget`(1024/8192/16384)。Gemini 3.x 默认 `temperature=1.0`(LiteLLM 实证 < 1 触发 infinite loop)。"
+      },
+      {
+        "type": "info",
+        "text": "**Google Search grounding 已 work**:打开 web_search 工具后(Codex.app 默认开),代理把入站 OpenAI 标准 `web_search` 工具转 Gemini `tools=[{googleSearch:{}}]`。响应侧 grounding citations(`groundingMetadata.groundingChunks/groundingSupports`)直接 emit 成 Responses `response.output_text.annotation.added` 事件,Codex.app UI 显示来源链接。"
+      },
+      {
+        "type": "warning",
+        "text": "已知限制:① 3.x 文本模型当前**仍为 Preview**(`-preview` 后缀);未来 GA 后模型 ID 可能去掉 `-preview`,届时需手动改 mapping。② `generativelanguage.googleapis.com` 在中国大陆未直连,需 VPN。③ `gemini-3.1-flash-lite` 是当前唯一不带 `-preview` 的 stable 3.x,但能力为轻量级。④ Gemini 免费 tier 对 3.x Pro `limit:0`(实测 2026-05-10 触发 429 RESOURCE_EXHAUSTED),需在 Google AI Studio console 启用 billing 才能跑 gemini-3.1-pro-preview。"
+      }
+    ],
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "gemini-cli-oauth",
+    "name": "Gemini CLI",
+    "baseUrl": "https://cloudcode-pa.googleapis.com",
+    "docsUrl": "https://github.com/google-gemini/gemini-cli",
+    "authScheme": "google_oauth_cloud_code",
+    "apiFormat": "gemini_cli_oauth",
+    "models": {
+      "default": "gemini-2.5-flash"
+    },
+    "modelCapabilities": {
+      "gemini-2.5-flash": {
+        "context_window": 1000000
+      }
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "**Gemini CLI OAuth 登录**(无需 API key)— 浏览器登录 Google 账号一次,后续请求自动复用 access_token。免费 tier per-account 配额绑 GCP cloudaicompanionProject(自动 provision)。Codex.app `/responses` → Cloud Code Assist `:streamGenerateContent` 直转,wire 实现参考 router-for-me/CLIProxyAPI(MIT, Go)。"
+      },
+      {
+        "type": "info",
+        "text": "默认模型 `gemini-2.5-flash`(对齐官方 gemini-cli 在配额耗尽时的 fallback 行为)。需要 pro 能力可在模型映射手动改 `gemini-2.5-pro`,但免费 tier per-account 日配额对 pro 较紧,heavy use 容易 429。"
+      },
+      {
+        "type": "info",
+        "text": "**Gemini 3 系列已在 OAuth 路径可用**(2026-05 起):`gemini-3-pro-preview` / `gemini-3.1-pro-preview` / `gemini-3-flash-preview` / `gemini-3.1-flash-lite-preview`。模型 ID 仍带 `-preview` 后缀(GA 后会去掉);3.x 默认 dynamic thinking 已开 + Pro 默认 high。免费 tier 对 3.x 配额更紧,heavy use 易触 429,推荐先用 2.5-flash 试通。图像生成(`gemini-3-pro-image-preview`)仅 API-key 路径(Google AI Studio provider)支持,OAuth 路径不可用。"
+      },
+      {
+        "type": "warning",
+        "text": "⚠️ **TOS 灰色 + 用户自担风险**:`cloudcode-pa.googleapis.com/v1internal` 是 Google 内部未文档化端点,Google 可随时改协议导致 break(CLIProxyAPI 多次因 gemini-cli 升级而 break)。Code Assist TOS 禁止「非官方客户端 automated 使用」,impersonation 严格说违反。降级路径:切回 Google AI Studio(API key)模式,仍受 Google 官方支持。"
+      }
+    ],
+    "requestOptions": {},
+    "isBuiltin": true
+  },
+  {
+    "id": "antigravity-oauth",
+    "name": "Antigravity",
+    "baseUrl": "https://daily-cloudcode-pa.googleapis.com",
+    "baseUrlOptions": [
+      {
+        "value": "https://cloudcode-pa.googleapis.com",
+        "label": "prod (legacy / 自动 self-heal 用)"
+      }
+    ],
+    "docsUrl": "https://antigravity.google.com/",
+    "authScheme": "google_oauth_antigravity",
+    "apiFormat": "antigravity_oauth",
+    "models": {
+      "default": "gemini-3-flash"
+    },
+    "modelCapabilities": {
+      "gemini-3-flash": {
+        "context_window": 1000000
+      }
+    },
+    "notices": [
+      {
+        "type": "info",
+        "text": "**Antigravity OAuth 登录**(无需 API key)— Google Antigravity IDE 的 OAuth 客户端身份,跟 Gemini CLI 共用 Cloud Code Assist 上游(`cloudcode-pa.googleapis.com/v1internal:*`)但身份独立 + 配额独立。浏览器登录一次后 token 持久化到 `~/.codex-app-transfer/antigravity-oauth.json`,过期前自动 refresh。"
+      },
+      {
+        "type": "info",
+        "text": "Antigravity 跟 Gemini CLI 可同时登录,互不抢占。两边各自有独立 GCP cloudaicompanionProject(Google 自动 provision)+ 独立 free tier 配额。配额耗尽切换另一边继续用是常见用法。"
+      },
+      {
+        "type": "warning",
+        "text": "⚠️ **TOS 灰色 + 用户自担风险**:同 Gemini CLI provider — `cloudcode-pa.googleapis.com/v1internal` 是 Google 内部端点,impersonate 严格说违反 TOS,Google 可随时改协议。降级路径:切到 Google AI Studio(API key)provider,仍受官方支持。"
+      }
+    ],
+    "requestOptions": {},
+    "isBuiltin": true
+  }
+]

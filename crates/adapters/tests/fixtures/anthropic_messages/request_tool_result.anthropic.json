@@ -1,0 +1,52 @@
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01",
+          "name": "read_file",
+          "input": {
+            "path": "Cargo.toml"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01",
+          "content": "workspace package"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a workspace file",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto",
+    "disable_parallel_tool_use": false
+  },
+  "max_tokens": 512,
+  "stream": true
+}

@@ -1,0 +1,22 @@
+[package]
+name = "codex-app-transfer-registry"
+version = "0.1.0"
+description = "Config / providers / model alias data layer (Stage 1 port of backend/config.py + backend/model_alias.py)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order 保证 JSON 对象 key 顺序与文件磁盘顺序一致 —— round-trip
+# 字节级 diff 必需。
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+thiserror = "2"
+once_cell = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1"

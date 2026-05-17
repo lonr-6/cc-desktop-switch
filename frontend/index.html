@@ -1,29 +1,43 @@
 <!doctype html>
-<html lang="zh-CN" data-bs-theme="light">
+<html lang="zh-CN" data-bs-theme="light" data-i18n-pending>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CC Desktop Switch</title>
-    <link href="vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
-    <link href="vendor/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
+    <title>Codex App Transfer</title>
+    <!--
+      M3 followup:消除 HTML 中文 fallback 在 EN 用户首屏的单帧闪烁。
+
+      策略:HTML default `data-i18n-pending` 属性 → CSS 隐藏所有 `[data-i18n]`
+      节点直到 i18n.apply() 完成后移除属性。trade-off:首屏会有 ~ 几十 ms
+      blank(看不到 text 但 layout 已就位)— 比"闪一下中文 → 切英文"体感好。
+
+      CSS 必须放 inline 或同步 stylesheet,放 head 让 parser 一遇到 body 就
+      已经能 hide [data-i18n](避免 CSS 加载完才 hide 的二次闪烁)。
+    -->
+    <style>
+      html[data-i18n-pending] [data-i18n] {
+        visibility: hidden;
+      }
+    </style>
+    <link href="vendor/bootstrap@5.3.3/bootstrap.min.css" rel="stylesheet">
+    <link href="vendor/bootstrap-icons@1.11.3/bootstrap-icons.css" rel="stylesheet">
     <link rel="icon" href="assets/app-icon.png">
     <link href="css/style.css" rel="stylesheet">
   </head>
   <body>
     <header class="app-header">
       <div class="header-actions-left">
-        <button class="btn btn-outline-primary btn-sm dashboard-import-button" type="button" data-action="open-ccswitch-import"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="dashboard.importCcSwitch">导入 CC Switch 配置</span></button>
-        <button class="btn btn-outline-danger btn-sm dashboard-clear-button" type="button" data-action="clear-desktop"><i class="bi bi-trash"></i><span data-i18n="dashboard.clearDesktopConfig">清除桌面版配置</span></button>
+        <button class="btn btn-outline-primary btn-sm dashboard-feedback-button" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="dashboard.feedback">反馈</span></button>
       </div>
       <nav class="route-tabs" aria-label="Primary navigation">
         <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Providers"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
-        <a href="#providers" class="route-tab" data-nav="providers" title="Providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
+        <a href="#claude-desktop-providers" class="route-tab" data-nav="claude-desktop-providers" title="Claude Desktop Providers"><i class="bi bi-chat-square-quote"></i><span data-i18n="nav.claudeDesktopProviders">Claude Desktop</span></a>
         <a href="#proxy" class="route-tab" data-nav="proxy" title="Forwarding"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">转发</span></a>
+        <a href="#claude-desktop" class="route-tab" data-nav="claude-desktop" title="Claude Desktop 详情"><i class="bi bi-sliders"></i><span data-i18n="nav.claudeDesktop">配置详情</span></a>
         <a href="#settings" class="route-tab" data-nav="settings" title="Settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
         <a href="#guide" class="route-tab" data-nav="guide" title="Guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
       </nav>
       <div class="header-actions">
-        <button class="update-badge" id="dashboardUpdateBadge" type="button" data-action="install-update" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></button>
         <div class="lang-switch" aria-label="language switch">
           <button class="text-button active" type="button" data-lang="zh">中</button>
           <span>/</span>
@@ -44,9 +58,11 @@
 
     <main class="app-main">
       <section class="page active" id="page-dashboard" data-page="dashboard">
-        <div class="desktop-warning" id="dashboardDesktopWarning" hidden>
-          <i class="bi bi-exclamation-triangle"></i>
-          <span></span>
+        <div class="page-title with-action">
+          <div>
+            <h1 data-i18n="dashboard.title">提供商</h1>
+          </div>
+          <button class="btn btn-outline-danger btn-lg" type="button" data-action="clear-desktop"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="dashboard.clearDesktopConfig">还原 Codex 配置</span></button>
         </div>
 
         <div class="switch-board">
@@ -61,7 +77,7 @@
           </article>
           <article class="status-card">
             <h2 data-i18n="dashboard.proxyStatus">代理状态</h2>
-            <div class="hero-line-icon success"><i class="bi bi-hdd-network"></i><i class="bi bi-activity badge-icon"></i></div>
+            <div class="hero-line-icon" id="dashboardProxyIcon"><i class="bi bi-hdd-network"></i><i class="bi bi-activity badge-icon"></i></div>
             <strong id="dashboardProxyStatus">运行中 :18080</strong>
           </article>
           <article class="status-card">
@@ -69,9 +85,24 @@
             <span class="large-dot"></span>
             <strong id="dashboardProviderName">DeepSeek</strong>
           </article>
+          <article class="status-card" id="pluginUnlockCard">
+            <h2 data-i18n="dashboard.pluginUnlockStatus">Plugins 解锁</h2>
+            <div class="hero-status muted" id="pluginUnlockIcon"><i class="bi bi-lock"></i></div>
+            <strong class="muted-text" id="pluginUnlockStatus" data-i18n="status.notRunning">未运行</strong>
+            <div class="plugin-unlock-actions" style="margin-top:8px;display:none;" id="pluginUnlockActions">
+              <button class="btn btn-outline-primary btn-sm" type="button" data-action="plugin-unlock-start"><i class="bi bi-play"></i><span data-i18n="common.start">启动</span></button>
+              <button class="btn btn-outline-secondary btn-sm" type="button" data-action="plugin-unlock-reinject"><i class="bi bi-arrow-repeat"></i><span data-i18n="common.reinject">重新注入</span></button>
+              <button class="btn btn-outline-danger btn-sm" type="button" data-action="plugin-unlock-stop"><i class="bi bi-stop"></i><span data-i18n="common.stop">停止</span></button>
+            </div>
+          </article>
         </div>
+        <div class="desktop-warning" id="dashboardDesktopWarning" hidden>
+          <i class="bi bi-exclamation-triangle"></i>
+          <span></span>
+        </div>
+
         <div class="quick-actions">
-          <a href="#providers/add" class="btn btn-primary action-button"><i class="bi bi-magic"></i><span data-i18n="dashboard.configureDesktop">添加并应用</span></a>
+          <a href="#providers/add" class="btn btn-primary action-button"><i class="bi bi-magic"></i><span data-i18n="dashboard.configureDesktop">添加并生成配置</span></a>
           <button class="btn btn-success action-button" type="button" data-action="proxy-start"><i class="bi bi-play-circle"></i><span data-i18n="proxy.start">启动转发</span></button>
           <a href="#providers" class="btn btn-outline-primary action-button"><i class="bi bi-arrow-left-right"></i><span data-i18n="dashboard.switchProvider">切换提供商</span></a>
         </div>
@@ -97,17 +128,21 @@
         <div class="two-column provider-add-layout">
           <article class="panel form-panel">
             <form id="providerForm" autocomplete="off">
+              <div class="desktop-warning compact" id="providerUnverifiedBanner" role="note" hidden>
+                <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+                <p data-i18n="providersAdd.unverifiedNotice">目前 Kimi Code、Kimi 月之暗面、DeepSeek、Xiaomi MiMo（Token Plan + Pay for Token）已端到端验证，其他采用兼容适配，如有问题欢迎提交反馈，谢谢！</p>
+              </div>
               <div class="mb-4">
                 <label class="form-label required" for="providerName" data-i18n="providers.name">提供商名称</label>
                 <input class="form-control form-control-lg" id="providerName" name="name" value="My DeepSeek" autocomplete="organization" required>
               </div>
-              <div class="mb-4">
+              <div class="mb-4" id="providerBaseUrlRow">
                 <div class="label-line">
                   <label class="form-label required" for="providerBaseUrl">API Base URL</label>
                   <button class="link-action" type="button" data-action="test-provider-form"><i class="bi bi-lightning-charge"></i><span data-i18n="providers.manageAndTest">管理与测速</span></button>
                 </div>
                 <div class="baseurl-input-wrap" id="providerBaseUrlControl">
-                  <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/anthropic" autocomplete="url" required>
+                  <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/v1" autocomplete="url" autocapitalize="off" autocorrect="off" spellcheck="false" required>
                   <button class="baseurl-trigger" id="providerBaseUrlTrigger" type="button" data-action="toggle-baseurl-menu" aria-haspopup="listbox" aria-expanded="false" hidden>
                     <i class="bi bi-chevron-down" aria-hidden="true"></i>
                   </button>
@@ -116,65 +151,111 @@
                 <p class="field-hint" id="providerBaseUrlHint" hidden></p>
                 <div class="speed-result" id="formSpeedResult"></div>
               </div>
-              <div class="mb-4">
+              <div class="mb-4" id="providerApiKeyRow">
                 <label class="form-label required" for="providerApiKey">API Key</label>
                 <div class="input-with-button">
                   <input class="form-control form-control-lg" id="providerApiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="current-password" required>
                   <button type="button" class="input-icon" data-action="toggle-key" aria-label="toggle api key"><i class="bi bi-eye"></i></button>
                 </div>
               </div>
-              <div class="mb-4">
-                <label class="form-label required" for="providerAuth">Auth Scheme</label>
-                <input id="providerAuth" name="authScheme" type="hidden" value="bearer">
-                <div class="auth-scheme-menu-wrap" id="providerAuthControl">
-                  <button class="form-select form-select-lg auth-scheme-trigger" id="providerAuthTrigger" type="button" data-action="toggle-auth-scheme-menu" aria-haspopup="listbox" aria-expanded="false">
-                    <span>bearer</span>
-                    <i class="bi bi-chevron-down"></i>
-                  </button>
-                  <div class="auth-scheme-menu" id="providerAuthMenu" role="listbox" aria-labelledby="providerAuthTrigger">
-                    <button class="auth-scheme-option selected" type="button" role="option" data-action="select-auth-scheme" data-value="bearer" aria-selected="true"><span>bearer</span><i class="bi bi-check2"></i></button>
-                    <button class="auth-scheme-option" type="button" role="option" data-action="select-auth-scheme" data-value="x-api-key" aria-selected="false"><span>x-api-key</span></button>
-                    <button class="auth-scheme-option" type="button" role="option" data-action="select-auth-scheme" data-value="none" aria-selected="false"><span>none</span></button>
+              <!-- Gemini CLI OAuth section — apiFormat=gemini_cli_oauth 时显示替代 apiKey input。
+                   登录调 POST /api/gemini-oauth/login long-poll(浏览器登录 5min 内完成),
+                   状态从 GET /api/gemini-oauth/status 同步。 -->
+              <div class="mb-4" id="providerOauthRow" hidden>
+                <label class="form-label" data-i18n="geminiOauth.title">Google OAuth Login</label>
+                <div id="oauthStatusBox">
+                  <div class="d-flex gap-2 mb-2">
+                    <button type="button" class="btn btn-primary" id="oauthLoginBtn" data-i18n="geminiOauth.loginBtn">Log in with Google in browser</button>
+                    <button type="button" class="btn btn-outline-secondary" id="oauthLogoutBtn" hidden data-i18n="geminiOauth.logoutBtn">Log out</button>
                   </div>
+                  <div class="mb-2" id="oauthStatusText" data-i18n="geminiOauth.statusLoading">Loading...</div>
                 </div>
               </div>
-              <details class="advanced-provider-options" open>
-                <summary><i class="bi bi-sliders"></i><span data-i18n="providersAdd.compatTitle">高级：第三方兼容接口</span><i class="bi bi-chevron-down compat-chevron"></i></summary>
-                <p data-i18n="providersAdd.compatHint">默认使用 Anthropic 兼容接口。OpenAI Chat 属于实验适配，建议确认工具调用可用后再用于 Claude Code。</p>
-                <div class="format-choice" id="providerFormatChoice" role="group" aria-label="API format">
-                  <button class="format-choice-button active" type="button" data-api-format="anthropic">
-                    <strong data-i18n="providersAdd.formatAnthropic">Anthropic 兼容</strong>
-                    <span data-i18n="providersAdd.formatAnthropicHint">推荐，稳定主流程</span>
-                  </button>
-                  <button class="format-choice-button" type="button" data-api-format="openai_chat">
-                    <strong data-i18n="providersAdd.formatOpenAI">OpenAI Chat 实验</strong>
-                    <span data-i18n="providersAdd.formatOpenAIHint">用于 new-api / CPA / OpenCode Go 等兼容端点</span>
-                  </button>
+              <input id="providerAuth" name="authScheme" type="hidden" value="bearer">
+              <div class="mb-4">
+                <label class="form-label" for="providerApiFormatDisplay" data-i18n="providersAdd.apiFormatLabel">协议类型</label>
+                <div class="form-control form-control-lg api-format-display" id="providerApiFormatDisplay" tabindex="-1" aria-readonly="true">
+                  <strong class="api-format-name" id="providerApiFormatName"></strong>
+                  <span class="api-format-detail" id="providerApiFormatDetail"></span>
                 </div>
-                <div class="detect-format-row">
-                  <button class="btn btn-sm btn-outline-primary" id="detectFormatBtn" type="button" data-action="detect-format" disabled><i class="bi bi-search"></i><span>识别协议类型</span></button>
-                  <span class="detect-format-status" id="detectFormatStatus"></span>
+                <div class="api-format-selectable" id="providerApiFormatSelectable" hidden>
+                  <select class="form-control form-control-lg" id="providerApiFormatSelect" name="apiFormatSelect">
+                    <option value="openai_chat" data-i18n="apiFormatDisplay.openaiChat.name">OpenAI Chat</option>
+                    <option value="responses" data-i18n="apiFormatDisplay.responses.name">Responses</option>
+                    <option value="anthropic_messages" data-i18n="apiFormatDisplay.anthropic.name">Anthropic Messages</option>
+                    <option value="gemini_native" data-i18n="apiFormatDisplay.geminiNative.name">Gemini Native</option>
+                    <option value="gemini_cli_oauth" data-i18n="apiFormatDisplay.geminiCliOauth.name">Gemini CLI(OAuth)</option>
+                    <option value="antigravity_oauth" data-i18n="apiFormatDisplay.antigravityOauth.name">Antigravity(OAuth)</option>
+                    <option value="grok_web" data-i18n="apiFormatDisplay.grokWeb.name">Grok Web(实验性)</option>
+                  </select>
+                  <p class="api-format-detail-hint" id="providerApiFormatSelectDetail"></p>
                 </div>
-              </details>
+              </div>
+              <!-- Grok Web section — apiFormat=grok_web 时显示替代 apiKey input。
+                   Plan A:只必填 sso JWT 一项,其他全部 optional / 后端自动生成。 -->
+              <div class="mb-4" id="providerGrokWebRow" hidden>
+                <label class="form-label" data-i18n="grokWeb.title">Grok Web Cookie 鉴权</label>
+                <p class="field-hint" data-i18n="grokWeb.hint">浏览器登录 grok.com → F12 → Application → Cookies → 复制 <code>sso</code> 一个值即可,其他自动处理(x-statsig-id 每次动态生成、sso-rw 复用 sso、UA 默认)。</p>
+                <div class="mb-3">
+                  <label class="form-label small" for="grokWebSso" data-i18n="grokWeb.ssoLabel">sso (JWT, 必填)</label>
+                  <input class="form-control" id="grokWebSso" type="password" autocomplete="off" spellcheck="false">
+                </div>
+                <details class="mb-3">
+                  <summary class="small text-muted" data-i18n="grokWeb.advancedSummary" style="cursor:pointer;">高级选项(401 / CF challenge 时展开补充)</summary>
+                  <div class="mt-2 ps-2 border-start">
+                    <div class="mb-2">
+                      <label class="form-label small" for="grokWebCookieString" data-i18n="grokWeb.cookieStringLabel">完整 Cookie 字符串(CF challenge 时必填)</label>
+                      <textarea class="form-control" id="grokWebCookieString" rows="3" autocomplete="off" spellcheck="false" placeholder="__cf_bm=...; cf_clearance=...; mp_xxx_mixpanel=...; ..."></textarea>
+                      <p class="field-hint" data-i18n="grokWeb.cookieStringHint">浏览器 DevTools → Network → grok.com 任一请求 → Request Headers → 整行 Cookie value 复制粘贴(可带 "Cookie: " 前缀,自动 strip)。grok.com Cloudflare 401 "No credentials presented" 即缺这一段。对齐 chenyme/grok2api `proxy.clearance.cf_cookies`。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="grokWebCfClearance" data-i18n="grokWeb.cfClearanceLabel">cf_clearance(可选,单 token)</label>
+                      <input class="form-control" id="grokWebCfClearance" type="password" autocomplete="off" spellcheck="false">
+                      <p class="field-hint" data-i18n="grokWeb.cfClearanceHint">如已 paste 完整 Cookie 字符串无需填。单独填只发 `cf_clearance=` segment(可能不够);整段 paste 更稳。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="grokWebSsoRw" data-i18n="grokWeb.ssoRwLabel">sso-rw(可选,默认复用 sso)</label>
+                      <input class="form-control" id="grokWebSsoRw" type="password" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="grokWebStatsigId" data-i18n="grokWeb.statsigIdLabel">x-statsig-id(可选 override,默认动态生成)</label>
+                      <input class="form-control" id="grokWebStatsigId" type="password" autocomplete="off" spellcheck="false">
+                      <p class="field-hint" data-i18n="grokWeb.statsigIdHint">默认每次请求动态生成伪 Statsig blob,无需手动维护。仅高级用户精确控制 statsig 内容时填写。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="grokWebUserAgent" data-i18n="grokWeb.userAgentLabel">User-Agent override(可选)</label>
+                      <input class="form-control" id="grokWebUserAgent" type="text" autocomplete="off" spellcheck="false" placeholder="Mozilla/5.0 ...">
+                    </div>
+                  </div>
+                </details>
+                <p class="field-hint text-warning" data-i18n="grokWeb.tosWarning">⚠️ 反代 grok.com Web 端,grok TOS 灰色,仅限个人使用本机 SuperGrok 账号,不应作为对外服务发布。</p>
+              </div>
+              <div class="mb-4" id="providerWebSearchRow" hidden>
+                <label class="form-label" data-i18n="providersAdd.webSearchEnabled">联网搜索</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="providerWebSearchEnabled">
+                  <label class="form-check-label" for="providerWebSearchEnabled" data-i18n="providersAdd.webSearchEnabledToggle">启用 web_search 工具</label>
+                </div>
+                <p class="field-hint" id="providerWebSearchHint" data-i18n="providersAdd.webSearchEnabledHint.default">启用后代理在出站请求注入 web_search 工具,让模型联网搜索。计费 / 限制取决于 provider。</p>
+              </div>
               <section class="provider-mapping-section">
                 <div class="section-title-row">
                   <div>
                     <h2 data-i18n="providersAdd.mappingTitle">模型映射</h2>
-                    <p data-i18n="providersAdd.mappingSubtitle">把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。</p>
+                    <p data-i18n="providersAdd.mappingSubtitle">把 OpenAI 模型名（gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.2）映射到这个供应商真实支持的模型。未设置的模型自动使用 Default 映射。</p>
                   </div>
                   <button class="provider-mapping-fetch" type="button" data-action="fetch-form-models"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="models.fetch">获取模型</span></button>
                 </div>
-                <div class="mapping-check-alert-wrap" id="mappingCheckAlertWrap"></div>
                 <div class="form-mapping-grid" id="providerMappingStack"></div>
                 <div class="preset-options" id="providerPresetOptions" hidden></div>
                 <p class="inline-status" id="providerModelFetchResult"></p>
                 <div class="apply-explain">
                   <i class="bi bi-info-circle"></i>
-                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Claude 桌面版连接到本工具。之后你在 Claude 桌面版里发消息，本工具会自动转发到你填写的 API 地址。</p>
+                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex CLI 连接到本工具。之后你在 Codex CLI 里发消息，本工具会自动转发到你填写的 API 地址。</p>
                 </div>
               </section>
               <div class="button-row provider-form-actions">
-                <button class="btn btn-primary btn-lg" type="button" data-action="apply-provider-desktop"><i class="bi bi-magic"></i><span data-i18n="providersAdd.applyToDesktop">一键应用到 Claude 桌面版</span></button>
+                <button class="btn btn-primary btn-lg" type="button" data-action="apply-provider-desktop"><i class="bi bi-play-fill"></i><span data-i18n="providers.enable">启用</span></button>
                 <button class="btn btn-outline-primary btn-lg" id="providerSaveOnly" type="submit" data-i18n="common.saveOnly">仅保存</button>
                 <a class="btn btn-outline-primary btn-lg" href="#providers" data-i18n="common.cancel">取消</a>
               </div>
@@ -195,13 +276,16 @@
             <h1 data-i18n="providers.title">提供商</h1>
             <p data-i18n="providers.subtitle">管理已配置的 API 提供商</p>
           </div>
-          <a href="#providers/add" class="btn btn-primary btn-lg"><i class="bi bi-plus-lg"></i><span data-i18n="providers.add">添加提供商</span></a>
+          <div class="page-title-actions" style="display:flex;gap:8px;align-items:center;">
+            <a href="#providers/add" class="btn btn-primary btn-lg"><i class="bi bi-plus-lg"></i><span data-i18n="providers.add">添加提供商</span></a>
+            <button class="btn btn-outline-danger btn-lg" type="button" data-action="clear-desktop"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="dashboard.clearDesktopConfig">还原 Codex 原配置</span></button>
+          </div>
         </div>
 
         <article class="panel model-menu-mode-panel" hidden aria-hidden="true">
           <div>
             <h2 data-i18n="providers.modelMenuTitle">Claude 模型菜单</h2>
-            <p id="modelMenuModeHint" data-i18n="providers.modelMenuSingleHint">当前只把默认提供商的模型显示到 Claude 桌面版。</p>
+            <p id="modelMenuModeHint" data-i18n="providers.modelMenuSingleHint">当前只把默认提供商的模型显示到 Codex CLI。</p>
           </div>
           <button class="btn btn-outline-primary btn-sm" id="modelMenuModeToggle" type="button" data-action="toggle-model-menu-mode">
             <i class="bi bi-list-stars"></i><span data-i18n="providers.showAllModels">显示全部模型</span>
@@ -225,15 +309,15 @@
         <div class="page-title title-with-back">
           <a class="square-button" href="#dashboard" aria-label="back"><i class="bi bi-arrow-left"></i></a>
           <div>
-            <h1 data-i18n="desktop.title">Claude 桌面版</h1>
-            <p data-i18n="desktop.subtitle">一键让 Claude 桌面版使用当前供应商</p>
+            <h1 data-i18n="desktop.title">Codex CLI</h1>
+            <p data-i18n="desktop.subtitle">一键让 Codex CLI 使用当前供应商</p>
           </div>
         </div>
 
         <div class="two-column desktop-layout">
           <div>
             <article class="panel desktop-card">
-              <h2 data-i18n="desktop.configTitle">Claude 桌面版配置</h2>
+              <h2 data-i18n="desktop.configTitle">Codex CLI 配置</h2>
               <div class="configured-row">
                 <span class="circle-check"><i class="bi bi-check-lg"></i></span>
                 <strong id="desktopConfiguredText" data-i18n="status.configured">已配置</strong>
@@ -245,9 +329,9 @@
               <div class="config-list" id="desktopConfigList"></div>
               <div class="apply-explain desktop-explain">
                 <i class="bi bi-diagram-3"></i>
-                <p data-i18n="desktop.explainText">原理很简单：Claude 桌面版先连接到本工具；本工具再把 Claude 的模型名翻译成你选择的供应商模型，并转发到对应 API。使用第三方 provider 时请保持本工具后台运行；你的上游 API Key 只保存在本机配置里，不直接写进 Claude 桌面版。</p>
+                <p data-i18n="desktop.explainText">原理很简单：Codex CLI 先连接到本工具；本工具再把模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Codex CLI。</p>
               </div>
-              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用到 Claude 桌面版</span></button>
+              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">复制环境变量命令</span></button>
             </article>
             <article class="panel details-panel">
               <div class="panel-header">
@@ -256,26 +340,256 @@
               </div>
               <pre class="code-block" id="desktopJson"></pre>
             </article>
-            <button class="btn btn-outline-danger btn-lg w-100 danger-outline" type="button" data-action="clear-desktop"><i class="bi bi-trash"></i><span data-i18n="desktop.clear">清除配置</span></button>
+            <button class="btn btn-outline-danger btn-lg w-100 danger-outline" type="button" data-action="clear-desktop"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="desktop.clear">还原 Codex 原配置</span></button>
           </div>
 
           <article class="panel guide-panel">
             <h2 data-i18n="desktop.quickGuide">快速引导</h2>
             <div class="mini-steps">
-              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">点击应用</strong><p data-i18n="desktop.step1Text">把 Claude 桌面版连接到本工具</p></div>
-              <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">重启 Claude 桌面版</strong><p data-i18n="desktop.step2Text">关闭并重新打开 Claude 桌面版</p></div>
-              <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">开始使用</strong><p data-i18n="desktop.step3Text">之后在 Claude 桌面版里正常提问即可</p></div>
+              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">复制命令</strong><p data-i18n="desktop.step1Text">把 Codex CLI 连接到本工具</p></div>
+              <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">设置环境变量</strong><p data-i18n="desktop.step2Text">在终端执行复制的命令</p></div>
+              <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">开始使用</strong><p data-i18n="desktop.step3Text">之后在终端使用 codex 命令即可</p></div>
             </div>
           </article>
         </div>
       </section>
 
-      <section class="page" id="page-proxy" data-page="proxy">
+      <section class="page" id="page-claude-desktop-providers-add" data-page="claude-desktop-providers/add">
         <div class="page-title">
-          <h1 data-i18n="proxy.title">转发状态</h1>
-          <p data-i18n="proxy.subtitle">查看本机转发服务状态和请求日志</p>
+          <h1 id="claudeDesktopProviderFormTitle" data-i18n="claudeDesktopProvidersAdd.title">添加提供商</h1>
+          <p data-i18n="providersAdd.subtitle">添加新的 API 提供商或选择预设</p>
         </div>
 
+        <div class="two-column provider-add-layout">
+          <article class="panel form-panel">
+            <form id="claudeDesktopProviderForm" autocomplete="off">
+              <div class="desktop-warning compact" id="cdProviderUnverifiedBanner" role="note" hidden>
+                <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+                <p data-i18n="providersAdd.unverifiedNotice">目前 Kimi Code、Kimi 月之暗面、DeepSeek、Xiaomi MiMo（Token Plan + Pay for Token）已端到端验证，其他采用兼容适配，如有问题欢迎提交反馈，谢谢！</p>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" for="cdProviderName" data-i18n="providers.name">提供商名称</label>
+                <input class="form-control form-control-lg" id="cdProviderName" name="name" value="My DeepSeek" autocomplete="organization" required>
+              </div>
+              <div class="mb-4" id="cdProviderBaseUrlRow">
+                <div class="label-line">
+                  <label class="form-label required" for="cdProviderBaseUrl">API Base URL</label>
+                  <button class="link-action" type="button" data-action="cd-test-provider-form"><i class="bi bi-lightning-charge"></i><span data-i18n="providers.manageAndTest">管理与测速</span></button>
+                </div>
+                <div class="baseurl-input-wrap" id="cdProviderBaseUrlControl">
+                  <input class="form-control form-control-lg" id="cdProviderBaseUrl" name="baseUrl" value="https://api.deepseek.com/v1" autocomplete="url" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+                  <button class="baseurl-trigger" id="cdProviderBaseUrlTrigger" type="button" data-action="cd-toggle-baseurl-menu" aria-haspopup="listbox" aria-expanded="false" hidden>
+                    <i class="bi bi-chevron-down" aria-hidden="true"></i>
+                  </button>
+                  <div class="baseurl-menu" id="cdProviderBaseUrlMenu" role="listbox" aria-labelledby="cdProviderBaseUrlTrigger"></div>
+                </div>
+                <p class="field-hint" id="cdProviderBaseUrlHint" hidden></p>
+                <div class="speed-result" id="cdFormSpeedResult"></div>
+              </div>
+              <div class="mb-4" id="cdProviderApiKeyRow">
+                <label class="form-label required" for="cdProviderApiKey">API Key</label>
+                <div class="input-with-button">
+                  <input class="form-control form-control-lg" id="cdProviderApiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="current-password" required>
+                  <button type="button" class="input-icon" data-action="cd-toggle-key" aria-label="toggle api key"><i class="bi bi-eye"></i></button>
+                </div>
+              </div>
+              <!-- Gemini CLI OAuth section — apiFormat=gemini_cli_oauth 时显示替代 apiKey input。
+                   登录调 POST /api/gemini-oauth/login long-poll(浏览器登录 5min 内完成),
+                   状态从 GET /api/gemini-oauth/status 同步。 -->
+              <div class="mb-4" id="cdProviderOauthRow" hidden>
+                <label class="form-label" data-i18n="geminiOauth.title">Google OAuth Login</label>
+                <div id="cdOauthStatusBox">
+                  <div class="d-flex gap-2 mb-2">
+                    <button type="button" class="btn btn-primary" id="cdOauthLoginBtn" data-i18n="geminiOauth.loginBtn">Log in with Google in browser</button>
+                    <button type="button" class="btn btn-outline-secondary" id="cdOauthLogoutBtn" hidden data-i18n="geminiOauth.logoutBtn">Log out</button>
+                  </div>
+                  <div class="mb-2" id="cdOauthStatusText" data-i18n="geminiOauth.statusLoading">Loading...</div>
+                </div>
+              </div>
+              <div class="mb-4">
+                <label class="form-label required" for="cdProviderAuth" data-i18n="providersAdd.authScheme">Auth Scheme</label>
+                <input id="cdProviderAuth" name="authScheme" type="hidden" value="bearer">
+                <div class="auth-scheme-menu-wrap" id="cdProviderAuthControl">
+                  <button class="form-select form-select-lg auth-scheme-trigger" id="cdProviderAuthTrigger" type="button" data-action="cd-toggle-auth-scheme-menu" aria-haspopup="listbox" aria-expanded="false">
+                    <span>bearer</span>
+                    <i class="bi bi-chevron-down"></i>
+                  </button>
+                  <div class="auth-scheme-menu" id="cdProviderAuthMenu" role="listbox" aria-labelledby="cdProviderAuthTrigger">
+                    <button class="auth-scheme-option selected" type="button" role="option" data-action="cd-select-auth-scheme" data-value="bearer" aria-selected="true"><span>bearer</span><i class="bi bi-check2"></i></button>
+                    <button class="auth-scheme-option" type="button" role="option" data-action="cd-select-auth-scheme" data-value="x-api-key" aria-selected="false"><span>x-api-key</span></button>
+                    <button class="auth-scheme-option" type="button" role="option" data-action="cd-select-auth-scheme" data-value="none" aria-selected="false"><span>none</span></button>
+                  </div>
+                </div>
+              </div>
+              <details class="advanced-provider-options" open>
+                <summary><i class="bi bi-sliders"></i><span data-i18n="providersAdd.compatTitle">高级:第三方兼容接口</span><i class="bi bi-chevron-down compat-chevron"></i></summary>
+                <p data-i18n="providersAdd.compatHint">默认使用 Anthropic 兼容接口。OpenAI Chat 属于实验适配,建议确认工具调用可用后再用于 Claude 桌面版。</p>
+                <div class="format-choice" id="cdProviderFormatChoice" role="group" aria-label="API format">
+                  <button class="format-choice-button active" type="button" data-action="cd-select-api-format" data-cd-api-format="anthropic">
+                    <strong data-i18n="providersAdd.formatAnthropic">Anthropic 兼容</strong>
+                    <span data-i18n="providersAdd.formatAnthropicHint">推荐,稳定主流程</span>
+                  </button>
+                  <button class="format-choice-button" type="button" data-action="cd-select-api-format" data-cd-api-format="openai_chat">
+                    <strong data-i18n="providersAdd.formatOpenAI">OpenAI Chat 实验</strong>
+                    <span data-i18n="providersAdd.formatOpenAIHint">用于 new-api / CPA / OpenCode Go 等兼容端点</span>
+                  </button>
+                </div>
+              </details>
+              <!-- Grok Web section — apiFormat=grok_web 时显示替代 apiKey input。
+                   Plan A:只必填 sso JWT 一项,其他全部 optional / 后端自动生成。 -->
+              <div class="mb-4" id="cdProviderGrokWebRow" hidden>
+                <label class="form-label" data-i18n="grokWeb.title">Grok Web Cookie 鉴权</label>
+                <p class="field-hint" data-i18n="grokWeb.hint">浏览器登录 grok.com → F12 → Application → Cookies → 复制 <code>sso</code> 一个值即可,其他自动处理(x-statsig-id 每次动态生成、sso-rw 复用 sso、UA 默认)。</p>
+                <div class="mb-3">
+                  <label class="form-label small" for="cdGrokWebSso" data-i18n="grokWeb.ssoLabel">sso (JWT, 必填)</label>
+                  <input class="form-control" id="cdGrokWebSso" type="password" autocomplete="off" spellcheck="false">
+                </div>
+                <details class="mb-3">
+                  <summary class="small text-muted" data-i18n="grokWeb.advancedSummary" style="cursor:pointer;">高级选项(401 / CF challenge 时展开补充)</summary>
+                  <div class="mt-2 ps-2 border-start">
+                    <div class="mb-2">
+                      <label class="form-label small" for="cdGrokWebCookieString" data-i18n="grokWeb.cookieStringLabel">完整 Cookie 字符串(CF challenge 时必填)</label>
+                      <textarea class="form-control" id="cdGrokWebCookieString" rows="3" autocomplete="off" spellcheck="false" placeholder="__cf_bm=...; cf_clearance=...; mp_xxx_mixpanel=...; ..."></textarea>
+                      <p class="field-hint" data-i18n="grokWeb.cookieStringHint">浏览器 DevTools → Network → grok.com 任一请求 → Request Headers → 整行 Cookie value 复制粘贴(可带 "Cookie: " 前缀,自动 strip)。grok.com Cloudflare 401 "No credentials presented" 即缺这一段。对齐 chenyme/grok2api `proxy.clearance.cf_cookies`。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="cdGrokWebCfClearance" data-i18n="grokWeb.cfClearanceLabel">cf_clearance(可选,单 token)</label>
+                      <input class="form-control" id="cdGrokWebCfClearance" type="password" autocomplete="off" spellcheck="false">
+                      <p class="field-hint" data-i18n="grokWeb.cfClearanceHint">如已 paste 完整 Cookie 字符串无需填。单独填只发 `cf_clearance=` segment(可能不够);整段 paste 更稳。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="cdGrokWebSsoRw" data-i18n="grokWeb.ssoRwLabel">sso-rw(可选,默认复用 sso)</label>
+                      <input class="form-control" id="cdGrokWebSsoRw" type="password" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="cdGrokWebStatsigId" data-i18n="grokWeb.statsigIdLabel">x-statsig-id(可选 override,默认动态生成)</label>
+                      <input class="form-control" id="cdGrokWebStatsigId" type="password" autocomplete="off" spellcheck="false">
+                      <p class="field-hint" data-i18n="grokWeb.statsigIdHint">默认每次请求动态生成伪 Statsig blob,无需手动维护。仅高级用户精确控制 statsig 内容时填写。</p>
+                    </div>
+                    <div class="mb-2">
+                      <label class="form-label small" for="cdGrokWebUserAgent" data-i18n="grokWeb.userAgentLabel">User-Agent override(可选)</label>
+                      <input class="form-control" id="cdGrokWebUserAgent" type="text" autocomplete="off" spellcheck="false" placeholder="Mozilla/5.0 ...">
+                    </div>
+                  </div>
+                </details>
+                <p class="field-hint text-warning" data-i18n="grokWeb.tosWarning">⚠️ 反代 grok.com Web 端,grok TOS 灰色,仅限个人使用本机 SuperGrok 账号,不应作为对外服务发布。</p>
+              </div>
+              <div class="mb-4" id="cdProviderWebSearchRow" hidden>
+                <label class="form-label" data-i18n="providersAdd.webSearchEnabled">联网搜索</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="cdProviderWebSearchEnabled">
+                  <label class="form-check-label" for="cdProviderWebSearchEnabled" data-i18n="providersAdd.webSearchEnabledToggle">启用 web_search 工具</label>
+                </div>
+                <p class="field-hint" id="cdProviderWebSearchHint" data-i18n="providersAdd.webSearchEnabledHint.default">启用后代理在出站请求注入 web_search 工具,让模型联网搜索。计费 / 限制取决于 provider。</p>
+              </div>
+              <section class="provider-mapping-section">
+                <div class="section-title-row">
+                  <div>
+                    <h2 data-i18n="providersAdd.mappingTitle">模型映射</h2>
+                    <p data-i18n="providersAdd.mappingSubtitle">把 OpenAI 模型名（gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.2）映射到这个供应商真实支持的模型。未设置的模型自动使用 Default 映射。</p>
+                  </div>
+                  <button class="provider-mapping-fetch" type="button" data-action="cd-fetch-form-models"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="models.fetch">获取模型</span></button>
+                </div>
+                <div class="form-mapping-grid" id="cdProviderMappingStack"></div>
+                <div class="preset-options" id="cdProviderPresetOptions" hidden></div>
+                <p class="inline-status" id="cdProviderModelFetchResult"></p>
+                <div class="apply-explain">
+                  <i class="bi bi-info-circle"></i>
+                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex CLI 连接到本工具。之后你在 Codex CLI 里发消息，本工具会自动转发到你填写的 API 地址。</p>
+                </div>
+              </section>
+              <div class="button-row provider-form-actions">
+                <button class="btn btn-primary btn-lg" type="button" data-action="cd-apply-provider"><i class="bi bi-magic"></i><span data-i18n="claudeDesktopProvidersAdd.applyToDesktop">一键应用到 Claude 桌面版</span></button>
+                <button class="btn btn-outline-primary btn-lg" id="cdProviderSaveOnly" type="submit" data-i18n="common.saveOnly">仅保存</button>
+                <a class="btn btn-outline-primary btn-lg" href="#claude-desktop-providers" data-i18n="common.cancel">取消</a>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel preset-panel">
+            <h2 data-i18n="providersAdd.presets">快捷预设</h2>
+            <p class="preset-help" data-i18n="providersAdd.presetsHint">选择后会自动填入 API 地址和推荐模型，API Key 仍由你自己填写。</p>
+            <div id="cdPresetList" class="preset-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-claude-desktop-providers" data-page="claude-desktop-providers">
+        <div class="page-title with-action">
+          <div>
+            <h1 data-i18n="claudeDesktopProviders.title">Claude Desktop 提供商</h1>
+          </div>
+          <button class="btn btn-outline-danger btn-lg" type="button" data-action="claude-desktop-clear-current">
+            <i class="bi bi-arrow-counterclockwise"></i><span data-i18n="claudeDesktopProviders.clear">还原 Claude Desktop 配置</span>
+          </button>
+        </div>
+
+        <div class="switch-board">
+          <div class="provider-card-list" id="claudeDesktopProviderCards"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-claude-desktop" data-page="claude-desktop">
+        <div class="page-title title-with-back">
+          <a class="square-button" href="#dashboard" aria-label="back"><i class="bi bi-arrow-left"></i></a>
+          <div>
+            <h1 data-i18n="claudeDesktop.title">Claude Desktop</h1>
+            <p data-i18n="claudeDesktop.subtitle">把 Anthropic-compat 第三方 API 直连写入 Claude Desktop(不走 cas 转发)</p>
+          </div>
+        </div>
+
+        <div class="two-column desktop-layout">
+          <div>
+            <article class="panel desktop-card">
+              <h2 data-i18n="claudeDesktop.configTitle">Claude Desktop 配置</h2>
+              <div class="configured-row" id="claudeDesktopConfiguredRow">
+                <span class="circle-check"><i class="bi bi-dash-lg"></i></span>
+                <strong id="claudeDesktopConfiguredText" data-i18n="claudeDesktop.notConfigured">未配置</strong>
+              </div>
+              <div class="config-list" id="claudeDesktopConfigList"></div>
+
+              <div class="settings-row" style="margin-top: 12px;">
+                <label data-i18n="claudeDesktop.provider">使用预设</label>
+                <select id="claudeDesktopProviderSelect" class="form-select"></select>
+              </div>
+              <div class="settings-row">
+                <label data-i18n="claudeDesktop.apiKey">API Key</label>
+                <input type="password" id="claudeDesktopApiKeyInput" class="form-control" placeholder="sk-..." autocomplete="off" />
+              </div>
+
+              <div class="apply-explain desktop-explain">
+                <i class="bi bi-info-circle"></i>
+                <p data-i18n="claudeDesktop.explainText">本工具写入 Claude Desktop 的 inferenceGateway* 配置,让 Claude Desktop 直连第三方 Anthropic-compat 上游(`https://api.deepseek.com/anthropic` 等)。完成后即使关闭本工具,Claude Desktop 仍可继续使用。</p>
+              </div>
+              <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-claude-desktop">
+                <i class="bi bi-download"></i><span data-i18n="claudeDesktop.apply">一键应用</span>
+              </button>
+            </article>
+            <article class="panel details-panel">
+              <div class="panel-header">
+                <h2 data-i18n="claudeDesktop.details">当前 Claude Desktop 状态</h2>
+                <i class="bi bi-chevron-down"></i>
+              </div>
+              <pre class="code-block" id="claudeDesktopJson"></pre>
+            </article>
+            <button class="btn btn-outline-danger btn-lg w-100 danger-outline" type="button" data-action="clear-claude-desktop">
+              <i class="bi bi-arrow-counterclockwise"></i><span data-i18n="claudeDesktop.clear">还原 Claude Desktop 原配置</span>
+            </button>
+          </div>
+
+          <article class="panel guide-panel">
+            <h2 data-i18n="claudeDesktop.quickGuide">使用说明</h2>
+            <div class="mini-steps">
+              <div class="mini-step"><span>1</span><i class="bi bi-list-check"></i><strong data-i18n="claudeDesktop.step1Title">选择 Provider 预设</strong><p data-i18n="claudeDesktop.step1Text">7 个内置:DeepSeek / Kimi / Kimi Code / Xiaomi MiMo / 智谱 GLM / 阿里云百炼</p></div>
+              <div class="mini-step"><span>2</span><i class="bi bi-key"></i><strong data-i18n="claudeDesktop.step2Title">填 API Key</strong><p data-i18n="claudeDesktop.step2Text">在对应供应商控制台获取的 API Key</p></div>
+              <div class="mini-step"><span>3</span><i class="bi bi-download"></i><strong data-i18n="claudeDesktop.step3Title">一键应用</strong><p data-i18n="claudeDesktop.step3Text">写入 Claude Desktop 配置 → 重启 Claude Desktop 生效</p></div>
+            </div>
+            <p class="muted" style="margin-top:12px;font-size:0.85em;" data-i18n="claudeDesktop.upstreamCredit">本功能借鉴自 lonr-6/cc-desktop-switch (Apache-2)。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" id="page-proxy" data-page="proxy">
         <article class="panel proxy-control">
           <div class="proxy-running">
             <span class="pulse-dot"></span>
@@ -288,15 +602,13 @@
             <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">转发端口</label>
             <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
           </div>
-          <button class="btn btn-outline-secondary btn-lg" type="button" data-action="proxy-start"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
-          <button class="btn btn-danger btn-lg" type="button" data-action="proxy-stop"><i class="bi bi-stop-fill"></i><span data-i18n="proxy.stop">停止转发</span></button>
+          <button class="btn btn-success btn-lg" type="button" id="proxyToggleBtn" data-action="proxy-toggle"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
         </article>
 
         <article class="terminal-panel">
           <div class="terminal-toolbar">
+            <button class="btn btn-outline-light btn-sm" type="button" data-action="open-log-dir"><i class="bi bi-folder2-open"></i><span data-i18n="proxy.viewLog">查看日志</span></button>
             <button class="btn btn-outline-light btn-sm" type="button" data-action="clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
-            <button class="btn btn-outline-light btn-sm" type="button" data-action="run-diagnostics"><i class="bi bi-activity"></i><span data-i18n="diagnostics.run">运行诊断</span></button>
-            <button class="btn btn-outline-light btn-sm" type="button" data-action="export-diagnostics"><i class="bi bi-shield-lock"></i><span data-i18n="diagnostics.export">导出诊断包</span></button>
             <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="autoScroll" checked><span class="switch-ui"></span></label>
           </div>
           <div class="terminal-log" id="proxyLog"></div>
@@ -306,11 +618,6 @@
       </section>
 
       <section class="page" id="page-settings" data-page="settings">
-        <div class="page-title">
-          <h1 data-i18n="settings.title">设置</h1>
-          <p data-i18n="settings.subtitle">全局偏好和应用信息</p>
-        </div>
-
         <article class="panel settings-panel">
           <div class="settings-row">
             <strong data-i18n="settings.theme">主题</strong>
@@ -338,9 +645,33 @@
             <strong data-i18n="settings.adminPort">管理端口</strong>
             <input class="form-control form-control-lg" type="number" id="settingsAdminPort" value="18081">
           </div>
-          <div class="settings-row">
-            <strong data-i18n="settings.autoStart">开机自启</strong>
-            <label class="switch-label only-switch"><input type="checkbox" id="autoStart" checked><span class="switch-ui"></span></label>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.autoApplyOnStart">启动时自动应用配置</strong>
+            <div>
+              <label class="switch-label only-switch"><input type="checkbox" id="autoApplyOnStart" checked><span class="switch-ui"></span></label>
+              <p class="settings-note" data-i18n="settings.autoApplyOnStartHint">启动时自动应用当前提供商的 Codex 配置；如该提供商需要转发服务，会同时启动转发。关闭则需要手动点「应用配置」。</p>
+            </div>
+          </div>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.autoUnlockCodexPlugins">自动解锁 Codex Plugins</strong>
+            <div>
+              <label class="switch-label only-switch"><input type="checkbox" id="autoUnlockCodexPlugins"><span class="switch-ui"></span></label>
+              <p class="settings-note" data-i18n="settings.autoUnlockCodexPluginsHint">开启后，应用启动时会自动检测 Codex Desktop 并通过 CDP 注入脚本解锁 Plugins 选项卡。需要 Codex Desktop 以 --remote-debugging-port=9222 启动。</p>
+             <p class="settings-note" id="pluginUnlockRuntimeStatus" data-i18n="settings.pluginUnlockRuntimeStatus">运行时状态: 未检测</p>
+           </div>
+            <div class="settings-row">
+              <strong data-i18n="settings.autoWakeCodexPet">自动唤醒 Codex Pet</strong>
+              <label class="switch-label only-switch"><input type="checkbox" id="autoWakeCodexPet"><span class="switch-ui"></span></label>
+              <p class="settings-note" data-i18n="settings.autoWakeCodexPetHint">开启后，启动 Codex Desktop 时会自动唤醒宠物（修改 ~/.codex/.codex-global-state.json 中的 electron-avatar-overlay-open 为 true）。</p>
+            </div>
+          </div>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.restoreCodexOnExit">退出时还原 Codex 原配置</strong>
+            <div>
+              <label class="switch-label only-switch"><input type="checkbox" id="restoreCodexOnExit" checked><span class="switch-ui"></span></label>
+              <p class="settings-note" data-i18n="settings.restoreCodexOnExitHint">开启后，应用退出或下次启动时会自动把 ~/.codex/config.toml 与 auth.json 还原至 apply 之前的状态；保证不开应用时 Codex CLI 仍是你本人的原配置。</p>
+              <p class="settings-note" id="codexSnapshotStatus" data-i18n="settings.codexSnapshotStatusUnknown">正在读取快照状态…</p>
+            </div>
           </div>
           <div class="settings-row" hidden aria-hidden="true">
             <strong data-i18n="settings.exposeAllModels">Claude 模型菜单</strong>
@@ -351,40 +682,13 @@
             <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
           </div>
           <div class="settings-row settings-row-stack">
-            <div class="settings-label-with-switch">
-              <strong data-i18n="settings.upstreamProxy">上游代理</strong>
-              <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" id="settingsUpstreamProxyEnabled">
-              </div>
-            </div>
-            <div>
-              <div class="settings-actions">
-                <input class="form-control form-control-lg" type="text" id="settingsUpstreamProxy" placeholder="127.0.0.1:7890" style="flex:1 1 auto;">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="detect-proxy"><i class="bi bi-search"></i><span data-i18n="settings.detectProxy">自动检测</span></button>
-              </div>
-              <p class="settings-note" data-i18n="settings.upstreamProxyHint">用于访问上游 API 的 HTTP/SOCKS 代理。留空则使用系统环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY）。格式：host:port、http://host:port 或 socks5://host:port</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
             <strong data-i18n="settings.thirdPartyCompat">第三方兼容</strong>
             <div>
               <div class="settings-actions">
                 <button class="btn btn-outline-primary btn-sm" type="button" data-action="check-provider-compatibility"><i class="bi bi-patch-check"></i><span data-i18n="settings.checkCompatibility">检查兼容性</span></button>
               </div>
               <div class="compatibility-list" id="providerCompatibilityList"></div>
-              <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">Anthropic 兼容接口是稳定主线；OpenAI Chat、new-api、CPA、OpenCode Go 属于实验适配，工具调用需要单独验证。</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="diagnostics.title">诊断与支持</strong>
-            <div>
-              <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="run-diagnostics"><i class="bi bi-activity"></i><span data-i18n="diagnostics.run">运行诊断</span></button>
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="export-diagnostics"><i class="bi bi-shield-lock"></i><span data-i18n="diagnostics.export">导出诊断包</span></button>
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="copy-diagnostics"><i class="bi bi-clipboard"></i><span data-i18n="diagnostics.copy">复制诊断包</span></button>
-              </div>
-              <div class="compatibility-list" id="diagnosticsResult"></div>
-              <p class="settings-note" data-i18n="diagnostics.hint">诊断包会自动脱敏 API Key、gateway key、Authorization 和 token，可用于提交 issue。</p>
+              <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">一键检查所有 provider 实际可用性。自定义 provider 可选择 OpenAI Chat 本地转换、原生 Responses 透传、Anthropic Messages 本地转换等协议路由。</p>
             </div>
           </div>
           <div class="settings-row settings-row-stack">
@@ -400,43 +704,142 @@
               <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
             </div>
           </div>
-          <div class="settings-row settings-row-stack" id="ccSwitchImportSection">
-            <strong data-i18n="settings.ccswitchImport">CC-Switch 导入</strong>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.feedback">反馈与建议</strong>
             <div>
               <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="detect-ccswitch"><i class="bi bi-search"></i><span data-i18n="settings.ccswitchDetect">检测配置</span></button>
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="import-ccswitch"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="settings.ccswitchImportButton">导入兼容项</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="settings.feedbackOpen">打开反馈窗口</span></button>
               </div>
-              <div class="ccswitch-import-list" id="ccSwitchImportList"></div>
-              <p class="settings-note" data-i18n="settings.ccswitchImportHint">只导入 Anthropic 兼容配置；OpenAI 格式会显示为暂不导入，避免转换风险。</p>
+              <p class="settings-note" data-i18n="settings.feedbackHint">遇到问题或想提建议?支持文本 + 截图 + 日志,匿名提交,无需登录。诊断信息(应用版本 / OS / 当前 provider 名称 / 最近 200 行代理日志)默认附上,不含 API Key 等敏感数据。</p>
             </div>
           </div>
         </article>
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.24</strong></div>
+          <div class="about-row"><span data-i18n="settings.version">版本</span><strong id="appVersion">...</strong></div>
           <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
-          <div class="about-row"><span>GitHub</span><a href="https://github.com/lonr-6/cc-desktop-switch" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
+          <div class="about-row"><span>GitHub</span><a href="https://github.com/Cmochance/codex-app-transfer" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
         </article>
       </section>
 
       <section class="page" id="page-guide" data-page="guide">
-        <div class="guide-hero">
-          <img src="assets/app-icon.png" alt="CC Desktop Switch icon">
+        <header class="guide-hero">
+          <img src="assets/app-icon.png" alt="">
           <div>
             <h1 data-i18n="guide.title">使用引导</h1>
-            <p data-i18n="guide.subtitle">添加供应商后，按下面 3 步完成接入。</p>
+            <p data-i18n="guide.subtitle">让 OpenAI Codex CLI 接入 Kimi、DeepSeek、智谱 GLM、阿里云百炼、Xiaomi MiMo 等供应商,无需改动 CLI 本身。</p>
           </div>
-        </div>
-        <div class="timeline">
-          <article class="timeline-card"><span>1</span><i class="bi bi-plug"></i><div><h2 data-i18n="guide.step1">添加提供商</h2><p data-i18n="guide.step1Text">选择预设，填入 API Key，必要时调整模型映射。</p></div></article>
-          <article class="timeline-card"><span>2</span><i class="bi bi-magic"></i><div><h2 data-i18n="guide.step2">一键应用</h2><p data-i18n="guide.step2Text">点击“一键应用到 Claude 桌面版”，本工具会自动写入桌面版需要的连接信息。</p></div></article>
-          <article class="timeline-card"><span>3</span><i class="bi bi-arrow-repeat"></i><div><h2 data-i18n="guide.step3">重启 Claude 桌面版</h2><p data-i18n="guide.step3Text">重启后正常提问，消息会通过本工具转发到当前供应商；使用时请保持本工具后台运行。</p></div></article>
-        </div>
-        <a class="btn btn-primary btn-lg guide-start" href="#providers/add"><i class="bi bi-arrow-right-circle"></i><span data-i18n="guide.start">开始使用</span></a>
+        </header>
+
+        <section class="guide-section">
+          <h2 class="guide-section-title" data-i18n="guide.prereqTitle">开始之前</h2>
+          <div class="guide-prereq">
+            <i class="bi bi-info-circle"></i>
+            <div>
+              <p data-i18n="guide.prereqBody">需要已安装 <strong>OpenAI Codex CLI 0.126+</strong>。终端跑 <code>codex --version</code> 看版本号;没装的话先去 <a href="https://github.com/openai/codex" target="_blank" rel="noreferrer">github.com/openai/codex</a>。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="guide-section">
+          <h2 class="guide-section-title" data-i18n="guide.quickStartTitle">快速开始</h2>
+          <div class="timeline">
+            <article class="timeline-card">
+              <span>1</span><i class="bi bi-plug"></i>
+              <div>
+                <h2 data-i18n="guide.step1">添加提供商</h2>
+                <p data-i18n="guide.step1Text">在「提供商」页右上角「+」选预设(Kimi / Kimi Code / DeepSeek / 智谱 GLM / 阿里云百炼 / Xiaomi MiMo),粘贴 API Key。模型映射按官方文档已预填。</p>
+                <a class="guide-action-link" href="#providers/add" data-i18n="guide.step1Link">去添加 →</a>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>2</span><i class="bi bi-check2-square"></i>
+              <div>
+                <h2 data-i18n="guide.step2">设为默认</h2>
+                <p data-i18n="guide.step2Text">「提供商」列表点你要用的那个,确认带上「默认」标记。可以同时保存多个,以后随时切。</p>
+                <a class="guide-action-link" href="#providers" data-i18n="guide.step2Link">去管理 →</a>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>3</span><i class="bi bi-magic"></i>
+              <div>
+                <h2 data-i18n="guide.step3">应用配置(自动)</h2>
+                <p data-i18n="guide.step3Text">应用启动时自动写入 <code>~/.codex/config.toml</code> 与 <code>auth.json</code>,按需启动本地转发服务。<strong>第一次会先快照备份你原来的 ~/.codex 配置</strong>,退出时按 key 智能合并还原。</p>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>4</span><i class="bi bi-terminal"></i>
+              <div>
+                <h2 data-i18n="guide.step4">在终端跑 codex</h2>
+                <p data-i18n="guide.step4Text"><strong>打开新终端</strong>,直接跑 <code>codex</code>。模型选单会显示当前 provider 的映射(Sonnet / Haiku / Opus 对应真实模型)。</p>
+              </div>
+            </article>
+            <article class="timeline-card">
+              <span>5</span><i class="bi bi-arrow-left-right"></i>
+              <div>
+                <h2 data-i18n="guide.step5">切换 / 退出</h2>
+                <p data-i18n="guide.step5Text">右键系统托盘图标可以一键切换 provider。退出应用时,<code>~/.codex/</code> 自动回到你原来的配置 —— 不开应用 = 用你自己的原配置。</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="guide-section">
+          <h2 class="guide-section-title" data-i18n="guide.advancedTitle">进阶用法</h2>
+          <div class="guide-card-grid">
+            <a class="guide-card" href="#providers">
+              <i class="bi bi-lightning-charge"></i>
+              <h3 data-i18n="guide.advThinkingTitle">DeepSeek 思维模式</h3>
+              <p data-i18n="guide.advThinkingText">编辑 DeepSeek provider 时打开「Max 思维」开关,自动按官方 chat/completions 思维协议发送 reasoning_effort + thinking 字段。</p>
+            </a>
+            <a class="guide-card" href="#settings">
+              <i class="bi bi-patch-check"></i>
+              <h3 data-i18n="guide.advCompatTitle">兼容性测试</h3>
+              <p data-i18n="guide.advCompatText">Settings 页「检查兼容性」按钮一键测试所有 provider 的实际响应,标记哪些直连、哪些需要转发、哪些有问题。</p>
+            </a>
+            <a class="guide-card" href="#settings">
+              <i class="bi bi-shield-check"></i>
+              <h3 data-i18n="guide.advBackupTitle">配置备份</h3>
+              <p data-i18n="guide.advBackupText">Settings 页可立即备份当前配置,或导出/导入完整 JSON。备份包含 API Key,只在可信设备上保存。</p>
+            </a>
+            <a class="guide-card" href="#dashboard">
+              <i class="bi bi-arrow-counterclockwise"></i>
+              <h3 data-i18n="guide.advRestoreTitle">还原 Codex 原配置</h3>
+              <p data-i18n="guide.advRestoreText">Dashboard 顶栏红色按钮按 key 智能合并 —— 仅回滚我们写过的 auth_mode / OPENAI_API_KEY / openai_base_url,你的 model_reasoning_effort 等其他配置原样保留。</p>
+            </a>
+          </div>
+        </section>
+
+        <section class="guide-section">
+          <h2 class="guide-section-title" data-i18n="guide.troubleshootTitle">遇到问题</h2>
+          <div class="guide-card-grid">
+            <div class="guide-card guide-card-static">
+              <i class="bi bi-chat-dots"></i>
+              <h3 data-i18n="guide.tsFeedbackTitle">提交反馈</h3>
+              <p data-i18n="guide.tsFeedbackText">Dashboard 顶栏「反馈」按钮匿名提交问题描述 + 截图 + 日志,默认附诊断信息(应用版本 / OS / 当前 provider 名,<strong>不含 API Key</strong>)。无需登录。</p>
+            </div>
+            <div class="guide-card guide-card-static">
+              <i class="bi bi-journal-text"></i>
+              <h3 data-i18n="guide.tsLogsTitle">查看日志</h3>
+              <p data-i18n="guide.tsLogsText">Settings 页底部「查看日志」按钮直接打开 <code>~/.codex-app-transfer/logs/</code>。或在「转发」页内置实时日志面板,2 秒自动刷新。</p>
+            </div>
+            <div class="guide-card guide-card-static">
+              <i class="bi bi-arrow-clockwise"></i>
+              <h3 data-i18n="guide.tsRestartTitle">模型菜单不刷新?</h3>
+              <p data-i18n="guide.tsRestartText">Codex CLI 只在启动时读 <code>~/.codex/</code> 配置。切换 provider 后必须 <strong>关闭并重新打开终端</strong>,新终端才会用新映射。</p>
+            </div>
+            <div class="guide-card guide-card-static">
+              <i class="bi bi-speedometer2"></i>
+              <h3 data-i18n="guide.tsSpeedTitle">测速 / 兼容性失败?</h3>
+              <p data-i18n="guide.tsSpeedText">如果测速失败,先确认 baseUrl 与 API Key 对得上。v2.x 起所有 provider 的协议类型由系统统一管理:内置预设按 baseUrl 自动命中,自定义 provider 默认 <strong>chat/completions</strong>;仅当上游明确实现 OpenAI Responses API 时才选 Responses,Claude / Anthropic 上游请选择 Anthropic Messages 本地转换。</p>
+            </div>
+          </div>
+        </section>
+
+        <a class="btn btn-primary btn-lg guide-start" href="#providers/add"><i class="bi bi-arrow-right-circle"></i><span data-i18n="guide.start">添加你的第一个提供商</span></a>
       </section>
     </main>
 
@@ -460,14 +863,58 @@
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content restart-modal-content">
           <div class="modal-header">
-            <h5 class="modal-title" data-i18n="restartReminder.title">请重启 Claude 桌面版</h5>
+            <h5 class="modal-title" data-i18n="restartReminder.title">是否立即重启 Codex App？</h5>
           </div>
           <div class="modal-body">
-            <p data-i18n="restartReminder.body">已切换供应商并同步模型列表。请关闭并重新打开 Claude 桌面版，否则主面板可能还在使用旧模型。</p>
+            <p data-i18n="restartReminder.body">已切换供应商并同步模型列表，需要重启 Codex App 才能生效。</p>
           </div>
           <div class="modal-footer restart-modal-footer">
-            <label class="restart-reminder-check"><input type="checkbox" id="restartReminderDontShow"><span data-i18n="restartReminder.dontShow">不再提醒</span></label>
-            <button type="button" class="btn btn-primary" id="restartReminderAck" data-i18n="restartReminder.ack">我已知晓</button>
+            <button type="button" class="btn btn-outline-primary restart-modal-later" id="restartReminderLater" data-i18n="restartReminder.later">取消，稍后重启</button>
+            <button type="button" class="btn btn-primary restart-modal-now" id="restartReminderNow" data-i18n="restartReminder.now">立即重启</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="feedbackModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" data-i18n="feedback.title">反馈与建议</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p class="settings-note" data-i18n="feedback.intro">欢迎反馈使用问题或改进建议。提交内容会发送到开发者维护的私有存储,不会公开。</p>
+            <div class="form-group">
+              <label for="feedbackTitle" data-i18n="feedback.titleLabel">标题(选填)</label>
+              <input class="form-control" type="text" id="feedbackTitle" maxlength="100" data-i18n-attr="placeholder|feedback.titlePlaceholder" placeholder="一句话概括问题">
+            </div>
+            <div class="form-group">
+              <label for="feedbackContactEmail" data-i18n="feedback.contactEmailLabel">联系邮箱(选填)</label>
+              <input class="form-control" type="email" id="feedbackContactEmail" maxlength="200" data-i18n-attr="placeholder|feedback.contactEmailPlaceholder" placeholder="name@example.com">
+              <p class="settings-note" data-i18n="feedback.contactEmailHint">选填。填写后作者可通过该邮箱联系你反馈处理进展。</p>
+            </div>
+            <div class="form-group">
+              <label for="feedbackBody" data-i18n="feedback.bodyLabel">详细描述 *</label>
+              <textarea class="form-control" id="feedbackBody" rows="6" maxlength="10000" data-i18n-attr="placeholder|feedback.bodyPlaceholder" placeholder="请尽量描述清楚:发生了什么,你期望的是什么,如何复现"></textarea>
+            </div>
+            <div class="form-group">
+              <label data-i18n="feedback.attachmentsLabel">附件(选填,可多个,单文件最大 5MB)</label>
+              <div class="feedback-dropzone" id="feedbackDropzone">
+                <input type="file" id="feedbackFiles" multiple accept="image/*,.log,.txt,.json" hidden>
+                <p class="feedback-dropzone-hint" data-i18n="feedback.attachmentsHint">点击选择文件 / 直接拖拽到此处 / Cmd+V 粘贴截图</p>
+                <ul class="feedback-attachment-list" id="feedbackAttachmentList"></ul>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="switch-label"><input type="checkbox" id="feedbackIncludeDiagnostics" checked><span class="switch-ui"></span><strong data-i18n="feedback.includeDiagnostics">附加诊断信息(默认开启,推荐)</strong></label>
+              <p class="settings-note" data-i18n="feedback.includeDiagnosticsHint">应用版本 / OS / 当前 provider 名称 / 最近 200 行代理日志。**不含 API Key、provider URL 等敏感数据**。</p>
+            </div>
+            <p class="settings-note feedback-warning" data-i18n="feedback.privacyWarning">⚠ 截图请检查是否含 API Key、个人信息等敏感内容。</p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="common.cancel">取消</button>
+            <button type="button" class="btn btn-primary" id="feedbackSubmitBtn" data-i18n="feedback.submit">提交反馈</button>
           </div>
         </div>
       </div>
@@ -479,7 +926,7 @@
       </div>
     </div>
 
-    <script src="vendor/bootstrap/bootstrap.bundle.min.js"></script>
+    <script src="vendor/bootstrap@5.3.3/bootstrap.bundle.min.js"></script>
     <script src="js/api.js"></script>
     <script src="js/i18n.js"></script>
     <script src="js/app.js"></script>

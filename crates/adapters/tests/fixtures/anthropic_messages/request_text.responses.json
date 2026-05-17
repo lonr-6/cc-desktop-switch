@@ -1,0 +1,18 @@
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "instructions": "You are concise.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Say hello."
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 256,
+  "stream": true
+}
