@@ -1,11 +1,19 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
+chcp 65001 >nul
 title CC Desktop Switch
 echo ========================================
-echo    CC Desktop Switch v1.0.17
+echo    CC Desktop Switch v1.0.24
 echo    正在启动管理后台...
 echo ========================================
 
 cd /d "%~dp0"
+
+if not defined CCDS_CONFIG_DIR (
+    set "CCDS_CONFIG_DIR=%~dp0.tmp\dev-config"
+    echo [信息] 开发启动默认使用独立配置目录:
+    echo        !CCDS_CONFIG_DIR!
+)
 
 REM 检查 Python
 python --version >nul 2>&1

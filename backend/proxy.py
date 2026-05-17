@@ -406,6 +406,15 @@ def _proxy_log_value(proxy: str) -> str:
     return _redact_sensitive_text(proxy, 300)
 
 
+def _connection_error_message(proxy: Optional[str], message: str) -> str:
+    if proxy:
+        return (
+            f"通过上游代理 {_proxy_log_value(proxy)} 连接上游 API 失败: {message}。"
+            "请确认代理地址可用，或先关闭“上游代理”。"
+        )
+    return f"连接上游 API 失败: {message}。请检查网络连接和 API 地址是否正确。"
+
+
 def _stream_content_type_compatible(response: httpx.Response) -> bool:
     content_type = _content_type(response)
     if not content_type:
@@ -590,11 +599,12 @@ async def forward_request(
                     "message": _socks_dependency_error_message(),
                 }
             }
+        proxy = _get_http_proxy()
         log_buffer.add("ERROR", f"请求失败: {message}")
         return {
             "error": {
                 "type": "connection_error",
-                "message": f"连接上游 API 失败: {message}。请检查网络连接和 API 地址是否正确。",
+                "message": _connection_error_message(proxy, message),
             }
         }
 
@@ -764,12 +774,13 @@ async def forward_request_stream(
             }
             yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
             return
+        proxy = _get_http_proxy()
         log_buffer.add("ERROR", f"流式请求失败: {message}")
         error_event = {
             "type": "error",
             "error": {
                 "type": "connection_error",
-                "message": f"连接上游 API 失败: {message}。请检查网络连接和 API 地址是否正确。",
+                "message": _connection_error_message(proxy, message),
             },
         }
         yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"

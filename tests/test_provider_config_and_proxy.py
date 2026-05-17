@@ -1,6 +1,8 @@
 import copy
 import asyncio
+import argparse
 import base64
+import importlib
 import json
 import os
 import re
@@ -32,6 +34,7 @@ from main import (
     request_existing_instance_activate,
     run_browser_mode,
 )
+import main as app_main
 from backend import config as cfg
 from backend import ccswitch_import
 from backend import main as backend_main
@@ -177,6 +180,22 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(first["id"], "same")
         self.assertNotEqual(second["id"], "same")
         self.assertEqual(len({p["id"] for p in cfg.get_providers()}), 2)
+
+    def test_config_dir_can_be_overridden_by_env(self):
+        override_dir = os.path.join(self.temp_dir.name, "nested", "..", "override-config")
+
+        with patch.dict(os.environ, {"CCDS_CONFIG_DIR": override_dir}, clear=False):
+            importlib.reload(cfg)
+
+        expected_dir = os.path.abspath(os.path.join(self.temp_dir.name, "override-config"))
+        self.assertEqual(cfg.CONFIG_DIR, expected_dir)
+        self.assertEqual(cfg.CONFIG_FILE, os.path.join(expected_dir, "config.json"))
+        self.assertEqual(cfg.BACKUP_DIR, os.path.join(expected_dir, "backups"))
+
+        cfg.CONFIG_DIR = self.temp_dir.name
+        cfg.CONFIG_FILE = os.path.join(self.temp_dir.name, "config.json")
+        cfg.BACKUP_DIR = os.path.join(self.temp_dir.name, "backups")
+        cfg.save_config(copy.deepcopy(cfg.DEFAULT_CONFIG))
 
     def test_builtin_presets_include_expected_provider_urls(self):
         presets = {preset["id"]: preset for preset in cfg.get_presets()}
@@ -2781,6 +2800,26 @@ class SingleInstanceStartupTests(unittest.TestCase):
         self.assertNotIn(admin_ui_url(18081), printed)
         self.assertNotIn(get_admin_token(), printed)
 
+    def test_main_reports_existing_instance_activation_in_console(self):
+        messages = []
+
+        def fake_safe_print(message):
+            messages.append(str(message))
+
+        with patch("main.parse_args", return_value=argparse.Namespace(browser=False, server_only=False, port=None)):
+            with patch("main.cfg.ensure_config_dir"):
+                with patch("main.cfg.get_settings", return_value={"adminPort": 18081, "proxyPort": 18080, "autoStart": False}):
+                    with patch("main.acquire_single_instance_lock", return_value=False):
+                        with patch("main.request_existing_instance_activate", return_value=True):
+                            with patch("main.safe_print", fake_safe_print):
+                                with patch("main.show_message_box") as message_box:
+                                    app_main.main()
+
+        printed = "\n".join(messages)
+        self.assertIn("已经在运行，正在尝试唤起现有窗口", printed)
+        self.assertIn("已唤起现有实例", printed)
+        message_box.assert_not_called()
+
 
 class ProxyConversionTests(unittest.TestCase):
     def test_build_upstream_url_accepts_base_url_or_full_endpoint(self):
@@ -3236,6 +3275,45 @@ class ProxyConversionTests(unittest.TestCase):
 
         self.assertEqual(result["error"]["type"], "socks_proxy_dependency_missing")
         self.assertIn("SOCKS", result["error"]["message"])
+
+    def test_connect_error_mentions_configured_upstream_proxy(self):
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, *args, **kwargs):
+                raise httpx.ConnectError("All connection attempts failed")
+
+        provider = {
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "provider-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        }
+        body = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 8,
+        }
+
+        with patch("backend.proxy.get_settings", return_value={
+            "upstreamProxyEnabled": True,
+            "upstreamProxy": "socks5://proxy-user:proxy-pass@127.0.0.1:1080",
+        }):
+            with patch("backend.proxy.httpx.AsyncClient", FakeClient):
+                result = asyncio.run(forward_request(body, provider, "req-connect-proxy"))
+
+        self.assertEqual(result["error"]["type"], "connection_error")
+        self.assertIn("通过上游代理", result["error"]["message"])
+        self.assertIn("127.0.0.1:1080", result["error"]["message"])
+        self.assertNotIn("proxy-pass", result["error"]["message"])
 
     def test_socks_proxy_dependency_error_streams_as_error_event(self):
         class FakeClient:
