@@ -62,7 +62,7 @@ def load_config() -> dict:
     if not os.path.exists(CONFIG_FILE):
         return _config_with_legacy_model_aliases(copy.deepcopy(DEFAULT_CONFIG))
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             raw = json.load(f)
     except (json.JSONDecodeError, IOError):
         return _config_with_legacy_model_aliases(copy.deepcopy(DEFAULT_CONFIG))

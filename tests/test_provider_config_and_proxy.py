@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sqlite3
+import socket
 import subprocess
 import tempfile
 import time
@@ -131,6 +132,17 @@ class ProviderConfigTests(unittest.TestCase):
         })
 
         self.assertEqual(updated["apiKey"], "new-key")
+
+    def test_load_config_accepts_utf8_bom(self):
+        config = copy.deepcopy(cfg.DEFAULT_CONFIG)
+        config["gatewayApiKey"] = "ccds_gateway_secret123456"
+
+        with open(cfg.CONFIG_FILE, "w", encoding="utf-8-sig") as handle:
+            json.dump(config, handle, ensure_ascii=False, indent=2)
+
+        loaded = cfg.load_config()
+
+        self.assertEqual(loaded["gatewayApiKey"], "ccds_gateway_secret123456")
 
     def test_backup_export_and_import_config(self):
         provider = cfg.add_provider({
@@ -1948,6 +1960,10 @@ class AdminApiTests(unittest.TestCase):
     def test_diagnostics_export_redacts_socks_proxy_credentials(self):
         log_buffer.clear()
         log_buffer.add("INFO", "使用上游代理: socks5://proxy-user:proxy-pass@127.0.0.1:1080")
+        cfg.update_settings({
+            "upstreamProxyEnabled": True,
+            "upstreamProxy": "socks5://proxy-user:proxy-pass@127.0.0.1:1080",
+        })
 
         allowed = self.client.post("/api/diagnostics/export", headers=admin_headers())
         payload = allowed.json()["diagnostics"]
@@ -1957,6 +1973,8 @@ class AdminApiTests(unittest.TestCase):
         self.assertNotIn("proxy-user", serialized)
         self.assertNotIn("proxy-pass", serialized)
         self.assertIn("socks5://******:******@127.0.0.1:1080", serialized)
+        self.assertEqual(payload["settings"]["upstreamProxy"]["host"], "127.0.0.1")
+        self.assertEqual(payload["settings"]["upstreamProxy"]["port"], 1080)
 
     def test_diagnostics_check_flags_recent_non_json_upstream_response(self):
         provider = cfg.add_provider({
@@ -1983,6 +2001,31 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(check.status_code, 200)
         self.assertFalse(payload["ok"])
         self.assertIn("upstream_response", codes)
+
+    def test_diagnostics_check_flags_unreachable_local_upstream_proxy(self):
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        cfg.update_settings({
+            "upstreamProxyEnabled": True,
+            "upstreamProxy": f"socks5://proxy-user:proxy-pass@127.0.0.1:{port}",
+        })
+
+        check = self.client.post("/api/diagnostics/check", headers=admin_headers())
+        payload = check.json()
+        serialized = json.dumps(payload, ensure_ascii=False)
+        proxy_check = next(
+            item for item in payload["checks"]
+            if item["code"] == "upstream_proxy_unreachable"
+        )
+
+        self.assertEqual(check.status_code, 200)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(proxy_check["host"], "127.0.0.1")
+        self.assertEqual(proxy_check["port"], port)
+        self.assertNotIn("proxy-user", serialized)
+        self.assertNotIn("proxy-pass", serialized)
 
     def test_diagnostics_check_flags_missing_claude_code_helper(self):
         provider = cfg.add_provider({
