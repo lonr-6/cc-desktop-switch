@@ -1,5 +1,6 @@
 import copy
 import asyncio
+import argparse
 import base64
 import importlib
 import json
@@ -33,6 +34,7 @@ from main import (
     request_existing_instance_activate,
     run_browser_mode,
 )
+import main as app_main
 from backend import config as cfg
 from backend import ccswitch_import
 from backend import main as backend_main
@@ -2725,6 +2727,26 @@ class SingleInstanceStartupTests(unittest.TestCase):
         self.assertIn(admin_public_url(18081), printed)
         self.assertNotIn(admin_ui_url(18081), printed)
         self.assertNotIn(get_admin_token(), printed)
+
+    def test_main_reports_existing_instance_activation_in_console(self):
+        messages = []
+
+        def fake_safe_print(message):
+            messages.append(str(message))
+
+        with patch("main.parse_args", return_value=argparse.Namespace(browser=False, server_only=False, port=None)):
+            with patch("main.cfg.ensure_config_dir"):
+                with patch("main.cfg.get_settings", return_value={"adminPort": 18081, "proxyPort": 18080, "autoStart": False}):
+                    with patch("main.acquire_single_instance_lock", return_value=False):
+                        with patch("main.request_existing_instance_activate", return_value=True):
+                            with patch("main.safe_print", fake_safe_print):
+                                with patch("main.show_message_box") as message_box:
+                                    app_main.main()
+
+        printed = "\n".join(messages)
+        self.assertIn("已经在运行，正在尝试唤起现有窗口", printed)
+        self.assertIn("已唤起现有实例", printed)
+        message_box.assert_not_called()
 
 
 class ProxyConversionTests(unittest.TestCase):

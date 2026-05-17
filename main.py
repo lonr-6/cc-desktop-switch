@@ -720,7 +720,11 @@ def main():
     auto_start_proxy = settings.get("autoStart", False)
 
     if not acquire_single_instance_lock():
-        if not request_existing_instance_activate(admin_port):
+        safe_print("CC Desktop Switch 已经在运行，正在尝试唤起现有窗口...")
+        if request_existing_instance_activate(admin_port):
+            safe_print("已唤起现有实例；请查看任务栏或系统托盘。")
+        else:
+            safe_print("未能唤起现有实例；请从任务栏或系统托盘打开已有窗口。")
             show_message_box(
                 APP_NAME,
                 "CC Desktop Switch 已经在运行。\n\n请从任务栏或系统托盘打开已有窗口。",
