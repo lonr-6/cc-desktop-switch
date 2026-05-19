@@ -19,10 +19,10 @@ help:
 mac-app:
 	CARGO_TARGET_DIR=target cargo tauri build --bundles app
 	mkdir -p dist/mac
-	rm -rf "dist/mac/Codex App Transfer.app"
-	cp -R "src-tauri/target/release/bundle/macos/Codex App Transfer.app" "dist/mac/Codex App Transfer.app"
+	rm -rf "dist/mac/CC Desktop Switch.app" "dist/mac/Codex App Transfer.app"
+	cp -R "src-tauri/target/release/bundle/macos/CC Desktop Switch.app" "dist/mac/CC Desktop Switch.app"
 	@echo ""
-	@echo "✓ Built: dist/mac/Codex App Transfer.app"
+	@echo "✓ Built: dist/mac/CC Desktop Switch.app"
 
 clean:
 	rm -rf build dist release .release-signing .tmp

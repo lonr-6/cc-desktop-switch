@@ -23,6 +23,12 @@ axum = { version = "0.8", features = ["tokio"] }
 tokio = { version = "1", features = ["sync", "rt", "net", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
+# 结构化日志(proxy 路径用 tracing::debug! / warn!,跟 src-tauri 主 binary 的
+# tracing-subscriber 一起走)
+tracing = "0.1"
+# 共用 `~/.codex-app-transfer/logs/` 目录的解析(claude-desktop-proxy-YYYY-MM-DD.log
+# 跟 Codex 端的 proxy-…log 同 parent),复用 registry 的 config_dir()
+codex-app-transfer-registry = { path = "../registry" }
 
 [dev-dependencies]
 tempfile = "3"

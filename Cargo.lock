@@ -723,6 +723,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "codex-app-transfer-registry",
  "dirs 5.0.1",
  "futures-util",
  "indexmap 2.14.0",
@@ -733,6 +734,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

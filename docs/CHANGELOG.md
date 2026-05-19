@@ -1,6 +1,10 @@
 # Changelog
 
-逐版本要点。详细变更见 [GitHub Releases](https://github.com/Cmochance/codex-app-transfer/releases) 与 `docs/release-notes/v*.md`。
+逐版本要点。本仓库自 v2 起承接姊妹仓库 `Cmochance/codex-app-transfer` 的 Rust 重写脚手架,把 Codex CLI 网关能力整合进 `cc-desktop-switch`(详见 README 顶部"项目身份与沿革")。
+
+- **当前仓库的 release(v2.x 整合后)**:[Cmochance/cc-desktop-switch/releases](https://github.com/Cmochance/cc-desktop-switch/releases)
+- **姊妹仓库 codex-app-transfer 的历史 release(v2.1.x 及更早,作为脚手架来源)**:[Cmochance/codex-app-transfer/releases](https://github.com/Cmochance/codex-app-transfer/releases)
+- **逐版本 release notes**:`docs/release-notes/v*.md`
 
 ## Unreleased — PR #153 draft
 

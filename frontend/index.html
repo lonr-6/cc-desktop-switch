@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Codex App Transfer</title>
+    <title>CC Desktop Switch</title>
     <!--
       M3 followup:消除 HTML 中文 fallback 在 EN 用户首屏的单帧闪烁。
 
@@ -30,8 +30,8 @@
         <button class="btn btn-outline-primary btn-sm dashboard-feedback-button" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="dashboard.feedback">反馈</span></button>
       </div>
       <nav class="route-tabs" aria-label="Primary navigation">
-        <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Providers"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
-        <a href="#claude-desktop-providers" class="route-tab" data-nav="claude-desktop-providers" title="Claude Desktop Providers"><i class="bi bi-chat-square-quote"></i><span data-i18n="nav.claudeDesktopProviders">Claude Desktop</span></a>
+        <a href="#claude-desktop-providers" class="route-tab" data-nav="claude-desktop-providers" title="Claude Desktop"><img class="route-tab-logo" src="assets/icons/claude.png" alt=""><span data-i18n="nav.claudeDesktopProviders">Claude Desktop</span></a>
+        <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Codex"><img class="route-tab-logo" src="assets/icons/codex.png" alt=""><span data-i18n="nav.dashboard">Codex</span></a>
         <a href="#proxy" class="route-tab" data-nav="proxy" title="Forwarding"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">转发</span></a>
         <a href="#claude-desktop" class="route-tab" data-nav="claude-desktop" title="Claude Desktop 详情"><i class="bi bi-sliders"></i><span data-i18n="nav.claudeDesktop">配置详情</span></a>
         <a href="#settings" class="route-tab" data-nav="settings" title="Settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
@@ -251,7 +251,7 @@
                 <p class="inline-status" id="providerModelFetchResult"></p>
                 <div class="apply-explain">
                   <i class="bi bi-info-circle"></i>
-                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex CLI 连接到本工具。之后你在 Codex CLI 里发消息，本工具会自动转发到你填写的 API 地址。</p>
+                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex App 连接到本工具。之后你在 Codex App 里发消息，本工具会自动转发到你填写的 API 地址。</p>
                 </div>
               </section>
               <div class="button-row provider-form-actions">
@@ -285,7 +285,7 @@
         <article class="panel model-menu-mode-panel" hidden aria-hidden="true">
           <div>
             <h2 data-i18n="providers.modelMenuTitle">Claude 模型菜单</h2>
-            <p id="modelMenuModeHint" data-i18n="providers.modelMenuSingleHint">当前只把默认提供商的模型显示到 Codex CLI。</p>
+            <p id="modelMenuModeHint" data-i18n="providers.modelMenuSingleHint">当前只把默认提供商的模型显示到 Codex App。</p>
           </div>
           <button class="btn btn-outline-primary btn-sm" id="modelMenuModeToggle" type="button" data-action="toggle-model-menu-mode">
             <i class="bi bi-list-stars"></i><span data-i18n="providers.showAllModels">显示全部模型</span>
@@ -309,15 +309,15 @@
         <div class="page-title title-with-back">
           <a class="square-button" href="#dashboard" aria-label="back"><i class="bi bi-arrow-left"></i></a>
           <div>
-            <h1 data-i18n="desktop.title">Codex CLI</h1>
-            <p data-i18n="desktop.subtitle">一键让 Codex CLI 使用当前供应商</p>
+            <h1 data-i18n="desktop.title">Codex App</h1>
+            <p data-i18n="desktop.subtitle">一键让 Codex App 使用当前供应商</p>
           </div>
         </div>
 
         <div class="two-column desktop-layout">
           <div>
             <article class="panel desktop-card">
-              <h2 data-i18n="desktop.configTitle">Codex CLI 配置</h2>
+              <h2 data-i18n="desktop.configTitle">Codex App 配置</h2>
               <div class="configured-row">
                 <span class="circle-check"><i class="bi bi-check-lg"></i></span>
                 <strong id="desktopConfiguredText" data-i18n="status.configured">已配置</strong>
@@ -329,7 +329,7 @@
               <div class="config-list" id="desktopConfigList"></div>
               <div class="apply-explain desktop-explain">
                 <i class="bi bi-diagram-3"></i>
-                <p data-i18n="desktop.explainText">原理很简单：Codex CLI 先连接到本工具；本工具再把模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Codex CLI。</p>
+                <p data-i18n="desktop.explainText">原理很简单：Codex App 先连接到本工具；本工具再把模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Codex App。</p>
               </div>
               <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">复制环境变量命令</span></button>
             </article>
@@ -346,7 +346,7 @@
           <article class="panel guide-panel">
             <h2 data-i18n="desktop.quickGuide">快速引导</h2>
             <div class="mini-steps">
-              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">复制命令</strong><p data-i18n="desktop.step1Text">把 Codex CLI 连接到本工具</p></div>
+              <div class="mini-step"><span>1</span><i class="bi bi-cursor"></i><strong data-i18n="desktop.step1Title">复制命令</strong><p data-i18n="desktop.step1Text">把 Codex App 连接到本工具</p></div>
               <div class="mini-step"><span>2</span><i class="bi bi-arrow-clockwise"></i><strong data-i18n="desktop.step2Title">设置环境变量</strong><p data-i18n="desktop.step2Text">在终端执行复制的命令</p></div>
               <div class="mini-step"><span>3</span><i class="bi bi-display"></i><strong data-i18n="desktop.step3Title">开始使用</strong><p data-i18n="desktop.step3Text">之后在终端使用 codex 命令即可</p></div>
             </div>
@@ -495,7 +495,7 @@
                 <p class="inline-status" id="cdProviderModelFetchResult"></p>
                 <div class="apply-explain">
                   <i class="bi bi-info-circle"></i>
-                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex CLI 连接到本工具。之后你在 Codex CLI 里发消息，本工具会自动转发到你填写的 API 地址。</p>
+                  <p data-i18n="providersAdd.applyHint">一键应用会保存供应商和模型映射，把它设为默认，并让 Codex App 连接到本工具。之后你在 Codex App 里发消息，本工具会自动转发到你填写的 API 地址。</p>
                 </div>
               </section>
               <div class="button-row provider-form-actions">
@@ -590,147 +590,270 @@
       </section>
 
       <section class="page" id="page-proxy" data-page="proxy">
-        <article class="panel proxy-control">
-          <div class="proxy-running">
-            <span class="pulse-dot"></span>
-            <div class="proxy-running-meta">
-              <strong id="proxyStateText">运行中</strong>
-              <p data-i18n="proxy.localhost">本机监听</p>
+        <div class="segmented proxy-target-segment" role="tablist" aria-label="Forward target switch">
+          <button class="btn active" type="button" role="tab" data-proxy-target="claude" aria-selected="true"><img class="segmented-logo" src="assets/icons/claude.png" alt=""><span data-i18n="proxy.tab.claude">Claude Desktop</span></button>
+          <button class="btn" type="button" role="tab" data-proxy-target="codex" aria-selected="false"><img class="segmented-logo" src="assets/icons/codex.png" alt=""><span data-i18n="proxy.tab.codex">Codex App</span></button>
+        </div>
+
+        <!-- Claude Desktop 转发(端口 18099,与 Codex 18080 分桶) -->
+        <div class="proxy-pane" data-proxy-pane="claude">
+          <article class="panel proxy-control">
+            <div class="proxy-running">
+              <span class="pulse-dot"></span>
+              <div class="proxy-running-meta">
+                <strong id="claudeProxyStateText">运行中</strong>
+                <p>127.0.0.1:18099 · Claude Desktop</p>
+              </div>
             </div>
-          </div>
-          <div class="port-control">
-            <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">转发端口</label>
-            <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
-          </div>
-          <button class="btn btn-success btn-lg" type="button" id="proxyToggleBtn" data-action="proxy-toggle"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
-        </article>
+            <div class="port-control">
+              <label class="form-label" data-i18n="proxy.tab.claude">Claude Desktop</label>
+              <input class="form-control form-control-lg" type="number" id="claudeProxyPort" value="18099" readonly>
+            </div>
+            <button class="btn btn-success btn-lg" type="button" id="claudeProxyToggleBtn" data-action="claude-proxy-toggle"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
+          </article>
 
-        <article class="terminal-panel">
-          <div class="terminal-toolbar">
-            <button class="btn btn-outline-light btn-sm" type="button" data-action="open-log-dir"><i class="bi bi-folder2-open"></i><span data-i18n="proxy.viewLog">查看日志</span></button>
-            <button class="btn btn-outline-light btn-sm" type="button" data-action="clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
-            <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="autoScroll" checked><span class="switch-ui"></span></label>
-          </div>
-          <div class="terminal-log" id="proxyLog"></div>
-        </article>
+          <article class="terminal-panel">
+            <div class="terminal-toolbar">
+              <button class="btn btn-outline-light btn-sm" type="button" data-action="claude-open-log-dir"><i class="bi bi-folder2-open"></i><span data-i18n="proxy.viewLog">查看日志</span></button>
+              <button class="btn btn-outline-light btn-sm" type="button" data-action="claude-clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
+              <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="claudeAutoScroll" checked><span class="switch-ui"></span></label>
+            </div>
+            <div class="terminal-log" id="claudeProxyLog"></div>
+          </article>
 
-        <div class="stats-grid" id="proxyStats"></div>
+          <div class="stats-grid" id="claudeProxyStats"></div>
+        </div>
+
+        <!-- Codex App 转发(端口 18080) -->
+        <div class="proxy-pane" data-proxy-pane="codex" hidden>
+          <article class="panel proxy-control">
+            <div class="proxy-running">
+              <span class="pulse-dot"></span>
+              <div class="proxy-running-meta">
+                <strong id="proxyStateText">运行中</strong>
+                <p data-i18n="proxy.localhost">本机监听</p>
+              </div>
+            </div>
+            <div class="port-control">
+              <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">转发端口</label>
+              <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
+            </div>
+            <button class="btn btn-success btn-lg" type="button" id="proxyToggleBtn" data-action="proxy-toggle"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
+          </article>
+
+          <article class="terminal-panel">
+            <div class="terminal-toolbar">
+              <button class="btn btn-outline-light btn-sm" type="button" data-action="open-log-dir"><i class="bi bi-folder2-open"></i><span data-i18n="proxy.viewLog">查看日志</span></button>
+              <button class="btn btn-outline-light btn-sm" type="button" data-action="clear-logs"><i class="bi bi-trash"></i><span data-i18n="proxy.clearLog">清除日志</span></button>
+              <label class="switch-label"><span data-i18n="proxy.autoScroll">自动滚动</span><input type="checkbox" id="autoScroll" checked><span class="switch-ui"></span></label>
+            </div>
+            <div class="terminal-log" id="proxyLog"></div>
+          </article>
+
+          <div class="stats-grid" id="proxyStats"></div>
+        </div>
       </section>
 
       <section class="page" id="page-settings" data-page="settings">
-        <article class="panel settings-panel">
-          <div class="settings-row">
-            <strong data-i18n="settings.theme">主题</strong>
-            <div class="segmented theme-segment">
-              <button class="btn active theme-swatch theme-swatch-default" type="button" data-theme-action="default" aria-label="Default theme"></button>
-              <button class="btn theme-swatch theme-swatch-green" type="button" data-theme-action="green" aria-label="Green theme"></button>
-              <button class="btn theme-swatch theme-swatch-orange" type="button" data-theme-action="orange" aria-label="Orange theme"></button>
-              <button class="btn theme-swatch theme-swatch-gray" type="button" data-theme-action="gray" aria-label="Gray theme"></button>
-              <button class="btn theme-swatch theme-swatch-dark" type="button" data-theme-action="dark" aria-label="Dark theme"></button>
-              <button class="btn theme-swatch theme-swatch-white" type="button" data-theme-action="white" aria-label="White theme"></button>
-            </div>
-          </div>
-          <div class="settings-row">
-            <strong data-i18n="settings.language">语言</strong>
-            <div class="segmented language-segment">
-              <button class="btn active" type="button" data-lang="zh">中文</button>
-              <button class="btn" type="button" data-lang="en">EN</button>
-            </div>
-          </div>
-          <div class="settings-row">
-            <strong data-i18n="settings.proxyPort">转发端口</strong>
-            <input class="form-control form-control-lg" type="number" id="settingsProxyPort" value="18080">
-          </div>
-          <div class="settings-row">
-            <strong data-i18n="settings.adminPort">管理端口</strong>
-            <input class="form-control form-control-lg" type="number" id="settingsAdminPort" value="18081">
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.autoApplyOnStart">启动时自动应用配置</strong>
-            <div>
-              <label class="switch-label only-switch"><input type="checkbox" id="autoApplyOnStart" checked><span class="switch-ui"></span></label>
-              <p class="settings-note" data-i18n="settings.autoApplyOnStartHint">启动时自动应用当前提供商的 Codex 配置；如该提供商需要转发服务，会同时启动转发。关闭则需要手动点「应用配置」。</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.autoUnlockCodexPlugins">自动解锁 Codex Plugins</strong>
-            <div>
-              <label class="switch-label only-switch"><input type="checkbox" id="autoUnlockCodexPlugins"><span class="switch-ui"></span></label>
-              <p class="settings-note" data-i18n="settings.autoUnlockCodexPluginsHint">开启后，应用启动时会自动检测 Codex Desktop 并通过 CDP 注入脚本解锁 Plugins 选项卡。需要 Codex Desktop 以 --remote-debugging-port=9222 启动。</p>
-             <p class="settings-note" id="pluginUnlockRuntimeStatus" data-i18n="settings.pluginUnlockRuntimeStatus">运行时状态: 未检测</p>
-           </div>
-            <div class="settings-row">
-              <strong data-i18n="settings.autoWakeCodexPet">自动唤醒 Codex Pet</strong>
-              <label class="switch-label only-switch"><input type="checkbox" id="autoWakeCodexPet"><span class="switch-ui"></span></label>
-              <p class="settings-note" data-i18n="settings.autoWakeCodexPetHint">开启后，启动 Codex Desktop 时会自动唤醒宠物（修改 ~/.codex/.codex-global-state.json 中的 electron-avatar-overlay-open 为 true）。</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.restoreCodexOnExit">退出时还原 Codex 原配置</strong>
-            <div>
-              <label class="switch-label only-switch"><input type="checkbox" id="restoreCodexOnExit" checked><span class="switch-ui"></span></label>
-              <p class="settings-note" data-i18n="settings.restoreCodexOnExitHint">开启后，应用退出或下次启动时会自动把 ~/.codex/config.toml 与 auth.json 还原至 apply 之前的状态；保证不开应用时 Codex CLI 仍是你本人的原配置。</p>
-              <p class="settings-note" id="codexSnapshotStatus" data-i18n="settings.codexSnapshotStatusUnknown">正在读取快照状态…</p>
-            </div>
-          </div>
-          <div class="settings-row" hidden aria-hidden="true">
-            <strong data-i18n="settings.exposeAllModels">Claude 模型菜单</strong>
-            <label class="switch-label only-switch"><input type="checkbox" id="exposeAllProviderModels"><span class="switch-ui"></span></label>
-          </div>
-          <div class="settings-row">
-            <strong data-i18n="settings.updateUrl">更新地址</strong>
-            <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.thirdPartyCompat">第三方兼容</strong>
-            <div>
-              <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="check-provider-compatibility"><i class="bi bi-patch-check"></i><span data-i18n="settings.checkCompatibility">检查兼容性</span></button>
-              </div>
-              <div class="compatibility-list" id="providerCompatibilityList"></div>
-              <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">一键检查所有 provider 实际可用性。自定义 provider 可选择 OpenAI Chat 本地转换、原生 Responses 透传、Anthropic Messages 本地转换等协议路由。</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.configBackup">配置备份</strong>
-            <div>
-              <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="backup-config"><i class="bi bi-shield-check"></i><span data-i18n="settings.backupNow">立即备份</span></button>
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="export-config"><i class="bi bi-box-arrow-down"></i><span data-i18n="settings.exportConfig">导出配置</span></button>
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="choose-import-config"><i class="bi bi-box-arrow-in-up"></i><span data-i18n="settings.importConfig">导入配置</span></button>
-                <input class="visually-hidden" type="file" id="configImportFile" accept="application/json,.json">
-              </div>
-              <div class="backup-list" id="backupList"></div>
-              <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
-            </div>
-          </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.feedback">反馈与建议</strong>
-            <div>
-              <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="settings.feedbackOpen">打开反馈窗口</span></button>
-              </div>
-              <p class="settings-note" data-i18n="settings.feedbackHint">遇到问题或想提建议?支持文本 + 截图 + 日志,匿名提交,无需登录。诊断信息(应用版本 / OS / 当前 provider 名称 / 最近 200 行代理日志)默认附上,不含 API Key 等敏感数据。</p>
-            </div>
-          </div>
-        </article>
+        <div class="segmented settings-target-segment" role="tablist" aria-label="Settings target switch">
+          <button class="btn active" type="button" role="tab" data-settings-target="claude" aria-selected="true"><img class="segmented-logo" src="assets/icons/claude.png" alt=""><span data-i18n="proxy.tab.claude">Claude Desktop</span></button>
+          <button class="btn" type="button" role="tab" data-settings-target="codex" aria-selected="false"><img class="segmented-logo" src="assets/icons/codex.png" alt=""><span data-i18n="proxy.tab.codex">Codex App</span></button>
+        </div>
 
-        <article class="panel about-panel">
-          <h2 data-i18n="settings.about">关于</h2>
-          <div class="about-row"><span data-i18n="settings.version">版本</span><strong id="appVersion">...</strong></div>
-          <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
-          <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
-          <p class="update-status" id="updateStatus"></p>
-          <div class="about-row"><span>GitHub</span><a href="https://github.com/Cmochance/codex-app-transfer" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
-        </article>
+        <!-- Claude 子页:共享设置(主题/语言/更新地址/第三方兼容/配置备份/反馈/关于)只在这里出现 -->
+        <div class="settings-pane" data-settings-pane="claude">
+          <article class="panel settings-panel">
+            <div class="settings-row">
+              <strong data-i18n="settings.theme">主题</strong>
+              <div class="segmented theme-segment">
+                <button class="btn active theme-swatch theme-swatch-default" type="button" data-theme-action="default" aria-label="Default theme"></button>
+                <button class="btn theme-swatch theme-swatch-green" type="button" data-theme-action="green" aria-label="Green theme"></button>
+                <button class="btn theme-swatch theme-swatch-orange" type="button" data-theme-action="orange" aria-label="Orange theme"></button>
+                <button class="btn theme-swatch theme-swatch-gray" type="button" data-theme-action="gray" aria-label="Gray theme"></button>
+                <button class="btn theme-swatch theme-swatch-dark" type="button" data-theme-action="dark" aria-label="Dark theme"></button>
+                <button class="btn theme-swatch theme-swatch-white" type="button" data-theme-action="white" aria-label="White theme"></button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <strong data-i18n="settings.language">语言</strong>
+              <div class="segmented language-segment">
+                <button class="btn active" type="button" data-lang="zh">中文</button>
+                <button class="btn" type="button" data-lang="en">EN</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <strong data-i18n="settings.updateUrl">更新地址</strong>
+              <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.thirdPartyCompat">第三方兼容</strong>
+              <div>
+                <div class="settings-actions">
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="check-provider-compatibility"><i class="bi bi-patch-check"></i><span data-i18n="settings.checkCompatibility">检查兼容性</span></button>
+                </div>
+                <div class="compatibility-list" id="providerCompatibilityList"></div>
+                <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">一键检查所有 provider 实际可用性。自定义 provider 可选择 OpenAI Chat 本地转换、原生 Responses 透传、Anthropic Messages 本地转换等协议路由。</p>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.configBackup">配置备份</strong>
+              <div>
+                <div class="settings-actions">
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="backup-config"><i class="bi bi-shield-check"></i><span data-i18n="settings.backupNow">立即备份</span></button>
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="export-config"><i class="bi bi-box-arrow-down"></i><span data-i18n="settings.exportConfig">导出配置</span></button>
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="choose-import-config"><i class="bi bi-box-arrow-in-up"></i><span data-i18n="settings.importConfig">导入配置</span></button>
+                  <input class="visually-hidden" type="file" id="configImportFile" accept="application/json,.json">
+                </div>
+                <div class="backup-list" id="backupList"></div>
+                <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.feedback">反馈与建议</strong>
+              <div>
+                <div class="settings-actions">
+                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="settings.feedbackOpen">打开反馈窗口</span></button>
+                </div>
+                <p class="settings-note" data-i18n="settings.feedbackHint">遇到问题或想提建议?支持文本 + 截图 + 日志,匿名提交,无需登录。诊断信息(应用版本 / OS / 当前 provider 名称 / 最近 200 行代理日志)默认附上,不含 API Key 等敏感数据。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel about-panel">
+            <h2 data-i18n="settings.about">关于</h2>
+            <div class="about-row"><span data-i18n="settings.version">版本</span><strong id="appVersion">...</strong></div>
+            <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
+            <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
+            <p class="update-status" id="updateStatus"></p>
+            <div class="about-row"><span>GitHub</span><a href="https://github.com/Cmochance/cc-desktop-switch" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
+          </article>
+        </div>
+
+        <!-- Codex 子页:Codex App 专属设置 -->
+        <div class="settings-pane" data-settings-pane="codex" hidden>
+          <article class="panel settings-panel">
+            <div class="settings-row">
+              <strong data-i18n="settings.proxyPort">转发端口</strong>
+              <input class="form-control form-control-lg" type="number" id="settingsProxyPort" value="18080">
+            </div>
+            <div class="settings-row">
+              <strong data-i18n="settings.adminPort">管理端口</strong>
+              <input class="form-control form-control-lg" type="number" id="settingsAdminPort" value="18081">
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.autoApplyOnStart">启动时自动应用配置</strong>
+              <div>
+                <label class="switch-label only-switch"><input type="checkbox" id="autoApplyOnStart" checked><span class="switch-ui"></span></label>
+                <p class="settings-note" data-i18n="settings.autoApplyOnStartHint">启动时自动应用当前提供商的 Codex 配置；如该提供商需要转发服务，会同时启动转发。关闭则需要手动点「应用配置」。</p>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.autoUnlockCodexPlugins">自动解锁 Codex Plugins</strong>
+              <div>
+                <label class="switch-label only-switch"><input type="checkbox" id="autoUnlockCodexPlugins"><span class="switch-ui"></span></label>
+                <p class="settings-note" data-i18n="settings.autoUnlockCodexPluginsHint">开启后，应用启动时会自动检测 Codex Desktop 并通过 CDP 注入脚本解锁 Plugins 选项卡。需要 Codex Desktop 以 --remote-debugging-port=9222 启动。</p>
+                <p class="settings-note" id="pluginUnlockRuntimeStatus" data-i18n="settings.pluginUnlockRuntimeStatus">运行时状态: 未检测</p>
+              </div>
+              <div class="settings-row">
+                <strong data-i18n="settings.autoWakeCodexPet">自动唤醒 Codex Pet</strong>
+                <label class="switch-label only-switch"><input type="checkbox" id="autoWakeCodexPet"><span class="switch-ui"></span></label>
+                <p class="settings-note" data-i18n="settings.autoWakeCodexPetHint">开启后，启动 Codex Desktop 时会自动唤醒宠物（修改 ~/.codex/.codex-global-state.json 中的 electron-avatar-overlay-open 为 true）。</p>
+              </div>
+            </div>
+            <div class="settings-row settings-row-stack">
+              <strong data-i18n="settings.restoreCodexOnExit">退出时还原 Codex 原配置</strong>
+              <div>
+                <label class="switch-label only-switch"><input type="checkbox" id="restoreCodexOnExit" checked><span class="switch-ui"></span></label>
+                <p class="settings-note" data-i18n="settings.restoreCodexOnExitHint">开启后，应用退出或下次启动时会自动把 ~/.codex/config.toml 与 auth.json 还原至 apply 之前的状态；保证不开应用时 Codex App 仍是你本人的原配置。</p>
+                <p class="settings-note" id="codexSnapshotStatus" data-i18n="settings.codexSnapshotStatusUnknown">正在读取快照状态…</p>
+              </div>
+            </div>
+            <div class="settings-row" hidden aria-hidden="true">
+              <strong data-i18n="settings.exposeAllModels">Claude 模型菜单</strong>
+              <label class="switch-label only-switch"><input type="checkbox" id="exposeAllProviderModels"><span class="switch-ui"></span></label>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="page" id="page-guide" data-page="guide">
+        <div class="segmented guide-target-segment" role="tablist" aria-label="Guide target switch">
+          <button class="btn active" type="button" role="tab" data-guide-target="claude" aria-selected="true"><img class="segmented-logo" src="assets/icons/claude.png" alt=""><span data-i18n="proxy.tab.claude">Claude Desktop</span></button>
+          <button class="btn" type="button" role="tab" data-guide-target="codex" aria-selected="false"><img class="segmented-logo" src="assets/icons/codex.png" alt=""><span data-i18n="proxy.tab.codex">Codex App</span></button>
+        </div>
+
+        <!-- Claude 子页:Claude Desktop 使用引导 -->
+        <div class="guide-pane" data-guide-pane="claude">
+          <header class="guide-hero">
+            <img src="assets/app-icon.png" alt="">
+            <div>
+              <h1 data-i18n="guide.claude.title">Claude Desktop 使用引导</h1>
+              <p data-i18n="guide.claude.subtitle">让 Claude Desktop 接入 Kimi、DeepSeek、智谱 GLM、阿里云百炼、Xiaomi MiMo 等 Anthropic-compatible 供应商。本机网关把 Claude 模型名翻译到上游真实模型,Claude Desktop 客户端 + 内嵌 Claude Code 子进程都能透明走通。</p>
+            </div>
+          </header>
+
+          <section class="guide-section">
+            <h2 class="guide-section-title" data-i18n="guide.claude.prereqTitle">开始之前</h2>
+            <div class="guide-prereq">
+              <i class="bi bi-info-circle"></i>
+              <div>
+                <p data-i18n="guide.claude.prereqBody">需要已安装 <strong>Anthropic Claude Desktop 1.7196+</strong>(支持 3p 部署模式)。Windows 与 macOS 都支持。</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="guide-section">
+            <h2 class="guide-section-title" data-i18n="guide.claude.quickStartTitle">快速开始</h2>
+            <div class="timeline">
+              <article class="timeline-card">
+                <span>1</span><i class="bi bi-plug"></i>
+                <div>
+                  <h2 data-i18n="guide.claude.step1">添加 Claude Desktop 供应商</h2>
+                  <p data-i18n="guide.claude.step1Text">在「Claude Desktop」页右上角「+」选预设(DeepSeek / Kimi Code / Kimi / 智谱 GLM / 阿里云百炼 / Xiaomi MiMo),粘贴 API Key。三个 Claude 模型槽(sonnet / haiku / opus)按官方文档已预填上游模型。</p>
+                  <a class="guide-action-link" href="#claude-desktop-providers/add" data-i18n="guide.claude.step1Link">去添加 →</a>
+                </div>
+              </article>
+              <article class="timeline-card">
+                <span>2</span><i class="bi bi-check2-square"></i>
+                <div>
+                  <h2 data-i18n="guide.claude.step2">设为默认 + 应用</h2>
+                  <p data-i18n="guide.claude.step2Text">「Claude Desktop」页点你要用的 provider 设为默认,然后点「应用配置」。本工具会写入 <code>~/Library/Application Support/Claude-3p/claude_desktop_config.json</code>(macOS) 或注册表 <code>HKCU\\SOFTWARE\\Policies\\Claude</code>(Windows),并起本机网关。</p>
+                  <a class="guide-action-link" href="#claude-desktop-providers" data-i18n="guide.claude.step2Link">去管理 →</a>
+                </div>
+              </article>
+              <article class="timeline-card">
+                <span>3</span><i class="bi bi-broadcast-pin"></i>
+                <div>
+                  <h2 data-i18n="guide.claude.step3">启动转发服务</h2>
+                  <p data-i18n="guide.claude.step3Text">「转发」页默认显示 Claude Desktop 子页,点「启动转发」,本机 <code>127.0.0.1:18099</code> 起来。日志面板实时显示 model 翻译和上游响应。</p>
+                  <a class="guide-action-link" href="#proxy" data-i18n="guide.claude.step3Link">去转发页 →</a>
+                </div>
+              </article>
+              <article class="timeline-card">
+                <span>4</span><i class="bi bi-chat-square-text"></i>
+                <div>
+                  <h2 data-i18n="guide.claude.step4">在 Claude Desktop 发消息</h2>
+                  <p data-i18n="guide.claude.step4Text"><strong>重启 Claude Desktop</strong>(Cmd+Q 退出后重开),让它读到新配置。模型选单显示 <code>claude-sonnet-4-6 / haiku / opus</code>,Claude Desktop 与内嵌 Claude Code 子进程发出的请求都会经本机网关翻译并转发到你选的上游。</p>
+                </div>
+              </article>
+              <article class="timeline-card">
+                <span>5</span><i class="bi bi-arrow-left-right"></i>
+                <div>
+                  <h2 data-i18n="guide.claude.step5">切换 / 还原</h2>
+                  <p data-i18n="guide.claude.step5Text">在「Claude Desktop」页直接切默认 provider 后再点一次「应用配置」即可。点「清除配置」会把 Claude Desktop 切回 1p 模式(标准账号)。</p>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <!-- Codex 子页:OpenAI Codex App 使用引导 -->
+        <div class="guide-pane" data-guide-pane="codex" hidden>
         <header class="guide-hero">
           <img src="assets/app-icon.png" alt="">
           <div>
             <h1 data-i18n="guide.title">使用引导</h1>
-            <p data-i18n="guide.subtitle">让 OpenAI Codex CLI 接入 Kimi、DeepSeek、智谱 GLM、阿里云百炼、Xiaomi MiMo 等供应商,无需改动 CLI 本身。</p>
+            <p data-i18n="guide.subtitle">让 OpenAI Codex App 接入 Kimi、DeepSeek、智谱 GLM、阿里云百炼、Xiaomi MiMo 等供应商,无需改动应用本身。</p>
           </div>
         </header>
 
@@ -739,7 +862,7 @@
           <div class="guide-prereq">
             <i class="bi bi-info-circle"></i>
             <div>
-              <p data-i18n="guide.prereqBody">需要已安装 <strong>OpenAI Codex CLI 0.126+</strong>。终端跑 <code>codex --version</code> 看版本号;没装的话先去 <a href="https://github.com/openai/codex" target="_blank" rel="noreferrer">github.com/openai/codex</a>。</p>
+              <p data-i18n="guide.prereqBody">需要已安装 <strong>OpenAI Codex App 0.126+</strong>。终端跑 <code>codex --version</code> 看版本号;没装的话先去 <a href="https://github.com/openai/codex" target="_blank" rel="noreferrer">github.com/openai/codex</a>。</p>
             </div>
           </div>
         </section>
@@ -829,7 +952,7 @@
             <div class="guide-card guide-card-static">
               <i class="bi bi-arrow-clockwise"></i>
               <h3 data-i18n="guide.tsRestartTitle">模型菜单不刷新?</h3>
-              <p data-i18n="guide.tsRestartText">Codex CLI 只在启动时读 <code>~/.codex/</code> 配置。切换 provider 后必须 <strong>关闭并重新打开终端</strong>,新终端才会用新映射。</p>
+              <p data-i18n="guide.tsRestartText">Codex App 只在启动时读 <code>~/.codex/</code> 配置。切换 provider 后必须 <strong>关闭并重新打开终端</strong>,新终端才会用新映射。</p>
             </div>
             <div class="guide-card guide-card-static">
               <i class="bi bi-speedometer2"></i>
@@ -840,6 +963,7 @@
         </section>
 
         <a class="btn btn-primary btn-lg guide-start" href="#providers/add"><i class="bi bi-arrow-right-circle"></i><span data-i18n="guide.start">添加你的第一个提供商</span></a>
+        </div><!-- /data-guide-pane="codex" -->
       </section>
     </main>
 

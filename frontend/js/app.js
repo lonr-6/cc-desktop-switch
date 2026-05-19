@@ -1940,9 +1940,14 @@
     $("#desktopJson").textContent = cmdBlock;
   }
 
+  // 转发页 sub-tab:Claude(默认) / Codex。两套独立 polling state,日志各自 fetch。
+  let proxyForwardActive = "claude";
   let proxyLogTimer = null;
   let proxyLogInflight = false;
   let proxyLogAtBottom = true;
+  let claudeProxyLogTimer = null;
+  let claudeProxyLogInflight = false;
+  let claudeProxyLogAtBottom = true;
   const PROXY_LOG_BOTTOM_TOLERANCE = 8;
 
   function isProxyLogAtBottom(el) {
@@ -1955,6 +1960,15 @@
     logEl.dataset.scrollBound = "1";
     logEl.addEventListener("scroll", () => {
       proxyLogAtBottom = isProxyLogAtBottom(logEl);
+    }, { passive: true });
+  }
+
+  function bindClaudeProxyLogScroll() {
+    const logEl = $("#claudeProxyLog");
+    if (!logEl || logEl.dataset.scrollBound === "1") return;
+    logEl.dataset.scrollBound = "1";
+    logEl.addEventListener("scroll", () => {
+      claudeProxyLogAtBottom = isProxyLogAtBottom(logEl);
     }, { passive: true });
   }
 
@@ -2016,15 +2030,135 @@
     }, 2000);
   }
 
+  // ── Claude Desktop 转发日志:对称 refreshProxyLog,只查 /api/claude-desktop/proxy/* ──
+  async function refreshClaudeProxyLog() {
+    if (claudeProxyLogInflight) return;
+    const logEl = $("#claudeProxyLog");
+    if (!logEl) return;
+    claudeProxyLogInflight = true;
+    try {
+      const [proxyStatus, logs] = await Promise.all([
+        CCApi.getClaudeProxyStatus(),
+        CCApi.getClaudeProxyLogs(),
+      ]);
+      const wasAtBottom = claudeProxyLogAtBottom;
+      const prevScrollTop = logEl.scrollTop;
+      logEl.innerHTML = logs.map((line) => `
+        <div class="log-line"><span>${escapeHtml(line.at)}</span><span class="log-level ${escapeHtml(line.level)}">${escapeHtml(line.level.toUpperCase())}</span><span>${escapeHtml(line.message)}</span></div>
+      `).join("");
+      const userToggleOn = $("#claudeAutoScroll")?.checked !== false;
+      if (userToggleOn && wasAtBottom) {
+        logEl.scrollTop = logEl.scrollHeight;
+        claudeProxyLogAtBottom = true;
+      } else {
+        logEl.scrollTop = prevScrollTop;
+        claudeProxyLogAtBottom = isProxyLogAtBottom(logEl);
+      }
+      const statsEl = $("#claudeProxyStats");
+      if (statsEl) {
+        const stats = [
+          { label: t("proxy.stats.total"), value: proxyStatus.stats.total, icon: "bi-list-ul" },
+          { label: t("proxy.stats.success"), value: proxyStatus.stats.success, icon: "bi-check-circle" },
+          { label: t("proxy.stats.failed"), value: proxyStatus.stats.failed, icon: "bi-x-circle", danger: true },
+          { label: t("proxy.stats.today"), value: proxyStatus.stats.today, icon: "bi-calendar3" },
+        ];
+        statsEl.innerHTML = stats.map((stat) => `
+          <article class="stat-card ${stat.danger ? "danger" : ""}"><i class="bi ${stat.icon}"></i><div><span>${stat.label}</span><strong>${stat.value}</strong></div></article>
+        `).join("");
+      }
+      // status text + toggle 按钮
+      const stateText = $("#claudeProxyStateText");
+      if (stateText) {
+        stateText.textContent = proxyStatus.running
+          ? t("status.running")
+          : (proxyStatus.listening ? t("status.notRunning") : t("status.stopped"));
+      }
+      const pane = $('[data-proxy-pane="claude"]');
+      const runEl = pane?.querySelector(".proxy-running");
+      if (runEl) runEl.classList.toggle("stopped", !proxyStatus.running);
+      const toggleBtn = $("#claudeProxyToggleBtn");
+      if (toggleBtn) {
+        if (proxyStatus.running) {
+          toggleBtn.className = "btn btn-danger btn-lg";
+          toggleBtn.innerHTML = `<i class="bi bi-stop-fill"></i><span>${t("proxy.stop")}</span>`;
+        } else {
+          toggleBtn.className = "btn btn-success btn-lg";
+          toggleBtn.innerHTML = `<i class="bi bi-play"></i><span>${t("proxy.start")}</span>`;
+        }
+      }
+    } catch (err) {
+      // 静默吞掉单次失败
+    } finally {
+      claudeProxyLogInflight = false;
+    }
+  }
+
+  function stopClaudeProxyLogAutoRefresh() {
+    if (claudeProxyLogTimer !== null) {
+      clearInterval(claudeProxyLogTimer);
+      claudeProxyLogTimer = null;
+    }
+    claudeProxyLogAtBottom = true;
+  }
+
+  function startClaudeProxyLogAutoRefresh() {
+    stopClaudeProxyLogAutoRefresh();
+    claudeProxyLogTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshClaudeProxyLog();
+    }, 2000);
+  }
+
+  // 通用 sub-tab 切换(settings / guide 共用,Claude 默认):
+  // - data-${kind}-target / data-${kind}-pane 配对
+  // - 切换时切 .active class + aria-selected + pane hidden
+  function applySubTab(kind, target) {
+    const value = target === "codex" ? "codex" : "claude";
+    $all(`[data-${kind}-target]`).forEach((btn) => {
+      const active = btn.dataset[`${kind}Target`] === value;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    $all(`[data-${kind}-pane]`).forEach((pane) => {
+      pane.hidden = pane.dataset[`${kind}Pane`] !== value;
+    });
+  }
+
+  function applyProxyForwardTab(target) {
+    proxyForwardActive = target === "codex" ? "codex" : "claude";
+    $all('[data-proxy-target]').forEach((btn) => {
+      const active = btn.dataset.proxyTarget === proxyForwardActive;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    $all('[data-proxy-pane]').forEach((pane) => {
+      pane.hidden = pane.dataset.proxyPane !== proxyForwardActive;
+    });
+    // 切 tab 时只跑活动一侧的 polling
+    if (proxyForwardActive === "claude") {
+      stopProxyLogAutoRefresh();
+      bindClaudeProxyLogScroll();
+      claudeProxyLogAtBottom = true;
+      refreshClaudeProxyLog().then(() => startClaudeProxyLogAutoRefresh());
+    } else {
+      stopClaudeProxyLogAutoRefresh();
+      bindProxyLogScroll();
+      proxyLogAtBottom = true;
+      refreshProxyLog().then(() => startProxyLogAutoRefresh());
+    }
+  }
+
   async function renderProxy() {
+    // Codex 子页:沿用旧逻辑;Claude 子页:走 refreshClaudeProxyLog
     const status = await CCApi.getStatus();
-    $("#proxyPort").value = status.proxyPort;
-    $("#settingsProxyPort").value = status.proxyPort;
-    $("#proxyStateText").textContent = status.proxyRunning ? t("status.running") : t("status.stopped");
-    // ── 停止态视觉反馈:pulse-dot 灰色 + 状态文字灰色 ──
-    const proxyRunningEl = document.querySelector(".proxy-running");
-    if (proxyRunningEl) proxyRunningEl.classList.toggle("stopped", !status.proxyRunning);
-    // ── toggle 按钮:running → Stop(danger),stopped → Start(success) ──
+    if ($("#proxyPort")) $("#proxyPort").value = status.proxyPort;
+    if ($("#settingsProxyPort")) $("#settingsProxyPort").value = status.proxyPort;
+    if ($("#proxyStateText")) {
+      $("#proxyStateText").textContent = status.proxyRunning ? t("status.running") : t("status.stopped");
+    }
+    const codexPane = $('[data-proxy-pane="codex"]');
+    const codexRunEl = codexPane?.querySelector(".proxy-running");
+    if (codexRunEl) codexRunEl.classList.toggle("stopped", !status.proxyRunning);
     const toggleBtn = $("#proxyToggleBtn");
     if (toggleBtn) {
       if (status.proxyRunning) {
@@ -2035,10 +2169,8 @@
         toggleBtn.innerHTML = `<i class="bi bi-play"></i><span>${t("proxy.start")}</span>`;
       }
     }
-    bindProxyLogScroll();
-    proxyLogAtBottom = true;
-    await refreshProxyLog();
-    startProxyLogAutoRefresh();
+    // 进入页面默认选 Claude tab,刷一次两边的状态后只 keep 活动一侧的 timer
+    applyProxyForwardTab(proxyForwardActive || "claude");
   }
 
   async function renderSettings() {
@@ -2134,7 +2266,14 @@
       const key = route.startsWith("providers") ? "providers" : route;
       tab.classList.toggle("active", tab.dataset.nav === key);
     });
-    if (route !== "proxy") stopProxyLogAutoRefresh();
+    if (route !== "proxy") {
+      stopProxyLogAutoRefresh();
+      stopClaudeProxyLogAutoRefresh();
+    }
+    // 设置 / 引导 / 转发 每次重新进入都重置成 Claude 默认子 tab
+    if (route === "settings") applySubTab("settings", "claude");
+    if (route === "guide") applySubTab("guide", "claude");
+    if (route === "proxy") proxyForwardActive = "claude";
     if (route === "dashboard") await renderDashboard();
     if (route === "providers/add") await renderProviderForm();
     if (route === "providers") await renderProviders();
@@ -3459,6 +3598,38 @@
         }
       }
 
+      // ── Claude Desktop 转发(端口 18099)的 toggle / clear / open-log-dir ──
+      if (action === "claude-proxy-toggle") {
+        try {
+          const current = await CCApi.getClaudeProxyStatus();
+          if (current.running) {
+            await CCApi.stopClaudeProxy();
+            showToast(t("toast.proxyStopped"));
+          } else {
+            await CCApi.startClaudeProxy();
+            showToast(t("toast.proxyStarted"));
+          }
+        } catch (err) {
+          showToast(err && err.message ? err.message : t("toast.proxyStartFailed"));
+        }
+        await refreshClaudeProxyLog();
+      }
+
+      if (action === "claude-clear-logs") {
+        await CCApi.clearClaudeProxyLogs();
+        await refreshClaudeProxyLog();
+        showToast(t("toast.logsCleared"));
+      }
+
+      if (action === "claude-open-log-dir") {
+        try {
+          await CCApi.openClaudeProxyLogDir();
+          showToast(t("toast.logDirOpened"));
+        } catch (err) {
+          showToast(t("toast.logDirOpenFailed"));
+        }
+      }
+
       if (action === "view-logs") {
         window.location.hash = "proxy";
       }
@@ -3777,6 +3948,21 @@
       if (themeButton) {
         const nextTheme = applyTheme(themeButton.dataset.themeAction);
         await CCApi.saveSettings({ theme: nextTheme });
+      }
+      // 转发页 Claude/Codex 子 tab 切换
+      const proxyTargetBtn = event.target.closest("[data-proxy-target]");
+      if (proxyTargetBtn) {
+        applyProxyForwardTab(proxyTargetBtn.dataset.proxyTarget);
+      }
+      // 设置页 Claude/Codex 子 tab 切换
+      const settingsTargetBtn = event.target.closest("[data-settings-target]");
+      if (settingsTargetBtn) {
+        applySubTab("settings", settingsTargetBtn.dataset.settingsTarget);
+      }
+      // 引导页 Claude/Codex 子 tab 切换
+      const guideTargetBtn = event.target.closest("[data-guide-target]");
+      if (guideTargetBtn) {
+        applySubTab("guide", guideTargetBtn.dataset.guideTarget);
       }
       const presetButton = event.target.closest("[data-preset]");
       if (presetButton && presetButton.closest("#presetList")) {

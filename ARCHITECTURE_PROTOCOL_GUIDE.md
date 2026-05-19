@@ -102,7 +102,7 @@
 协议相关改动合入前至少满足：
 
 - `cargo fmt --all`
-- `cargo test -p codex-app-transfer-adapters`
+- `cargo test -p codex-app-transfer-adapters`(crate 名仍带 `codex-app-transfer-` 前缀是脚手架遗留 ID,详见 README "项目身份与沿革")
 - 必要时：`cargo check --workspace`
 - 新增协议需有对应 mapper/adapter 回归测试，不得只改实现不补测试
 - 如果新增协议同时暴露到 provider UI，还需覆盖：

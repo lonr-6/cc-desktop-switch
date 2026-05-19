@@ -1,6 +1,8 @@
 # Feedback Worker
 
-Codex App Transfer 用户反馈收集 Worker —— 跑在 Cloudflare,接收应用提交的文本/截图/日志,落 R2 + 通过 Resend 发邮件通知。
+CC Desktop Switch 用户反馈收集 Worker —— 跑在 Cloudflare,接收应用提交的文本/截图/日志,落 R2 + 通过 Resend 发邮件通知。
+
+> Cloudflare 资源(Worker 名 / R2 bucket 名)仍叫 `codex-app-transfer-feedback`,这是历史 ID,改名涉及重新部署 + 数据迁移,本轮保留。
 
 ## 架构
 

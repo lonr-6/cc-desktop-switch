@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Codex App Transfer",
+  "productName": "CC Desktop Switch",
   "version": "2.1.9",
   "identifier": "store.alyse.codex-app-transfer",
   "build": {
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Codex App Transfer",
+        "title": "CC Desktop Switch",
         "url": "cas://localhost/",
         "width": 1100,
         "height": 760,

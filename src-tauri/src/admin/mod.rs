@@ -164,6 +164,32 @@ pub fn build_app_router(state: AdminState) -> Router {
             "/api/claude-desktop/fetch-models",
             post(handlers::claude_desktop::fetch_models),
         )
+        // Claude Desktop 转发服务运行时控制(端口 18099,跟 Codex 18080 分桶)
+        .route(
+            "/api/claude-desktop/proxy/status",
+            get(handlers::claude_desktop::proxy_status),
+        )
+        .route(
+            "/api/claude-desktop/proxy/start",
+            post(handlers::claude_desktop::proxy_start),
+        )
+        .route(
+            "/api/claude-desktop/proxy/stop",
+            post(handlers::claude_desktop::proxy_stop),
+        )
+        .route(
+            "/api/claude-desktop/proxy/logs",
+            get(handlers::claude_desktop::proxy_logs),
+        )
+        .route(
+            "/api/claude-desktop/proxy/logs/clear",
+            post(handlers::claude_desktop::proxy_logs_clear),
+        )
+        .route(
+            "/api/claude-desktop/proxy/logs/open-dir",
+            post(handlers::claude_desktop::proxy_logs_open_dir),
+        )
+        // Codex CLI 转发服务运行时控制(端口 18080)
         // Proxy lifecycle
         .route("/api/version", get(handlers::common::version))
         .route("/api/proxy/start", post(handlers::proxy::start_proxy))

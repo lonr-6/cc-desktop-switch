@@ -32,6 +32,7 @@ use crate::model_alias::{
     desktop_model_entries, resolve_requested_model_slot, MODEL_SLOTS,
 };
 use crate::schema::Provider;
+use crate::telemetry::claude_desktop_proxy_telemetry;
 
 /// **专属端口**:见模块文档解释为什么选这个。
 pub const CD_PROXY_PORT: u16 = 18099;
@@ -139,13 +140,22 @@ async fn handle_messages(
     body: Bytes,
 ) -> Response {
     let snapshot = state.snapshot().await;
+    let telemetry = claude_desktop_proxy_telemetry();
 
     // 1) 验证 gateway key(Claude Desktop 带的是 cas 网关 key,不是上游真 key)
     if let Err(resp) = verify_gateway_key(&headers, &snapshot.gateway_api_key) {
+        telemetry.stats.record(false);
+        telemetry
+            .logs
+            .add("ERROR", "gateway key 不匹配,拒绝请求");
         return resp;
     }
 
     let Some(provider) = snapshot.provider else {
+        telemetry.stats.record(false);
+        telemetry
+            .logs
+            .add("ERROR", "未配置 active provider,请先 apply");
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "no_active_provider",
@@ -174,7 +184,19 @@ async fn handle_messages(
     // 3) 翻译 model 名 claude-sonnet-4-6 → upstream 真实 model id
     //    对照 `cc-desktop-switch/backend/proxy.py:909-916 map_model`。
     let mapped_model = map_claude_route_to_upstream(&provider, &original_model);
+    tracing::debug!(
+        target: "cd_proxy",
+        original_model = %original_model,
+        mapped_model = %mapped_model,
+        provider_id = %provider.id,
+        "route"
+    );
     if mapped_model.is_empty() {
+        telemetry.stats.record(false);
+        telemetry.logs.add(
+            "ERROR",
+            format!("模型未映射: {original_model} (provider={})", provider.id),
+        );
         return error_response(
             StatusCode::BAD_REQUEST,
             "model_not_mapped",
@@ -183,6 +205,13 @@ async fn handle_messages(
             ),
         );
     }
+    telemetry.logs.add(
+        "INFO",
+        format!(
+            "POST /v1/messages model={original_model} -> {mapped_model} provider={}",
+            provider.id
+        ),
+    );
     if let Some(obj) = body_json.as_object_mut() {
         obj.insert("model".to_owned(), Value::String(mapped_model.clone()));
     }
@@ -247,6 +276,16 @@ async fn handle_messages(
     let upstream_resp = match req.body(upstream_body).send().await {
         Ok(r) => r,
         Err(e) => {
+            tracing::warn!(
+                target: "cd_proxy",
+                upstream_url = %upstream_url,
+                error = %e,
+                "upstream unreachable"
+            );
+            telemetry.stats.record(false);
+            telemetry
+                .logs
+                .add("ERROR", format!("连不上上游 {upstream_url}: {e}"));
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream_unreachable",
@@ -261,6 +300,41 @@ async fn handle_messages(
         .get("content-type")
         .cloned()
         .unwrap_or_else(|| HeaderValue::from_static("application/json"));
+    // 上游非 2xx 时把 body 缓冲下来 + 写入 warn log(前 500B,够定位 model_not_found
+    // / invalid_api_key / rate_limit 等常见 vendor 错误),然后原样回 Claude Desktop,
+    // 由客户端按 Anthropic 错误格式渲染。SSE 成功路径走下面的 bytes_stream 透传,
+    // 不会落入这条 if 分支。
+    if !status.is_success() {
+        let buffered = upstream_resp.bytes().await.unwrap_or_default();
+        let snippet = String::from_utf8_lossy(&buffered[..buffered.len().min(500)]);
+        tracing::warn!(
+            target: "cd_proxy",
+            upstream_url = %upstream_url,
+            status = status.as_u16(),
+            body_snippet = %snippet.replace('\n', "\\n"),
+            "upstream non-2xx"
+        );
+        telemetry.stats.record(false);
+        telemetry.logs.add(
+            "ERROR",
+            format!(
+                "上游非 2xx status={} body={}",
+                status.as_u16(),
+                snippet.replace('\n', "\\n")
+            ),
+        );
+        let mut builder = Response::builder().status(status);
+        if let Some(headers_mut) = builder.headers_mut() {
+            headers_mut.insert("content-type", content_type);
+        }
+        return builder.body(Body::from(buffered)).unwrap_or_else(|_| {
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_build",
+                "构造响应失败",
+            )
+        });
+    }
     let is_sse = content_type
         .to_str()
         .map(|s| s.contains("text/event-stream"))
@@ -278,6 +352,7 @@ async fn handle_messages(
     // 透传 body —— SSE chunked / 普通 JSON 都用 stream body
     let stream = upstream_resp.bytes_stream();
     let body = Body::from_stream(stream);
+    telemetry.stats.record(true);
     builder.body(body).unwrap_or_else(|_| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -289,24 +364,44 @@ async fn handle_messages(
 
 fn verify_gateway_key(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
     if expected.is_empty() {
-        // 未配置 → 暂不强制鉴权(allow,但记 warning)
+        // 未配置 gateway_api_key → 不强制鉴权(`apply` 时若 cas 自身配置缺这个 key
+        // 也是这条路径)。本地回环 + 单实例 cas,影响极小。
         return Ok(());
     }
-    let auth = headers
+    let auth_raw = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let provided = auth.strip_prefix("Bearer ").unwrap_or("").trim();
+    let provided = auth_raw.strip_prefix("Bearer ").unwrap_or("").trim();
     if provided == expected {
         return Ok(());
     }
-    // x-api-key fallback
-    let alt = headers
+    let xkey_raw = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .trim();
-    if alt == expected {
+        .unwrap_or("");
+    if xkey_raw.trim() == expected {
+        return Ok(());
+    }
+    // Claude Desktop 1.7196.3 内嵌的 Claude Code 子进程会把用户 Anthropic OAuth
+    // access token(`sk-ant-oat01-…`)放在 Authorization Bearer 里发到 inferenceGateway,
+    // **完全不读 `inferenceGatewayApiKey`**(2026-05-19 通过 dump request header 实测确认,
+    // 同 cc_session 不同请求 token 不同 + retry-count 不断递增 → Claude Code 端在 401 后
+    // 走 Anthropic SDK 默认指数 backoff 重试)。
+    //
+    // 来源已是 127.0.0.1 本机回环,本身就是可信边界;通过 `x-claude-code-session-id`
+    // header 识别 Claude Code 来源后放行,OAuth token 在 proxy 里被丢弃,后续按正常
+    // gateway 流程做 model 翻译 + 注入上游真 apiKey 转发。
+    let cc_session = headers
+        .get("x-claude-code-session-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !cc_session.is_empty() {
+        tracing::debug!(
+            target: "cd_proxy",
+            session = cc_session,
+            "claude-code session detected, bypass gateway key check"
+        );
         return Ok(());
     }
     Err(error_response(

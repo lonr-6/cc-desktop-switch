@@ -1,4 +1,4 @@
-// Codex App Transfer 用户反馈 Worker
+// CC Desktop Switch 用户反馈 Worker(Cloudflare 资源名仍是 `codex-app-transfer-feedback`,历史 ID 保留)
 // 接收 multipart/form-data,落 R2 + 通过 Resend 发邮件通知。
 
 export default {
@@ -169,7 +169,7 @@ async function sendNotificationEmail(env, { id, title, body, meta, fileSummary, 
     return { ok: false, error: "NOTIFY_EMAIL_TO not configured" };
   }
 
-  const from = env.NOTIFY_EMAIL_FROM || "Codex App Transfer Feedback <onboarding@resend.dev>";
+  const from = env.NOTIFY_EMAIL_FROM || "CC Desktop Switch Feedback <onboarding@resend.dev>";
   const subject = `[反馈] ${title || "(无标题)"} · ${id}`;
 
   const lines = [

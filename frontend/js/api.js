@@ -463,6 +463,41 @@
       return api('POST', '/api/proxy/logs/open-dir');
     },
 
+    // ── Claude Desktop 转发(端口 18099,跟 Codex CLI 18080 分桶) ──
+    async getClaudeProxyStatus() {
+      const data = await api('GET', '/api/claude-desktop/proxy/status');
+      return {
+        running: !!data.running,
+        listening: !!data.listening,
+        port: data.port || 18099,
+        bind: data.bind || '127.0.0.1',
+        activeProviderId: data.activeProviderId || null,
+        gatewayKeyConfigured: !!data.gatewayKeyConfigured,
+        stats: data.stats || { total: 0, success: 0, failed: 0, today: 0 },
+      };
+    },
+
+    async startClaudeProxy() {
+      return api('POST', '/api/claude-desktop/proxy/start');
+    },
+
+    async stopClaudeProxy() {
+      return api('POST', '/api/claude-desktop/proxy/stop');
+    },
+
+    async getClaudeProxyLogs() {
+      const data = await api('GET', '/api/claude-desktop/proxy/logs');
+      return (data.logs || []).map(mapLog);
+    },
+
+    async clearClaudeProxyLogs() {
+      return api('POST', '/api/claude-desktop/proxy/logs/clear');
+    },
+
+    async openClaudeProxyLogDir() {
+      return api('POST', '/api/claude-desktop/proxy/logs/open-dir');
+    },
+
     async getSettings() {
       return api('GET', '/api/settings');
     },

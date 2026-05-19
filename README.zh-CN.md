@@ -1,9 +1,12 @@
-# CC Desktop Switch
+# CC Desktop Switch · v1.x 存档(Python)
+
+> **本文档为上游 `lonr-6/cc-desktop-switch` v1.x Python 期内容存档**。`Cmochance/cc-desktop-switch` 自 v2 起整体重写为 Rust + Tauri 2,并整合了 `codex-app-transfer` 的 Codex CLI 网关能力。
+>
+> 现行 v2 文档请见:**[README.md(简体中文)](README.md)** · **[README.en.md (English)](README.en.md)**。本文件仅保留以追溯历史叙事,**不**反映当前可用功能。
 
 <p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a> |
-  <a href="README.ja.md">日本語</a> |
+  <a href="README.md">v2 简体中文</a> |
+  <a href="README.en.md">v2 English</a> |
   <a href="docs/CHANGELOG.md">Changelog</a>
 </p>
 

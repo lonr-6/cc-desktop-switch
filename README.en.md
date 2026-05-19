@@ -1,4 +1,4 @@
-# Codex App Transfer
+# CC Desktop Switch
 
 <p align="center">
   <a href="README.md">简体中文</a> |
@@ -7,20 +7,30 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Cmochance/codex-app-transfer/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Cmochance/codex-app-transfer?style=social"></a>
-  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/Cmochance/codex-app-transfer"></a>
+  <a href="https://github.com/Cmochance/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Cmochance/cc-desktop-switch?style=social"></a>
+  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/Cmochance/cc-desktop-switch"></a>
   <a href="https://www.rust-lang.org/"><img alt="Rust" src="https://img.shields.io/badge/Rust-1.80%2B-orange?logo=rust"></a>
   <a href="https://v2.tauri.app/"><img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri"></a>
-  <a href="https://github.com/Cmochance/codex-app-transfer/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Cmochance/codex-app-transfer/total?label=downloads"></a>
+  <a href="https://github.com/Cmochance/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Cmochance/cc-desktop-switch/total?label=downloads"></a>
 </p>
 
-Codex App Transfer is a lightweight desktop config + forwarding tool for the **OpenAI Codex CLI**. It runs a local gateway that translates Codex CLI's Responses API requests (HTTP streaming / non-streaming + `/responses` fallback) into Chat Completions / Gemini Native / Anthropic Messages / Grok Web / other upstream formats, then forwards them to your chosen provider.
+CC Desktop Switch is a lightweight desktop config + forwarding tool for the **official Claude Desktop client and the OpenAI Codex CLI**. It centralises third-party provider management (DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, Xiaomi MiMo, Gemini, Grok, etc.) and runs a local gateway that translates client requests into each upstream's protocol before forwarding to the provider you pick.
 
-Unlike `farion1231/cc-switch` and similar Anthropic-oriented Claude Code tools, this project focuses on **OpenAI Codex CLI**: manage providers, model mapping, forwarding ports, and a logs panel from a desktop UI so Codex CLI can talk to any third-party OpenAI / Gemini / Claude-compatible / Grok inference endpoint.
+- **Claude Desktop track**: manage Anthropic-compatible providers and write the Claude Desktop third-party inference config to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the registry (Windows). Claude Desktop talks to the local gateway at `127.0.0.1`.
+- **Codex CLI track**: a local gateway translates Codex CLI's Responses API requests (HTTP streaming / non-streaming + `/responses` fallback) into Chat Completions / Gemini Native / Anthropic Messages / Grok Web / other upstream formats. Codex CLI talks to this tool at `127.0.0.1:18080`.
 
-After starting forwarding, Codex CLI talks to this tool at `127.0.0.1:18080`. Closing the window minimizes the app to the system tray; right-click the tray icon and choose "Exit" to fully quit.
+Unlike `farion1231/cc-switch` and similar CLI tools, this project is desktop-first: provider management, model mapping, forwarding port, logs panel, and a tray-resident background process. Closing the window minimises the app to the system tray; right-click the tray icon and choose "Exit" to fully quit.
 
-Current version **v2.1.6** (see [Changelog](docs/CHANGELOG.md) and [Releases](https://github.com/Cmochance/codex-app-transfer/releases)).
+Current v2.x release (see [Changelog](docs/CHANGELOG.md) and [Releases](https://github.com/Cmochance/cc-desktop-switch/releases)).
+
+## Project Identity and Heritage
+
+This repository is `Cmochance/cc-desktop-switch` — forked from `lonr-6/cc-desktop-switch`. v2 onward carries two structural changes:
+
+1. **Full rewrite from Python to Rust + Tauri 2**. The original Python stack (FastAPI + PyInstaller + plain JS) was replaced with a Rust workspace + Tauri 2 + axum + reqwest + tokio. The scaffolding was lifted from the sibling repo `codex-app-transfer` (Tauri shell + protocol-conversion crates + record-replay contract tests), so many internal Rust identifiers (`codex_app_transfer_*`), the config directory (`~/.codex-app-transfer/`), the bundle identifier (`store.alyse.codex-app-transfer`), and the gateway key prefix (`cas_`) still **literally contain `codex-app-transfer`**. These are legacy IDs — renaming them would break existing users' configs and the app-update chain, so this release keeps them as-is and a follow-up PR will migrate them.
+2. **codex-app-transfer is integrated into cc-desktop-switch**. On top of the original Claude Desktop integration, v2 adds the Codex CLI gateway and protocol-conversion layer (`crates/codex_integration/` + `crates/proxy/` + `crates/adapters/`), so a single desktop app serves both Claude Desktop and Codex CLI clients.
+
+In short: **product name = cc-desktop-switch**; **internal code IDs still spell codex-app-transfer**, kept as a historical marker of the scaffolding source. If the README, installer, or product UI says "Codex App Transfer", that's a residual string from early v2 — being collapsed to CC Desktop Switch starting 2026-05-19.
 
 ## Preview
 
@@ -51,33 +61,35 @@ With any provider enabled, Codex CLI's model picker shows `<provider> / <real-mo
 
 ## Download
 
-Latest: `https://github.com/Cmochance/codex-app-transfer/releases/latest`
+Latest: `https://github.com/Cmochance/cc-desktop-switch/releases/latest`
 
 Recommended asset naming:
 
 ```text
-Codex-App-Transfer-v<version>-Windows-x64-Setup.exe       Windows NSIS installer (recommended)
-Codex-App-Transfer-v<version>-Windows-x64.msi             Windows MSI (enterprise MDM / GPO)
-Codex-App-Transfer-v<version>-macOS-arm64.dmg             macOS Apple Silicon
-Codex-App-Transfer-v<version>-macOS-x64.dmg               macOS Intel x64 (v2.1.0+, closes #61)
-Codex-App-Transfer-v<version>-Linux-x86_64.deb            Debian / Ubuntu
-Codex-App-Transfer-v<version>-Linux-x86_64.AppImage       Generic Linux x86_64; `chmod +x` and run
+CC-Desktop-Switch-v<version>-Windows-x64-Setup.exe       Windows NSIS installer (recommended)
+CC-Desktop-Switch-v<version>-Windows-x64.msi             Windows MSI (enterprise MDM / GPO)
+CC-Desktop-Switch-v<version>-macOS-arm64.dmg             macOS Apple Silicon
+CC-Desktop-Switch-v<version>-macOS-x64.dmg               macOS Intel x64 (v2.1.0+, closes #61)
+CC-Desktop-Switch-v<version>-Linux-x86_64.deb            Debian / Ubuntu
+CC-Desktop-Switch-v<version>-Linux-x86_64.AppImage       Generic Linux x86_64; `chmod +x` and run
 ```
 
-Each binary ships with `.sha256` and `.sig` (RSA-3072 PKCS#1 v1.5 + SHA-256); the public key `Codex-App-Transfer-release-public.pem` is published as a release asset — download it from [Releases](https://github.com/Cmochance/codex-app-transfer/releases) to verify signatures.
+Each binary ships with `.sha256` and `.sig` (RSA-3072 PKCS#1 v1.5 + SHA-256); the release public key is published as an asset on each release — download it from [Releases](https://github.com/Cmochance/cc-desktop-switch/releases) to verify signatures.
+
+> Historical Releases (v2.1.x and earlier) are still named `Codex-App-Transfer-v<version>-…`; see [Project Identity and Heritage](#project-identity-and-heritage) for the rename context.
 
 Windows builds are not Authenticode-signed yet, so Windows may show an "unknown publisher" warning — use the `.sha256` / `.sig` to verify download integrity.
 
 ## Quick Start
 
-1. Launch Codex App Transfer; the desktop window opens
+1. Launch CC Desktop Switch; the desktop window opens
 2. On the dashboard, click the top-right "+" → pick a preset or add a custom provider; fill in API Base URL, API Key, model mappings
 3. On the "Forwarding" page, click "Start" — the local port `18080` begins listening
 4. In Codex CLI's config (`~/.codex/config.toml`), point `base_url` to `http://127.0.0.1:18080` and set the API Key to the Gateway API Key shown in this tool
 5. Reopen Codex CLI; the model picker auto-lists the current provider's model mappings
 6. ⚠️ **Switch Codex CLI to Full access** (`/approvals` → "Full access"): third-party providers will get stuck on the approval prompt under Codex CLI's default `auto` approval mode. Full access lets tool calls through directly — this is a **practical prerequisite** for using third-party providers
 
-If the desktop window can't open (rare — usually Tauri webview init failed / system webview missing), try restarting first; if it persists, re-download from [Releases](https://github.com/Cmochance/codex-app-transfer/releases) and check `~/.codex-app-transfer/logs/proxy-*.log`, or open an [Issue](https://github.com/Cmochance/codex-app-transfer/issues). v2 has no standalone HTTP admin UI (the admin panel runs in-process via Tauri's `cas://` scheme — **port 18081 is no longer listened on**).
+If the desktop window can't open (rare — usually Tauri webview init failed / system webview missing), try restarting first; if it persists, re-download from [Releases](https://github.com/Cmochance/cc-desktop-switch/releases) and check `~/.codex-app-transfer/logs/proxy-*.log`, or open an [Issue](https://github.com/Cmochance/cc-desktop-switch/issues). v2 has no standalone HTTP admin UI (the admin panel runs in-process via Tauri's `cas://` scheme — **port 18081 is no longer listened on**).
 
 ## Provider compatibility matrix
 
@@ -104,8 +116,8 @@ This tool maps via `provider.models[slot]` (`gpt-5.5` → `deepseek-v4-pro` etc.
 ## Development (v2 / Rust)
 
 ```bash
-git clone https://github.com/Cmochance/codex-app-transfer.git
-cd codex-app-transfer
+git clone https://github.com/Cmochance/cc-desktop-switch.git
+cd cc-desktop-switch
 cargo tauri dev          # launch desktop window with hot-reload
 cargo test --workspace --lib   # run unit tests
 make mac-app             # local macOS bundle to dist/mac/
@@ -191,10 +203,10 @@ Some experimental providers (Grok Web / Gemini CLI OAuth / Antigravity OAuth) in
 
 ### Community contributors
 
-Contributors who improved this project via PRs (in reverse-chronological order of first commit; full list at [Contributors](https://github.com/Cmochance/codex-app-transfer/graphs/contributors)):
+Contributors who improved this project via PRs (in reverse-chronological order of first commit; full list at [Contributors](https://github.com/Cmochance/cc-desktop-switch/graphs/contributors)):
 
-- [@lukegood](https://github.com/lukegood) — MiniMax M2.x compatibility ([#47](https://github.com/Cmochance/codex-app-transfer/pull/47))
-- [@cw881014](https://github.com/cw881014) — early protocol-layer fixes, 3 PRs ([#1](https://github.com/Cmochance/codex-app-transfer/pull/1) / [#7](https://github.com/Cmochance/codex-app-transfer/pull/7) / [#12](https://github.com/Cmochance/codex-app-transfer/pull/12))
+- [@lukegood](https://github.com/lukegood) — MiniMax M2.x compatibility ([#47](https://github.com/Cmochance/cc-desktop-switch/pull/47))
+- [@cw881014](https://github.com/cw881014) — early protocol-layer fixes, 3 PRs ([#1](https://github.com/Cmochance/cc-desktop-switch/pull/1) / [#7](https://github.com/Cmochance/cc-desktop-switch/pull/7) / [#12](https://github.com/Cmochance/cc-desktop-switch/pull/12))
 
 If you've submitted a PR and want to rename / add a link / remove yourself, open an issue.
 

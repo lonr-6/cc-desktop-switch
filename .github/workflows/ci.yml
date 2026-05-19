@@ -1,5 +1,10 @@
 name: ci
 
+# 注意:下文 `-p codex-app-transfer` 中的 `codex-app-transfer` 是 src-tauri crate 的
+# 历史 cargo package 名(脚手架来源遗留 ID),产品身份是 CC Desktop Switch。详见
+# README 顶部"项目身份与沿革"。本工作流暂不重命名 cargo package,等专门的代码级
+# rename PR 一次性切到 `cc-desktop-switch`。
+#
 # 回归门禁分两层:
 # 1. rust-fast-check (always run, 无 apt) — fmt + workspace check/test (exclude
 #    src-tauri) + xtask gen-fixtures 反向 diff. 1-2 min, 覆盖 docs/xtask/普通

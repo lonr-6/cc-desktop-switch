@@ -40,10 +40,16 @@ pub mod presets;
 pub mod proxy;
 pub mod schema;
 pub mod snapshot;
+pub mod telemetry;
 
 pub use proxy::{
     build_router as build_proxy_router, generate_gateway_api_key, ClaudeDesktopProxyState,
     CD_PROXY_BIND, CD_PROXY_PORT,
+};
+
+pub use telemetry::{
+    claude_desktop_proxy_log_dir, claude_desktop_proxy_telemetry, ProxyLogEntry,
+    ProxyStatsSnapshot,
 };
 
 pub use apply::{apply_provider, restore_state, ApplyConfig, ApplyResult};

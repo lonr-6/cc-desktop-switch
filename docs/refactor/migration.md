@@ -2,8 +2,20 @@
 
 > 状态:**已确认,启动 Stage 0**
 > 起草:2026-05-03(对话内由 Claude 起草,经用户确认)
-> 适用范围:`codex-app-transfer` 全仓
+> 适用范围:`codex-app-transfer` 全仓(脚手架来源)→ 整合进 `Cmochance/cc-desktop-switch`(产品身份)
 > 目标版本:v2.0.0(Python 主线 v1.x 继续作为 hotfix 通道至少 1 个版本周期)
+
+---
+
+## 0. 项目身份说明(2026-05-19 追加)
+
+本迁移方案的物理工作发生在 `Cmochance/cc-desktop-switch` 仓库的 `refactor/migrate-to-rust-workspace` 分支上。原文档中所有"`codex-app-transfer`"字面应理解为**重写脚手架的来源**,**不是**最终产品名:
+
+- **产品身份 = `Cmochance/cc-desktop-switch`** —— fork 自 `lonr-6/cc-desktop-switch`,延续 Claude Desktop 第三方供应商管理初心。
+- **重写脚手架来源 = `codex-app-transfer`** —— 包括 Tauri 2 壳、`crates/{proxy,adapters,registry,codex_integration,gemini_oauth}/` 骨架、录制回放契约测试、xtask 构建编排等。这套脚手架被原地"落"到 cc-desktop-switch 仓库,并补上 `crates/claude_desktop/`(从上游 lonr-6 v1.x `backend/config.py` + `backend/registry.py` Claude Desktop 写入逻辑 1:1 转写)。
+- **v2 整合后的产品定位 = "Claude Desktop ⊕ Codex CLI 双客户端的桌面供应商管理 + 网关"**。同一份桌面 app 同时为这两个上游客户端服务。
+
+因此读本文档时,凡看到的 crate 名 `codex_app_transfer_*` / 配置目录 `~/.codex-app-transfer/` / Bundle ID `store.alyse.codex-app-transfer` / Gateway key 前缀 `cas_`,都是**脚手架来源的字面残留**,作为内部 ID 暂时保留以避免破坏现存用户的 config 与 app 自动更新链;后续单独 PR 做迁移。详见 README 顶部"项目身份与沿革"。
 
 ---
 

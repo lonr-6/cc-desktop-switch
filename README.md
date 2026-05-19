@@ -1,4 +1,4 @@
-# Codex App Transfer
+# CC Desktop Switch
 
 <p align="center">
   <a href="README.md">简体中文</a> |
@@ -7,20 +7,30 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Cmochance/codex-app-transfer/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Cmochance/codex-app-transfer?style=social"></a>
-  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/Cmochance/codex-app-transfer"></a>
+  <a href="https://github.com/Cmochance/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Cmochance/cc-desktop-switch?style=social"></a>
+  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/Cmochance/cc-desktop-switch"></a>
   <a href="https://www.rust-lang.org/"><img alt="Rust" src="https://img.shields.io/badge/Rust-1.80%2B-orange?logo=rust"></a>
   <a href="https://v2.tauri.app/"><img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri"></a>
-  <a href="https://github.com/Cmochance/codex-app-transfer/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Cmochance/codex-app-transfer/total?label=downloads"></a>
+  <a href="https://github.com/Cmochance/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Cmochance/cc-desktop-switch/total?label=downloads"></a>
 </p>
 
-Codex App Transfer 是一个面向 **OpenAI Codex CLI** 的轻量桌面配置 + 转发工具。它在本机起一个网关,把 Codex CLI 发出的 Responses API 请求(HTTP 流式 / 非流式 + `/responses` 回退)翻译成 Chat Completions / Gemini Native / Anthropic Messages / Grok Web 等格式,转发到你选择的供应商。
+CC Desktop Switch 是一个面向 **Claude Desktop 官方桌面客户端 + OpenAI Codex CLI** 的轻量桌面配置 + 转发工具。它把第三方供应商(DeepSeek、Kimi、智谱 GLM、阿里云百炼、小米 MiMo、Gemini、Grok 等)的多家 API 统一管起来,本机起一个网关把客户端发出的请求翻译成对应上游协议,再转发到你选择的供应商。
 
-跟 `farion1231/cc-switch` 这类偏 Claude Code 的 Anthropic 工具不同,本项目专注 **OpenAI Codex CLI** 的接入:用桌面 UI 管理供应商、模型映射、转发端口、日志面板,让 Codex CLI 无缝使用第三方 OpenAI / Gemini / Claude-compatible / Grok 等推理服务。
+- **Claude Desktop 流**:管理 Anthropic-compatible API 供应商,把 Claude Desktop 第三方推理设置一键写入 `~/Library/Application Support/Claude/claude_desktop_config.json`(macOS)或注册表(Windows);Claude Desktop 通过 `127.0.0.1` 调本机网关。
+- **Codex CLI 流**:本机网关把 Codex CLI 的 Responses API 请求(HTTP 流式 / 非流式 + `/responses` 回退)翻译成 Chat Completions / Gemini Native / Anthropic Messages / Grok Web 等格式;启动后 Codex CLI 通过 `127.0.0.1:18080` 与本工具通信。
 
-启动转发后,Codex CLI 通过本机 `127.0.0.1:18080` 与本工具通信。关闭窗口会缩到系统托盘继续运行,右键托盘"退出"才完全退出。
+跟 `farion1231/cc-switch` 这类 CLI 工具不同,本项目主打桌面 UI:供应商管理、模型映射、转发端口、日志面板、托盘后台常驻,普通桌面用户都能上手。关闭窗口会缩到系统托盘继续运行,右键托盘"退出"才完全退出。
 
-当前版本 **v2.1.6**(详见 [Changelog](docs/CHANGELOG.md) 与 [Releases](https://github.com/Cmochance/codex-app-transfer/releases))。
+当前 v2.x 版本(详见 [Changelog](docs/CHANGELOG.md) 与 [Releases](https://github.com/Cmochance/cc-desktop-switch/releases))。
+
+## 项目身份与沿革
+
+本仓库是 `Cmochance/cc-desktop-switch` —— fork 自 `lonr-6/cc-desktop-switch`,延续上游的 **Claude Desktop 第三方供应商管理**初心,但 v2 起做了两件事:
+
+1. **从 Python 全量重写到 Rust + Tauri 2**。原 Python(FastAPI + PyInstaller + 原生 JS)桌面壳/转发栈整体替换为 Rust workspace + Tauri 2 + axum + reqwest + tokio,前端继续用原生 JS + Bootstrap。重写过程取自姊妹仓库 `codex-app-transfer` 的脚手架(Tauri shell + 协议转换 crate 体系 + 录制回放契约测试),所以仓库内不少 Rust crate 名(`codex_app_transfer_*`)、配置目录(`~/.codex-app-transfer/`)、Bundle Identifier(`store.alyse.codex-app-transfer`)、Gateway key 前缀(`cas_`)等**内部 ID 仍然字面带 codex-app-transfer**——这些属于历史遗留 ID,改名会破坏现存用户的 config / app 自动更新链,所以本轮发布暂保留,后续单独 PR 做迁移。
+2. **把 codex-app-transfer 整合进 cc-desktop-switch**。除了原 Claude Desktop 适配,v2 增加了 Codex CLI 网关与协议转换层(`crates/codex_integration/` + `crates/proxy/` + `crates/adapters/`),所以一份桌面 app 同时为 Claude Desktop 与 Codex CLI 两个客户端服务。
+
+简言之:**产品名 = cc-desktop-switch**;**内部代码 ID = 仍带 codex-app-transfer 字面,作为脚手架来源的历史标记**。如果你看到 README / 安装包 / 产品 UI 提"Codex App Transfer",那是 v2 早期版本遗留的字面,本轮(2026-05-19)起逐步收敛到 CC Desktop Switch。
 
 ## 界面预览
 
@@ -51,33 +61,35 @@ Codex App Transfer 是一个面向 **OpenAI Codex CLI** 的轻量桌面配置 + 
 
 ## 下载
 
-最新版:`https://github.com/Cmochance/codex-app-transfer/releases/latest`
+最新版:`https://github.com/Cmochance/cc-desktop-switch/releases/latest`
 
 推荐资产命名:
 
 ```text
-Codex-App-Transfer-v<版本>-Windows-x64-Setup.exe       Windows NSIS 安装版(推荐)
-Codex-App-Transfer-v<版本>-Windows-x64.msi             Windows MSI(企业 MDM / GPO)
-Codex-App-Transfer-v<版本>-macOS-arm64.dmg             macOS Apple Silicon
-Codex-App-Transfer-v<版本>-macOS-x64.dmg               macOS Intel x64(v2.1.0+,close #61)
-Codex-App-Transfer-v<版本>-Linux-x86_64.deb            Debian / Ubuntu
-Codex-App-Transfer-v<版本>-Linux-x86_64.AppImage       通用 Linux x86_64,`chmod +x` 直接跑
+CC-Desktop-Switch-v<版本>-Windows-x64-Setup.exe       Windows NSIS 安装版(推荐)
+CC-Desktop-Switch-v<版本>-Windows-x64.msi             Windows MSI(企业 MDM / GPO)
+CC-Desktop-Switch-v<版本>-macOS-arm64.dmg             macOS Apple Silicon
+CC-Desktop-Switch-v<版本>-macOS-x64.dmg               macOS Intel x64(v2.1.0+,close #61)
+CC-Desktop-Switch-v<版本>-Linux-x86_64.deb            Debian / Ubuntu
+CC-Desktop-Switch-v<版本>-Linux-x86_64.AppImage       通用 Linux x86_64,`chmod +x` 直接跑
 ```
 
-每个二进制都附带 `.sha256` 与 `.sig`(RSA-3072 PKCS#1 v1.5 + SHA-256 签名);公钥 `Codex-App-Transfer-release-public.pem` 跟随每个 Release 一起发布,直接从 [Releases](https://github.com/Cmochance/codex-app-transfer/releases) 下载即可验签。
+每个二进制都附带 `.sha256` 与 `.sig`(RSA-3072 PKCS#1 v1.5 + SHA-256 签名);公钥跟随每个 Release 一起发布,直接从 [Releases](https://github.com/Cmochance/cc-desktop-switch/releases) 下载即可验签。
+
+> v2.1.x 及更早历史 Release 仍以 `Codex-App-Transfer-v<版本>-…` 命名,变更点见 [项目身份与沿革](#项目身份与沿革)。
 
 Windows 暂未做 Authenticode 代码签名,系统可能提示未知发布者,可用 `.sha256` / `.sig` 校验下载完整性。
 
 ## 快速开始
 
-1. 启动 Codex App Transfer,弹出桌面窗口
+1. 启动 CC Desktop Switch,弹出桌面窗口
 2. 在仪表盘点右上角加号 → 选择 preset 或自定义供应商,填入 API Base URL、API Key、模型映射
 3. 在"转发"页面点"启动转发",本机 `18080` 端口开始监听
 4. 在 Codex CLI 配置文件(`~/.codex/config.toml`)里把 `base_url` 指向 `http://127.0.0.1:18080`,把 API Key 设为本工具显示的 Gateway API Key
 5. 重新打开 Codex CLI,模型选项就会自动列出当前供应商的模型映射
 6. ⚠️ **必须把 Codex CLI 切到 Full access**(`/approvals` → "Full access"):第三方 provider 在 Codex CLI 默认 `auto` 审批模式下,工具调用会卡审批弹窗;Full access 直接放行工具调用,这是接入第三方 provider 的**事实必要前提**
 
-桌面窗口无法打开时(罕见,通常是 Tauri webview 初始化失败 / 系统 webview 缺失),先尝试重启;若仍异常,从 [Releases](https://github.com/Cmochance/codex-app-transfer/releases) 重新下载并查看 `~/.codex-app-transfer/logs/proxy-*.log`,或开 [Issue](https://github.com/Cmochance/codex-app-transfer/issues) 反馈。v2 架构无独立 HTTP admin UI(管理面板走 Tauri 同进程 `cas://`,**不再监听 18081 端口**)。
+桌面窗口无法打开时(罕见,通常是 Tauri webview 初始化失败 / 系统 webview 缺失),先尝试重启;若仍异常,从 [Releases](https://github.com/Cmochance/cc-desktop-switch/releases) 重新下载并查看 `~/.codex-app-transfer/logs/proxy-*.log`,或开 [Issue](https://github.com/Cmochance/cc-desktop-switch/issues) 反馈。v2 架构无独立 HTTP admin UI(管理面板走 Tauri 同进程 `cas://`,**不再监听 18081 端口**)。
 
 ## 供应商兼容矩阵
 
@@ -104,8 +116,8 @@ Codex CLI 按 OpenAI 模型名提示;第三方 provider 用 `deepseek-v4-pro` / 
 ## 本地开发(v2 / Rust)
 
 ```bash
-git clone https://github.com/Cmochance/codex-app-transfer.git
-cd codex-app-transfer
+git clone https://github.com/Cmochance/cc-desktop-switch.git
+cd cc-desktop-switch
 cargo tauri dev          # 启动桌面窗口,代码改动自动重编译
 cargo test --workspace --lib   # 跑单元测试
 make mac-app             # macOS 本地打包到 dist/mac/
@@ -191,10 +203,10 @@ v2 默认监听 `18080`(转发);管理界面走 Tauri 同进程 `cas://`,不再�
 
 ### 社区贡献者
 
-通过 PR 直接改进过本项目的贡献者(按首次提交时间倒序;完整列表见 [Contributors](https://github.com/Cmochance/codex-app-transfer/graphs/contributors)):
+通过 PR 直接改进过本项目的贡献者(按首次提交时间倒序;完整列表见 [Contributors](https://github.com/Cmochance/cc-desktop-switch/graphs/contributors)):
 
-- [@lukegood](https://github.com/lukegood) — MiniMax M2.x 兼容性([#47](https://github.com/Cmochance/codex-app-transfer/pull/47))
-- [@cw881014](https://github.com/cw881014) — 早期协议层 3 PR([#1](https://github.com/Cmochance/codex-app-transfer/pull/1) / [#7](https://github.com/Cmochance/codex-app-transfer/pull/7) / [#12](https://github.com/Cmochance/codex-app-transfer/pull/12))
+- [@lukegood](https://github.com/lukegood) — MiniMax M2.x 兼容性([#47](https://github.com/Cmochance/cc-desktop-switch/pull/47))
+- [@cw881014](https://github.com/cw881014) — 早期协议层 3 PR([#1](https://github.com/Cmochance/cc-desktop-switch/pull/1) / [#7](https://github.com/Cmochance/cc-desktop-switch/pull/7) / [#12](https://github.com/Cmochance/cc-desktop-switch/pull/12))
 
 如果提交过 PR 想改名 / 补链接 / 移除,开 issue 跟我说一声。
 

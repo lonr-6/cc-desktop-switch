@@ -208,6 +208,23 @@ label[for],
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
+/* nav 顶部 Claude / Codex 真实 logo —— 尺寸对齐 Bootstrap Icons (16px) */
+.route-tab-logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+/* segmented(转发/设置/引导 子 tab)里的 Claude / Codex logo */
+.segmented-logo {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex-shrink: 0;
+  vertical-align: -2px;
+}
+
 .page {
   display: none;
 }

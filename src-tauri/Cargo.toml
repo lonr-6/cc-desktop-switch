@@ -1,7 +1,7 @@
 [package]
 name = "codex-app-transfer"
 version = "2.1.9"
-description = "Codex App Transfer - Tauri 2 shell"
+description = "CC Desktop Switch - Tauri 2 shell (codex-app-transfer scaffolding heritage)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

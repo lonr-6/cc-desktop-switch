@@ -12,18 +12,21 @@
 
 use std::sync::OnceLock;
 
+use std::fs;
+
 use axum::{extract::Path, http::StatusCode, response::IntoResponse, Json};
 use codex_app_transfer_claude_desktop::{
     apply::{ApplyConfig, ApplyResult},
-    apply_provider, build_proxy_router, builtin_presets, generate_gateway_api_key,
-    has_snapshot, list_snapshots, load_config, macos as cd_macos, restore_state, save_config,
+    apply_provider, build_proxy_router, builtin_presets, claude_desktop_proxy_log_dir,
+    claude_desktop_proxy_telemetry, generate_gateway_api_key, has_snapshot, list_snapshots,
+    load_config, macos as cd_macos, restore_state, save_config,
     schema::{ClaudeDesktopConfig, Provider as ClaudeDesktopProvider},
     ClaudeDesktopPaths, ClaudeDesktopProxyState, CD_PROXY_BIND, CD_PROXY_PORT,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::common::APP_VERSION;
+use super::common::{open_directory, APP_VERSION};
 
 /// 全局 Claude Desktop proxy 状态 —— 单例,首次 apply 时初始化并启动 18099 端口
 /// 的 axum server;cas 进程退出由 OS 自动清理。
@@ -330,6 +333,132 @@ pub async fn apply(Json(req): Json<ApplyRequest>) -> impl IntoResponse {
             .into_response()
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+// ── /api/claude-desktop/proxy/* —— Claude Desktop 转发服务运行时控制 ──
+//
+// 跟 `/api/proxy/*`(Codex CLI 转发,端口 18080)对称,但底层模型不同:
+// - Codex 端走 [`ProxyManager`] 单实例 + 显式 start/stop(端口可断可起)。
+// - Claude Desktop 端走 [`CD_PROXY`] OnceLock(端口 18099 起来后一直 listen),
+//   start/stop 控制的是 **proxy state 里的 active provider**:有 active 才能
+//   做 model 翻译 + 上游转发;清空 active 后请求返 503 no_active_provider。
+
+/// GET `/api/claude-desktop/proxy/status` —— Claude Desktop 转发服务状态 + 统计
+pub async fn proxy_status() -> impl IntoResponse {
+    let mut active_provider_id: Option<String> = None;
+    let mut gateway_key_configured = false;
+    if let Some(state) = CD_PROXY.get() {
+        let snap = state.inner.read().await;
+        active_provider_id = snap.provider.as_ref().map(|p| p.id.clone());
+        gateway_key_configured = !snap.gateway_api_key.is_empty();
+    }
+    let listening = CD_PROXY.get().is_some();
+    let running = listening && active_provider_id.is_some();
+    Json(json!({
+        "running": running,
+        "listening": listening,
+        "port": CD_PROXY_PORT,
+        "bind": CD_PROXY_BIND,
+        "activeProviderId": active_provider_id,
+        "gatewayKeyConfigured": gateway_key_configured,
+        "stats": claude_desktop_proxy_telemetry().stats.snapshot(),
+    }))
+    .into_response()
+}
+
+/// POST `/api/claude-desktop/proxy/start` —— 软启动:确保 18099 init + 把 cas
+/// 内部 config 里的 active provider 推给 proxy state。等价于在 Claude Desktop
+/// tab 上点 apply 但**不**重写 Claude Desktop 配置文件 / plist(纯 runtime)。
+pub async fn proxy_start() -> impl IntoResponse {
+    let (_paths, cfg) = match load_or_err() {
+        Ok(v) => v,
+        Err(resp) => return resp.into_response(),
+    };
+    let Some(active_id) = cfg.active_provider.as_ref() else {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "无 active provider —— 请先在 Claude Desktop 页添加 provider 并设为默认",
+        )
+        .into_response();
+    };
+    let Some(provider) = cfg.providers.iter().find(|p| &p.id == active_id) else {
+        return err(
+            StatusCode::NOT_FOUND,
+            format!("active provider {active_id} 不在 providers 列表"),
+        )
+        .into_response();
+    };
+    if cfg.gateway_api_key.trim().is_empty() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "gateway api key 未生成 —— 请先在 Claude Desktop 页点击 apply",
+        )
+        .into_response();
+    }
+    let state = cd_proxy_or_init();
+    state
+        .set_active(provider.clone(), cfg.gateway_api_key.clone())
+        .await;
+    claude_desktop_proxy_telemetry().logs.add(
+        "INFO",
+        format!(
+            "forwarding started :{CD_PROXY_PORT} (provider={})",
+            provider.id
+        ),
+    );
+    Json(json!({
+        "success": true,
+        "running": true,
+        "port": CD_PROXY_PORT,
+        "activeProviderId": active_id,
+    }))
+    .into_response()
+}
+
+/// POST `/api/claude-desktop/proxy/stop` —— 软停止:清空 proxy state 里的 active
+/// provider。18099 端口仍 listen(OnceLock 启动后无法 graceful shutdown),
+/// 但所有请求返 503 no_active_provider。
+pub async fn proxy_stop() -> impl IntoResponse {
+    if let Some(state) = CD_PROXY.get() {
+        state.clear_active().await;
+        claude_desktop_proxy_telemetry()
+            .logs
+            .add("INFO", "forwarding stopped (active provider cleared)");
+    }
+    Json(json!({"success": true, "running": false})).into_response()
+}
+
+/// GET `/api/claude-desktop/proxy/logs`
+pub async fn proxy_logs() -> impl IntoResponse {
+    Json(json!({"logs": claude_desktop_proxy_telemetry().logs.get_all()})).into_response()
+}
+
+/// POST `/api/claude-desktop/proxy/logs/clear`
+pub async fn proxy_logs_clear() -> impl IntoResponse {
+    claude_desktop_proxy_telemetry().logs.clear();
+    Json(json!({"success": true})).into_response()
+}
+
+/// POST `/api/claude-desktop/proxy/logs/open-dir`
+pub async fn proxy_logs_open_dir() -> impl IntoResponse {
+    let Some(path) = claude_desktop_proxy_log_dir() else {
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot locate log directory",
+        )
+        .into_response();
+    };
+    if let Err(e) = fs::create_dir_all(&path) {
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("create log directory failed: {e}"),
+        )
+        .into_response();
+    }
+    match open_directory(&path) {
+        Ok(_) => Json(json!({"success": true, "path": path.to_string_lossy()})).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 

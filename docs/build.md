@@ -1,4 +1,6 @@
-# Building Codex App Transfer
+# Building CC Desktop Switch
+
+> 本仓库即 `Cmochance/cc-desktop-switch`,产品名为 **CC Desktop Switch**。本文档历史版本里的"Codex App Transfer"是 v2 Rust 重写脚手架来源,详见 README 顶部"项目身份与沿革"。
 
 Phase 2 起 release pipeline 全部走 GitHub Actions
 (`.github/workflows/release.yml`)。本地仓库**不再**需要 Docker / Wine /
@@ -93,7 +95,7 @@ cargo run -p xtask --release -- release-bundle \
 
 ```bash
 make mac-app
-# → dist/mac/Codex App Transfer.app (未签, 双击启动有 Gatekeeper 警告)
+# → dist/mac/CC Desktop Switch.app (未签, 双击启动有 Gatekeeper 警告)
 ```
 
 只用于本地开发自测。要分发的 release 一律走 GitHub Actions。
@@ -103,26 +105,28 @@ make mac-app
 `release.yml` 一次成功执行后落到 GitHub release 的资产:
 
 ```
-Codex-App-Transfer-v2.0.1-macOS-arm64.dmg
-Codex-App-Transfer-v2.0.1-macOS-arm64.dmg.sha256
-Codex-App-Transfer-v2.0.1-macOS-arm64.dmg.sig
-Codex-App-Transfer-v2.0.1-Linux-x86_64.deb
-Codex-App-Transfer-v2.0.1-Linux-x86_64.deb.sha256
-Codex-App-Transfer-v2.0.1-Linux-x86_64.deb.sig
-Codex-App-Transfer-v2.0.1-Linux-x86_64.AppImage
-Codex-App-Transfer-v2.0.1-Linux-x86_64.AppImage.sha256
-Codex-App-Transfer-v2.0.1-Linux-x86_64.AppImage.sig
-Codex-App-Transfer-v2.0.1-Windows-x64-Setup.exe
-Codex-App-Transfer-v2.0.1-Windows-x64-Setup.exe.sha256
-Codex-App-Transfer-v2.0.1-Windows-x64-Setup.exe.sig
-Codex-App-Transfer-v2.0.1-Windows-x64.msi
-Codex-App-Transfer-v2.0.1-Windows-x64.msi.sha256
-Codex-App-Transfer-v2.0.1-Windows-x64.msi.sig
-Codex-App-Transfer-release-public.pem
+CC-Desktop-Switch-v2.2.0-macOS-arm64.dmg
+CC-Desktop-Switch-v2.2.0-macOS-arm64.dmg.sha256
+CC-Desktop-Switch-v2.2.0-macOS-arm64.dmg.sig
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.deb
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.deb.sha256
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.deb.sig
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.AppImage
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.AppImage.sha256
+CC-Desktop-Switch-v2.2.0-Linux-x86_64.AppImage.sig
+CC-Desktop-Switch-v2.2.0-Windows-x64-Setup.exe
+CC-Desktop-Switch-v2.2.0-Windows-x64-Setup.exe.sha256
+CC-Desktop-Switch-v2.2.0-Windows-x64-Setup.exe.sig
+CC-Desktop-Switch-v2.2.0-Windows-x64.msi
+CC-Desktop-Switch-v2.2.0-Windows-x64.msi.sha256
+CC-Desktop-Switch-v2.2.0-Windows-x64.msi.sig
+CC-Desktop-Switch-release-public.pem
 latest.json
 latest.json.sha256
 latest.json.sig
 ```
+
+> v2.1.x 及以前的历史 release 仍以 `Codex-App-Transfer-v<版本>-…` 命名,从 v2.2 起切到 `CC-Desktop-Switch-` 前缀。
 
 格式说明:
 - macOS 只发 `.dmg`(Tauri 不直出 `.pkg`,`.pkg` 已退役)
@@ -133,7 +137,7 @@ latest.json.sig
 
 ## 验签
 
-公钥:`Codex-App-Transfer-release-public.pem`(随每个 release 一起发布)
+公钥:`CC-Desktop-Switch-release-public.pem`(v2.2+,随每个 release 一起发布;v2.1.x 及以前的历史 release 公钥仍叫 `Codex-App-Transfer-release-public.pem`)
 
 签名协议:RSA-3072 PKCS#1 v1.5 over the raw file bytes,SHA-256 哈希,
 签名 base64 存在 `<file>.sig`。
@@ -147,12 +151,12 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 pub = serialization.load_pem_public_key(
-    Path('Codex-App-Transfer-release-public.pem').read_bytes())
+    Path('CC-Desktop-Switch-release-public.pem').read_bytes())
 asset = sys.argv[1]
 sig = base64.b64decode(Path(asset + '.sig').read_text())
 pub.verify(sig, Path(asset).read_bytes(), padding.PKCS1v15(), hashes.SHA256())
 print('OK')
-" Codex-App-Transfer-v2.0.1-Windows-x64-Setup.exe
+" CC-Desktop-Switch-v2.2.0-Windows-x64-Setup.exe
 ```
 
 `latest.json` 和它的 `.sig` 同样可用上面命令验签。
