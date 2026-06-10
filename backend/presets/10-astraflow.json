@@ -1,0 +1,25 @@
+{
+  "id": "astraflow",
+  "name": "Astraflow",
+  "baseUrl": "https://api-us-ca.umodelverse.ai/v1",
+  "baseUrlOptions": [
+    {
+      "label": "Global",
+      "value": "https://api-us-ca.umodelverse.ai/v1"
+    },
+    {
+      "label": "China",
+      "value": "https://api.modelverse.cn/v1"
+    }
+  ],
+  "authScheme": "bearer",
+  "apiFormat": "openai",
+  "models": {
+    "sonnet": "",
+    "haiku": "",
+    "opus": "",
+    "default": ""
+  },
+  "requestOptions": {},
+  "isBuiltin": true
+}

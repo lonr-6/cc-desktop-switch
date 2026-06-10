@@ -14,7 +14,7 @@
   <a href="https://github.com/lonr-6/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/lonr-6/cc-desktop-switch/total?label=downloads"></a>
 </p>
 
-CC Desktop Switch is a lightweight desktop app for the official Claude Desktop client. It lets you manage third-party Anthropic-compatible API providers such as DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, and Xiaomi MiMo, then apply the right Claude Desktop 3P configuration with one click.
+CC Desktop Switch is a lightweight desktop app for the official Claude Desktop client. It lets you manage third-party Anthropic-compatible API providers such as DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, Xiaomi MiMo, and Astraflow, then apply the right Claude Desktop 3P configuration with one click.
 
 This project is focused on Claude Desktop on Windows and macOS. It is different from CLI-oriented tools such as `farion1231/cc-switch`: the goal here is to give regular desktop users a simple UI for provider setup, model mapping, health checks, and local gateway compatibility.
 
@@ -51,7 +51,7 @@ Since v1.0.18, Claude Desktop is configured to call the local CC Desktop Switch 
 
 ## What It Does
 
-- Manages DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, Xiaomi MiMo, and custom third-party providers.
+- Manages DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, Xiaomi MiMo, Astraflow, and custom third-party providers.
 - Applies Claude Desktop third-party inference settings on Windows and macOS.
 - Uses a local gateway to keep model mapping, protocol compatibility, extra headers, and upstream keys under local control.
 - Shows only explicitly mapped Claude-safe model routes in Claude Desktop.
