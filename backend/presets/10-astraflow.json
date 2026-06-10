@@ -2,6 +2,17 @@
   "id": "astraflow",
   "name": "Astraflow",
   "baseUrl": "https://api-us-ca.umodelverse.ai/v1",
+  "apiKeyEnv": "ASTRAFLOW_API_KEY",
+  "apiKeyEnvOptions": [
+    {
+      "label": "Global",
+      "value": "ASTRAFLOW_API_KEY"
+    },
+    {
+      "label": "China",
+      "value": "ASTRAFLOW_CN_API_KEY"
+    }
+  ],
   "baseUrlOptions": [
     {
       "label": "Global",

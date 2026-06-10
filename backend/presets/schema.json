@@ -74,6 +74,30 @@
         "additionalProperties": false
       }
     },
+    "apiKeyEnv": {
+      "type": "string"
+    },
+    "apiKeyEnvOptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "extraHeaders": {
       "type": "object",
       "additionalProperties": {
