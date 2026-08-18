@@ -325,7 +325,9 @@ def update_provider(provider_id: str, data: dict) -> Optional[dict]:
                 updated["requestOptions"] = p.get("requestOptions", {})
 
             if "models" in data and isinstance(data["models"], dict):
-                merged_models = dict(p.get("models", {}))
+                # load_config() 给 models 注入的旧别名只用于兼容读取；merge 前先
+                # 归一化剥掉它们，否则显式清空的槽位会被旧别名回落重新填上。
+                merged_models = normalize_model_mappings(p.get("models", {}))
                 merged_models.update(data["models"])
                 updated["models"] = normalize_model_mappings(merged_models)
 

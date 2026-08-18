@@ -133,6 +133,46 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(updated["apiKey"], "new-key")
 
+    def test_update_provider_clears_model_slots_with_legacy_aliases(self):
+        provider = cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {
+                "default": "deepseek-v4-pro",
+                "opus_4_7": "deepseek-v4-pro",
+                "sonnet_4_6": "deepseek-v4-pro",
+                "sonnet_4_5": "deepseek-v4-pro",
+                "haiku_4_5": "deepseek-v4-flash",
+            },
+        })
+
+        updated = cfg.update_provider(provider["id"], {
+            "name": "DeepSeek",
+            "models": {
+                "default": "deepseek-v4-pro",
+                "opus_4_7": "",
+                "opus_4_6": "",
+                "opus_3": "",
+                "sonnet_4_6": "",
+                "sonnet_4_5": "",
+                "haiku_4_5": "",
+            },
+        })
+
+        self.assertEqual(updated["models"]["opus_4_7"], "")
+        self.assertEqual(updated["models"]["sonnet_4_6"], "")
+        self.assertEqual(updated["models"]["haiku_4_5"], "")
+
+        saved = cfg.get_provider(provider["id"])["models"]
+        self.assertEqual(saved["opus_4_7"], "")
+        self.assertEqual(saved["sonnet_4_6"], "")
+        self.assertEqual(saved["sonnet_4_5"], "")
+        self.assertEqual(saved["haiku_4_5"], "")
+        self.assertEqual(saved["default"], "deepseek-v4-pro")
+
     def test_load_config_accepts_utf8_bom(self):
         config = copy.deepcopy(cfg.DEFAULT_CONFIG)
         config["gatewayApiKey"] = "ccds_gateway_secret123456"
