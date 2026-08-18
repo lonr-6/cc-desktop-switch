@@ -29,7 +29,7 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.25"
+APP_VERSION = "1.0.26"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
