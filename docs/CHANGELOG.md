@@ -7,7 +7,18 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+## v1.0.26
+
+Release notes: [docs/release-notes-v1.0.26.md](release-notes-v1.0.26.md)
+
+- Fixed legacy model aliases restoring explicitly removed Opus, Sonnet, and Haiku mappings.
+- Preserved real upstream errors unless a response explicitly rejects thinking/effort fields.
+- Normalized OpenAI-compatible preset metadata.
+- Cleaned only CCDS-managed Claude policy values during a real Windows uninstall while preserving upgrades.
+- Added cross-platform CI, NSIS compilation, and current Node 24 GitHub Actions.
+
 ## v1.0.25
+
 
 Release notes: [docs/release-notes-v1.0.25.md](release-notes-v1.0.25.md)
 
