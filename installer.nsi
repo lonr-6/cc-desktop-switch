@@ -25,6 +25,9 @@ RequestExecutionLevel admin
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
 
+!define CLAUDE_POLICY_KEY "Software\Policies\Claude"
+Var UninstallIsUpgrade
+
 !define MUI_ABORTWARNING
 
 !ifdef ICON_FILE
@@ -61,7 +64,7 @@ Function .onInit
 
     ${If} $R0 != ""
         DetailPrint "Existing version detected. The installer will uninstall it first."
-        ExecWait '"$R0" /S'
+        ExecWait '"$R0" /S /UPGRADE'
     ${EndIf}
 FunctionEnd
 
@@ -70,6 +73,33 @@ Function CloseRunningApp
     nsExec::ExecToStack 'taskkill /IM "CC-Desktop-Switch.exe" /T /F'
     Pop $0
     Pop $1
+FunctionEnd
+
+Function un.onInit
+    StrCpy $UninstallIsUpgrade "0"
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} "$R0" "/UPGRADE" $R1
+    IfErrors done_uninit
+    StrCpy $UninstallIsUpgrade "1"
+done_uninit:
+FunctionEnd
+
+Function un.ClearClaudePolicy
+    ReadRegStr $0 HKCU "${CLAUDE_POLICY_KEY}" "ccds_managed"
+    StrCmp $0 "true" 0 done_clear_policy
+    DetailPrint "Removing Claude Desktop policy values managed by CC Desktop Switch..."
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceProvider"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceGatewayBaseUrl"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceGatewayApiKey"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceGatewayAuthScheme"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceGatewayHeaders"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "inferenceModels"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "isClaudeCodeForDesktopEnabled"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "coworkEgressAllowedHosts"
+    DeleteRegValue HKCU "${CLAUDE_POLICY_KEY}" "ccds_managed"
+    DeleteRegKey /ifempty HKCU "${CLAUDE_POLICY_KEY}"
+done_clear_policy:
 FunctionEnd
 
 Section "Main" SEC01
@@ -102,6 +132,9 @@ SectionEnd
 
 Section "Uninstall"
     Call un.CloseRunningApp
+    ${If} $UninstallIsUpgrade != "1"
+        Call un.ClearClaudePolicy
+    ${EndIf}
     Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
     RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
     RMDir /r "$INSTDIR"

@@ -369,15 +369,34 @@ def rectify_claude_code_billing_header(body: dict, enabled: bool = True) -> int:
 
 
 def _is_max_unsupported_error(status_code: int, error_text: str) -> bool:
-    """判断上游错误是否因为不支持 max/thinking/output_config 导致。"""
+    """只把明确拒绝 thinking/effort 字段的 400/422 识别为 Max 不兼容。"""
     if status_code not in (400, 422):
         return False
     text = (error_text or "").lower()
-    keywords = [
-        "output_config", "thinking", "effort", "max",
-        "not supported", "unsupported", "invalid parameter",
-    ]
-    return any(kw in text for kw in keywords)
+    parameter_markers = (
+        "output_config",
+        "output config",
+        "reasoning_effort",
+        "reasoning effort",
+        "thinking",
+        "effort",
+    )
+    rejection_markers = (
+        "not supported",
+        "unsupported",
+        "invalid parameter",
+        "invalid value",
+        "unknown parameter",
+        "unknown field",
+        "unrecognized",
+        "not allowed",
+        "unexpected",
+        "extra inputs are not permitted",
+    )
+    return (
+        any(marker in text for marker in parameter_markers)
+        and any(marker in text for marker in rejection_markers)
+    )
 
 
 def _redact_sensitive_text(value: str, limit: int = 500) -> str:

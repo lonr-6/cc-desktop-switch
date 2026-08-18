@@ -2871,7 +2871,7 @@ class SingleInstanceStartupTests(unittest.TestCase):
         kernel32 = self.FakeKernel32(handle=123, last_error=0)
 
         with patch("main.sys.platform", "win32"):
-            with patch("main.ctypes.windll", self.FakeWinDll(kernel32)):
+            with patch("main.ctypes.windll", self.FakeWinDll(kernel32), create=True):
                 with patch("main._single_instance_mutex", None):
                     self.assertTrue(acquire_single_instance_lock())
                     self.assertEqual(kernel32.requested_name, "Local\\CCDesktopSwitch.SingleInstance")
@@ -2884,7 +2884,7 @@ class SingleInstanceStartupTests(unittest.TestCase):
         kernel32 = self.FakeKernel32(handle=456, last_error=183)
 
         with patch("main.sys.platform", "win32"):
-            with patch("main.ctypes.windll", self.FakeWinDll(kernel32)):
+            with patch("main.ctypes.windll", self.FakeWinDll(kernel32), create=True):
                 with patch("main._single_instance_mutex", None):
                     self.assertFalse(acquire_single_instance_lock())
 
