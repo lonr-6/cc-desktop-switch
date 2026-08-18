@@ -59,5 +59,19 @@ class InstallerCleanupTests(unittest.TestCase):
             )
 
 
+class WorkflowActionVersionTests(unittest.TestCase):
+    def test_workflows_use_current_node_24_actions(self):
+        test_workflow = (ROOT / ".github/workflows/test.yml").read_text(encoding="utf-8")
+        release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        combined = test_workflow + "\n" + release_workflow
+        self.assertIn("actions/checkout@v6", test_workflow)
+        self.assertIn("actions/setup-python@v6", test_workflow)
+        self.assertIn("actions/setup-node@v6", test_workflow)
+        self.assertIn("actions/checkout@v6", release_workflow)
+        self.assertIn("actions/setup-python@v6", release_workflow)
+        self.assertNotIn("actions/checkout@v4", combined)
+        self.assertNotIn("actions/setup-python@v5", combined)
+
+
 if __name__ == "__main__":
     unittest.main()
