@@ -47,6 +47,16 @@ jobs:
               for line in embedded.splitlines()
           )
           exec(compile(code, str(workflow), 'exec'), {'__name__': '__main__'})
+
+          generated_test = Path('tests/test_maintenance_regressions.py')
+          lines = generated_test.read_text(encoding='utf-8').splitlines()
+          for index, line in enumerate(lines):
+              if 'self.assertIn("ExecWait' in line and '/UPGRADE' in line:
+                  lines[index] = '        self.assertIn("/S /UPGRADE", source)'
+                  break
+          else:
+              raise RuntimeError('Could not repair the generated NSIS assertion')
+          generated_test.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
           rm -f .github/workflows/maintenance-trigger.yml
 
