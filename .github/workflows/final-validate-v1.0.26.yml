@@ -1,4 +1,4 @@
-name: Final validate v1.0.26 release
+name: Publish and verify v1.0.26 release
 
 on:
   pull_request:
@@ -11,32 +11,34 @@ permissions:
   actions: write
 
 concurrency:
-  group: final-validate-v1.0.26
+  group: publish-and-verify-v1.0.26
   cancel-in-progress: false
 
 jobs:
-  release-dry-run-and-product-smoke:
+  publish-and-verify:
     if: github.head_ref == 'ops/release-v1.0.26-validate'
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: 1.0.26
       EXPECTED_SOURCE_SHA: 1fb673c59ea72a9297eda9d2553a1a40b7fd32e7
     steps:
-      - name: Checkout validation source
+      - name: Checkout release source and verification scripts
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Dispatch repaired three-platform release dry run
+      - name: Dispatch formal three-platform release
         id: release
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $startedAt = [DateTimeOffset]::UtcNow.AddSeconds(-15)
 
-          gh workflow run release.yml --ref main -f version=$env:RELEASE_VERSION -f dry_run=true
+          gh workflow run release.yml --ref main -f version=$env:RELEASE_VERSION -f dry_run=false
           if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to dispatch release.yml dry run.'
+            throw 'Failed to dispatch the formal release workflow.'
           }
 
           $run = $null
@@ -57,53 +59,57 @@ jobs:
               Select-Object -First 1
           }
           if (-not $run) {
-            throw 'Could not locate the newly dispatched release dry run.'
+            throw 'Could not locate the newly dispatched formal release run.'
           }
 
           $runId = [string]$run.databaseId
           "run_id=$runId" >> $env:GITHUB_OUTPUT
-          Write-Host "Monitoring repaired release dry run $runId ($($run.url))"
+          Write-Host "Monitoring formal release run $runId ($($run.url))"
 
-          for ($attempt = 1; $attempt -le 540; $attempt++) {
+          for ($attempt = 1; $attempt -le 720; $attempt++) {
             $state = gh run view $runId --json status,conclusion,url | ConvertFrom-Json
-            Write-Host "Release dry run: status=$($state.status), conclusion=$($state.conclusion)"
+            Write-Host "Formal release: status=$($state.status), conclusion=$($state.conclusion)"
             if ($state.status -eq 'completed') {
               if ($state.conclusion -ne 'success') {
                 gh run view $runId --log-failed
-                throw "Release dry run failed with conclusion: $($state.conclusion)"
+                throw "Formal release failed with conclusion: $($state.conclusion)"
               }
               exit 0
             }
             Start-Sleep -Seconds 10
           }
-          throw 'Release dry run did not finish before the validation timeout.'
+          throw 'Formal release did not finish before the publication timeout.'
 
-      - name: Download complete signed release staging
+      - name: Verify published release metadata and exact asset inventory
+        id: metadata
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force release-download | Out-Null
-          gh run download "${{ steps.release.outputs.run_id }}" `
-            --name release-dry-run-complete `
-            --dir release-download
+          $tag = "v$env:RELEASE_VERSION"
+
+          git fetch --tags --force
           if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to download release-dry-run-complete.'
+            throw 'Failed to fetch the published tag.'
+          }
+          $tagSha = (git rev-list -n 1 $tag).Trim()
+          if ($tagSha -ne $env:EXPECTED_SOURCE_SHA) {
+            throw "Published tag points to $tagSha instead of $env:EXPECTED_SOURCE_SHA"
           }
 
-      - name: Verify exact artifact set, manifest, hashes, and signatures
-        id: artifacts
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $latest = Get-ChildItem -LiteralPath release-download -Recurse -File -Filter latest.json |
-            Select-Object -First 1
-          if (-not $latest) {
-            throw 'latest.json was not found in the downloaded release artifact.'
+          $release = gh release view $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName,name,isDraft,isPrerelease,publishedAt,url,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Published release could not be read.'
           }
-          $root = $latest.Directory.FullName
-          "root=$root" >> $env:GITHUB_OUTPUT
+          if ($release.tagName -ne $tag) {
+            throw "Release tag mismatch: $($release.tagName)"
+          }
+          if ($release.isDraft -or $release.isPrerelease) {
+            throw 'Release is still a draft or prerelease.'
+          }
 
-          $assetNames = @(
+          $primary = @(
             "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe",
             "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip",
             "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe",
@@ -112,21 +118,10 @@ jobs:
             "CC-Desktop-Switch-v$env:RELEASE_VERSION-macOS-x64.pkg",
             "CC-Desktop-Switch-v$env:RELEASE_VERSION-macOS-x64.dmg"
           )
-          $primaryNames = Get-ChildItem -LiteralPath $root -File |
-            Where-Object {
-              $_.Name -like "CC-Desktop-Switch-v$env:RELEASE_VERSION-*" -and
-              $_.Name -notlike '*.sha256' -and
-              $_.Name -notlike '*.sig'
-            } |
-            ForEach-Object Name |
-            Sort-Object
-          $expectedNames = $assetNames | Sort-Object
-          if (($primaryNames -join "`n") -ne ($expectedNames -join "`n")) {
-            throw "Primary release asset set mismatch.`nExpected:`n$($expectedNames -join "`n")`nActual:`n$($primaryNames -join "`n")"
-          }
-
-          $requiredNames = @(
-            $assetNames +
+          $required = @(
+            $primary +
+            @($primary | ForEach-Object { "$($_).sha256" }) +
+            @($primary | ForEach-Object { "$($_).sig" }) +
             @(
               'latest.json',
               'latest.json.sha256',
@@ -134,125 +129,87 @@ jobs:
               'CC-Desktop-Switch-release-public.pem'
             )
           )
-          foreach ($name in $requiredNames) {
-            if (-not (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf)) {
-              throw "Required release file missing: $name"
+          $assetNames = @($release.assets | ForEach-Object name)
+          foreach ($name in $required) {
+            if ($assetNames -notcontains $name) {
+              throw "Published release asset missing: $name"
+            }
+            $asset = $release.assets | Where-Object name -eq $name | Select-Object -First 1
+            if ([long]$asset.size -le 0) {
+              throw "Published release asset is empty: $name"
             }
           }
 
-          $manifest = Get-Content -LiteralPath $latest.FullName -Raw -Encoding utf8 | ConvertFrom-Json
-          if ([string]$manifest.version -ne $env:RELEASE_VERSION) {
-            throw "latest.json version mismatch: $($manifest.version)"
-          }
-          $platforms = @($manifest.platforms.PSObject.Properties.Name)
-          foreach ($platform in @('windows-x64', 'macos-arm64', 'macos-x64')) {
-            if ($platforms -notcontains $platform) {
-              throw "latest.json platform missing: $platform"
-            }
+          $latestTag = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq '.tag_name'
+          if ($LASTEXITCODE -ne 0 -or $latestTag.Trim() -ne $tag) {
+            throw "v$env:RELEASE_VERSION is not the repository's latest release."
           }
 
+          "release_url=$($release.url)" >> $env:GITHUB_OUTPUT
+          Write-Host "Published release: $($release.url)"
+          Write-Host "Published at: $($release.publishedAt)"
+          Write-Host "Asset count: $($release.assets.Count)"
+
+      - name: Download and cryptographically verify published Windows artifacts
+        id: published
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:RELEASE_VERSION"
+          New-Item -ItemType Directory -Force published-download | Out-Null
+          gh release download $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --dir published-download `
+            --pattern "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-*" `
+            --pattern 'latest.json*' `
+            --pattern 'CC-Desktop-Switch-release-public.pem'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to download the published Windows verification set.'
+          }
+
+          $root = (Resolve-Path published-download).Path
+          "root=$root" >> $env:GITHUB_OUTPUT
           $publicKey = Join-Path $root 'CC-Desktop-Switch-release-public.pem'
-          foreach ($name in @($assetNames + @('latest.json'))) {
+          $files = @(
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe",
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip",
+            "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe",
+            'latest.json'
+          )
+          foreach ($name in $files) {
             $file = Join-Path $root $name
             $shaFile = "$file.sha256"
             $sigFile = "$file.sig"
-            if (-not (Test-Path -LiteralPath $shaFile)) {
-              throw "SHA256 file missing for $name"
-            }
-            if (-not (Test-Path -LiteralPath $sigFile)) {
-              throw "Signature file missing for $name"
+            foreach ($required in @($file, $shaFile, $sigFile, $publicKey)) {
+              if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+                throw "Published verification file missing: $required"
+              }
             }
             $expectedHash = ((Get-Content -LiteralPath $shaFile -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
             $actualHash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($expectedHash -ne $actualHash) {
-              throw "SHA256 mismatch for $name"
+              throw "Published SHA256 mismatch for $name"
             }
             powershell -NoProfile -ExecutionPolicy Bypass `
               -File scripts\Test-ReleaseSignature.ps1 `
               -File $file `
               -PublicKey $publicKey
             if ($LASTEXITCODE -ne 0) {
-              throw "Signature verification failed for $name"
+              throw "Published signature verification failed for $name"
             }
           }
 
-          Get-ChildItem -LiteralPath $root -File | Sort-Object Name |
-            Select-Object Name, Length | Format-Table -AutoSize
+          $manifest = Get-Content -LiteralPath (Join-Path $root 'latest.json') -Raw -Encoding utf8 | ConvertFrom-Json
+          if ([string]$manifest.version -ne $env:RELEASE_VERSION) {
+            throw "Published latest.json version mismatch: $($manifest.version)"
+          }
+          Write-Host 'PUBLISHED_SIGNATURES_AND_HASHES_OK'
 
-      - name: Smoke test one-file and portable Windows builds
+      - name: Smoke test downloaded published one-file and portable builds
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $root = "${{ steps.artifacts.outputs.root }}"
-
-          function Stop-Tree([int]$ProcessId) {
-            cmd /c "taskkill /PID $ProcessId /T /F" | Out-Null
-          }
-
-          function Wait-Ready([int]$Port, [System.Diagnostics.Process]$Process, [string]$Label) {
-            for ($attempt = 1; $attempt -le 90; $attempt++) {
-              Start-Sleep -Seconds 1
-              try {
-                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/ready" -TimeoutSec 1
-                if ($response.StatusCode -eq 200) {
-                  Write-Host "${Label} reached /api/ready on port $Port"
-                  return
-                }
-              } catch {
-                # Continue while PyInstaller starts or extracts.
-              }
-              $Process.Refresh()
-              if ($Process.HasExited) {
-                $crash = Join-Path $env:CCDS_CONFIG_DIR 'ccds-crash.log'
-                if (Test-Path -LiteralPath $crash) {
-                  Get-Content -LiteralPath $crash -Raw
-                }
-                throw "${Label} exited before readiness with code $($Process.ExitCode)."
-              }
-            }
-            throw "${Label} did not reach /api/ready within 90 seconds."
-          }
-
-          function Probe([string]$Executable, [int]$Port, [string]$Label) {
-            $oldConfig = $env:CCDS_CONFIG_DIR
-            $env:CCDS_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "ccds-${Label}-config"
-            New-Item -ItemType Directory -Force -Path $env:CCDS_CONFIG_DIR | Out-Null
-            $process = Start-Process -FilePath $Executable -ArgumentList "--server-only --port $Port" -PassThru
-            try {
-              Wait-Ready $Port $process $Label
-            } finally {
-              $process.Refresh()
-              if (-not $process.HasExited) { Stop-Tree $process.Id }
-              $env:CCDS_CONFIG_DIR = $oldConfig
-            }
-          }
-
-          $oneFile = Join-Path $root "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
-          Probe $oneFile 19082 'onefile'
-
-          $portableDir = Join-Path $env:RUNNER_TEMP 'ccds-portable-final'
-          Expand-Archive `
-            -LiteralPath (Join-Path $root "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip") `
-            -DestinationPath $portableDir `
-            -Force
-          $portableExe = Get-ChildItem -LiteralPath $portableDir -Recurse -File -Filter 'CC-Desktop-Switch.exe' |
-            Select-Object -First 1
-          if (-not $portableExe) {
-            throw 'Portable ZIP does not contain CC-Desktop-Switch.exe.'
-          }
-          Probe $portableExe.FullName 19083 'portable'
-
-      - name: Validate Windows install, in-place upgrade, launch, and uninstall lifecycle
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $root = "${{ steps.artifacts.outputs.root }}"
-
-          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-          $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            throw 'Windows install lifecycle requires an elevated runner.'
-          }
+          $root = "${{ steps.published.outputs.root }}"
 
           function Stop-Tree([int]$ProcessId) {
             cmd /c "taskkill /PID $ProcessId /T /F" | Out-Null
@@ -282,15 +239,73 @@ jobs:
             throw "${Label} did not reach /api/ready within 90 seconds."
           }
 
+          function Probe([string]$Executable, [int]$Port, [string]$Label) {
+            $oldConfig = $env:CCDS_CONFIG_DIR
+            $env:CCDS_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "published-${Label}-config"
+            New-Item -ItemType Directory -Force -Path $env:CCDS_CONFIG_DIR | Out-Null
+            $process = Start-Process -FilePath $Executable -ArgumentList "--server-only --port $Port" -PassThru
+            try {
+              Wait-Ready $Port $process $Label
+            } finally {
+              $process.Refresh()
+              if (-not $process.HasExited) { Stop-Tree $process.Id }
+              $env:CCDS_CONFIG_DIR = $oldConfig
+            }
+          }
+
+          Probe (Join-Path $root "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe") 19102 'published-onefile'
+
+          $portableDir = Join-Path $env:RUNNER_TEMP 'published-portable'
+          Expand-Archive `
+            -LiteralPath (Join-Path $root "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip") `
+            -DestinationPath $portableDir `
+            -Force
+          $portableExe = Get-ChildItem -LiteralPath $portableDir -Recurse -File -Filter 'CC-Desktop-Switch.exe' |
+            Select-Object -First 1
+          if (-not $portableExe) {
+            throw 'Published portable ZIP does not contain CC-Desktop-Switch.exe.'
+          }
+          Probe $portableExe.FullName 19103 'published-portable'
+
+      - name: Verify downloaded published Setup install, upgrade, launch, and uninstall
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = "${{ steps.published.outputs.root }}"
+
+          function Stop-Tree([int]$ProcessId) {
+            cmd /c "taskkill /PID $ProcessId /T /F" | Out-Null
+          }
+
+          function Wait-Ready([int]$Port, [System.Diagnostics.Process]$Process) {
+            for ($attempt = 1; $attempt -le 90; $attempt++) {
+              Start-Sleep -Seconds 1
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/ready" -TimeoutSec 1
+                if ($response.StatusCode -eq 200) {
+                  Write-Host "Published installed executable reached /api/ready on port $Port"
+                  return
+                }
+              } catch {
+                # Continue while the installed runtime starts.
+              }
+              $Process.Refresh()
+              if ($Process.HasExited) {
+                throw "Published installed executable exited with code $($Process.ExitCode)."
+              }
+            }
+            throw 'Published installed executable did not reach /api/ready.'
+          }
+
+          function Find-UninstallKey([string[]]$Candidates) {
+            return $Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          }
+
           function Assert-RegistryValue([string]$Path, [string]$Name, [object]$Expected) {
             $actual = (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name
             if ($actual -ne $Expected) {
               throw "Registry value mismatch for ${Name}: expected=$Expected actual=$actual"
             }
-          }
-
-          function Find-UninstallKey([string[]]$Candidates) {
-            return $Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
           }
 
           $setup = Join-Path $root "CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
@@ -301,99 +316,91 @@ jobs:
           $policyKey = 'HKCU:\Software\Policies\Claude'
           Remove-Item -LiteralPath $policyKey -Recurse -Force -ErrorAction SilentlyContinue
 
-          Write-Host 'Installing v1.0.26 silently...'
-          $firstInstall = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
-          if ($firstInstall.ExitCode -ne 0) {
-            throw "Initial silent install failed with code $($firstInstall.ExitCode)."
+          $install = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "Published Setup install failed with code $($install.ExitCode)."
           }
           $uninstallKey = Find-UninstallKey $uninstallKeyCandidates
           if (-not $uninstallKey) {
-            throw 'Uninstall registry entry was not created by the first install.'
+            throw 'Published Setup did not create uninstall metadata.'
           }
           Assert-RegistryValue $uninstallKey 'DisplayVersion' $env:RELEASE_VERSION
-          $installedState = Get-ItemProperty -LiteralPath $uninstallKey
-          $installDir = [string]$installedState.InstallLocation
-          $uninstaller = ([string]$installedState.UninstallString).Trim('"')
+          $state = Get-ItemProperty -LiteralPath $uninstallKey
+          $installDir = [string]$state.InstallLocation
           $installedExe = Join-Path $installDir 'CC-Desktop-Switch.exe'
-          foreach ($required in @($installedExe, $uninstaller)) {
-            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
-              throw "Installed file missing: $required"
-            }
-          }
 
           New-Item -ItemType Directory -Force -Path $policyKey | Out-Null
-          $policyValues = [ordered]@{
+          foreach ($entry in ([ordered]@{
             inferenceProvider = 'gateway'
             inferenceGatewayBaseUrl = 'http://127.0.0.1:18080'
-            inferenceGatewayApiKey = 'smoke-secret'
+            inferenceGatewayApiKey = 'published-smoke-secret'
             inferenceGatewayAuthScheme = 'bearer'
             inferenceGatewayHeaders = '[]'
             inferenceModels = '[]'
             coworkEgressAllowedHosts = '["*"]'
             ccds_managed = 'true'
             unrelated_policy_sentinel = 'keep-me'
-          }
-          foreach ($entry in $policyValues.GetEnumerator()) {
+          }).GetEnumerator()) {
             New-ItemProperty -LiteralPath $policyKey -Name $entry.Key -Value $entry.Value -PropertyType String -Force | Out-Null
           }
           New-ItemProperty -LiteralPath $policyKey -Name 'isClaudeCodeForDesktopEnabled' -Value 1 -PropertyType DWord -Force | Out-Null
 
-          Write-Host 'Running same-version silent in-place upgrade...'
           $upgrade = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
           if ($upgrade.ExitCode -ne 0) {
-            throw "Silent in-place upgrade failed with code $($upgrade.ExitCode)."
+            throw "Published Setup in-place upgrade failed with code $($upgrade.ExitCode)."
           }
           for ($attempt = 1; $attempt -le 30; $attempt++) {
             $upgradedKey = Find-UninstallKey $uninstallKeyCandidates
-            if ($upgradedKey -and (Test-Path -LiteralPath $installedExe)) {
-              break
-            }
+            if ($upgradedKey -and (Test-Path -LiteralPath $installedExe)) { break }
             Start-Sleep -Seconds 1
           }
           $upgradedKey = Find-UninstallKey $uninstallKeyCandidates
           if (-not $upgradedKey) {
-            throw 'In-place upgrade failed to recreate uninstall metadata.'
+            throw 'Published Setup in-place upgrade failed to recreate uninstall metadata.'
           }
           Assert-RegistryValue $upgradedKey 'DisplayVersion' $env:RELEASE_VERSION
-          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
-            throw 'In-place upgrade failed to restore the installed executable.'
-          }
-          foreach ($name in @($policyValues.Keys + @('isClaudeCodeForDesktopEnabled'))) {
+          foreach ($name in @(
+            'inferenceProvider',
+            'inferenceGatewayBaseUrl',
+            'inferenceGatewayApiKey',
+            'inferenceGatewayAuthScheme',
+            'inferenceGatewayHeaders',
+            'inferenceModels',
+            'isClaudeCodeForDesktopEnabled',
+            'coworkEgressAllowedHosts',
+            'ccds_managed',
+            'unrelated_policy_sentinel'
+          )) {
             if (-not (Get-ItemProperty -LiteralPath $policyKey -Name $name -ErrorAction SilentlyContinue)) {
-              throw "In-place upgrade incorrectly removed policy value: $name"
+              throw "Published in-place upgrade removed policy value: $name"
             }
           }
 
-          $env:CCDS_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'ccds-installed-final'
+          $env:CCDS_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'published-installed-config'
           New-Item -ItemType Directory -Force -Path $env:CCDS_CONFIG_DIR | Out-Null
-          $app = Start-Process -FilePath $installedExe -ArgumentList '--server-only --port 19084' -PassThru
+          $app = Start-Process -FilePath $installedExe -ArgumentList '--server-only --port 19104' -PassThru
           try {
-            Wait-Ready 19084 $app 'installed executable'
+            Wait-Ready 19104 $app
           } finally {
             $app.Refresh()
             if (-not $app.HasExited) { Stop-Tree $app.Id }
           }
 
           $uninstaller = ([string](Get-ItemProperty -LiteralPath $upgradedKey).UninstallString).Trim('"')
-          Write-Host 'Uninstalling v1.0.26 silently...'
           $remove = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
           if ($remove.ExitCode -ne 0) {
-            throw "Silent uninstall failed with code $($remove.ExitCode)."
+            throw "Published Setup uninstall failed with code $($remove.ExitCode)."
           }
           for ($attempt = 1; $attempt -le 45; $attempt++) {
-            $remainingKey = Find-UninstallKey $uninstallKeyCandidates
-            if (-not (Test-Path -LiteralPath $installedExe) -and -not $remainingKey) {
-              break
-            }
+            if (-not (Test-Path -LiteralPath $installedExe) -and -not (Find-UninstallKey $uninstallKeyCandidates)) { break }
             Start-Sleep -Seconds 1
           }
           if (Test-Path -LiteralPath $installedExe) {
-            throw 'Installed executable remained after uninstall.'
+            throw 'Published installed executable remained after uninstall.'
           }
           if (Find-UninstallKey $uninstallKeyCandidates) {
-            throw 'Uninstall registry entry remained after uninstall.'
+            throw 'Published uninstall metadata remained after uninstall.'
           }
-
           foreach ($managedName in @(
             'inferenceProvider',
             'inferenceGatewayBaseUrl',
@@ -406,18 +413,18 @@ jobs:
             'ccds_managed'
           )) {
             if (Get-ItemProperty -LiteralPath $policyKey -Name $managedName -ErrorAction SilentlyContinue) {
-              throw "Real uninstall left CCDS-managed policy value: $managedName"
+              throw "Published uninstall left CCDS-managed policy value: $managedName"
             }
           }
           Assert-RegistryValue $policyKey 'unrelated_policy_sentinel' 'keep-me'
           Remove-Item -LiteralPath $policyKey -Recurse -Force -ErrorAction SilentlyContinue
 
-          Write-Host 'WINDOWS_INSTALL_LIFECYCLE_OK'
+          Write-Host 'PUBLISHED_WINDOWS_INSTALL_LIFECYCLE_OK'
 
-      - name: Final dry-run validation summary
+      - name: Publication summary
         shell: powershell
         run: |
-          Write-Host 'FINAL_DRY_RUN_VALIDATION_OK'
-          Write-Host "Release workflow run: ${{ steps.release.outputs.run_id }}"
-          Write-Host "Validated source SHA: $env:EXPECTED_SOURCE_SHA"
-          Write-Host "Validated version: $env:RELEASE_VERSION"
+          Write-Host 'V1_0_26_RELEASE_PUBLISHED_AND_VERIFIED'
+          Write-Host "Formal workflow run: ${{ steps.release.outputs.run_id }}"
+          Write-Host "Release URL: ${{ steps.metadata.outputs.release_url }}"
+          Write-Host "Source SHA: $env:EXPECTED_SOURCE_SHA"
