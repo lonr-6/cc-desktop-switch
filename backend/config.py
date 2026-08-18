@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import shutil
+import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -45,15 +46,29 @@ DEFAULT_CONFIG = {
 }
 
 
+def _set_private_permissions(path: str, mode: int) -> None:
+    """在 POSIX 系统上收紧包含凭证的目录或文件权限。"""
+    if os.name != "posix":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        # 某些网络盘或不支持 POSIX 权限的文件系统会拒绝 chmod。
+        # 新文件仍由 mkstemp(0600) 创建；这里保持兼容而不阻断启动。
+        pass
+
+
 def ensure_config_dir():
-    """确保配置目录存在"""
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    """确保配置目录存在，并在 POSIX 系统上限制为当前用户可访问。"""
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    _set_private_permissions(CONFIG_DIR, 0o700)
 
 
 def ensure_backup_dir():
-    """确保配置备份目录存在"""
+    """确保配置备份目录存在，并在 POSIX 系统上限制为当前用户可访问。"""
     ensure_config_dir()
-    os.makedirs(BACKUP_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+    _set_private_permissions(BACKUP_DIR, 0o700)
 
 
 def load_config() -> dict:
@@ -61,6 +76,7 @@ def load_config() -> dict:
     ensure_config_dir()
     if not os.path.exists(CONFIG_FILE):
         return _config_with_legacy_model_aliases(copy.deepcopy(DEFAULT_CONFIG))
+    _set_private_permissions(CONFIG_FILE, 0o600)
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             raw = json.load(f)
@@ -70,14 +86,24 @@ def load_config() -> dict:
 
 
 def save_config(config: dict):
-    """保存配置文件"""
+    """以原子方式保存配置，并避免 API Key 被其他本机用户读取。"""
     ensure_config_dir()
     normalized = normalize_config(config)
-    # 原子写入：先写临时文件，再重命名
-    tmp_file = CONFIG_FILE + ".tmp"
-    with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(normalized, f, ensure_ascii=False, indent=2)
-    shutil.move(tmp_file, CONFIG_FILE)
+    fd, tmp_file = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=CONFIG_DIR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(normalized, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        _set_private_permissions(tmp_file, 0o600)
+        os.replace(tmp_file, CONFIG_FILE)
+        _set_private_permissions(CONFIG_FILE, 0o600)
+    finally:
+        if os.path.exists(tmp_file):
+            try:
+                os.unlink(tmp_file)
+            except OSError:
+                pass
 
 
 def _normalize_provider(provider: dict) -> dict:
@@ -183,6 +209,7 @@ def create_backup(reason: str = "manual") -> dict:
     filename = f"config-{timestamp}-{safe_reason or 'manual'}-{secrets.token_hex(2)}.json"
     target = os.path.join(BACKUP_DIR, filename)
     shutil.copy2(CONFIG_FILE, target)
+    _set_private_permissions(target, 0o600)
     stat = os.stat(target)
     return {
         "name": filename,
@@ -201,6 +228,7 @@ def list_backups() -> list:
         path = os.path.join(BACKUP_DIR, name)
         if not os.path.isfile(path):
             continue
+        _set_private_permissions(path, 0o600)
         stat = os.stat(path)
         backups.append({
             "name": name,
