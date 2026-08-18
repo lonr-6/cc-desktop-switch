@@ -64,7 +64,12 @@ Function .onInit
 
     ${If} $R0 != ""
         DetailPrint "Existing version detected. The installer will uninstall it first."
-        ExecWait '"$R0" /S /UPGRADE'
+        ; _?= keeps the old NSIS uninstaller in place, so ExecWait really waits
+        ; for cleanup to finish before this installer writes the replacement.
+        ; It must be the final, unquoted command-line parameter.
+        ExecWait '"$R0" /S /UPGRADE _?=$R1'
+        Delete "$R0"
+        RMDir "$R1"
     ${EndIf}
 FunctionEnd
 

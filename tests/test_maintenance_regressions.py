@@ -37,7 +37,17 @@ class FrontendPresetFormatTests(unittest.TestCase):
 class InstallerCleanupTests(unittest.TestCase):
     def test_upgrade_keeps_policy_and_real_uninstall_clears_only_ccds_values(self):
         source = (ROOT / "installer.nsi").read_text(encoding="utf-8")
-        self.assertIn("/S /UPGRADE", source)
+        upgrade_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if line.strip().startswith("ExecWait") and "/UPGRADE" in line
+        ]
+        self.assertEqual(
+            upgrade_lines,
+            ["ExecWait '\"$R0\" /S /UPGRADE _?=$R1'"],
+        )
+        self.assertIn('Delete "$R0"', source)
+        self.assertIn('RMDir "$R1"', source)
         self.assertIn('${GetOptions} "$R0" "/UPGRADE" $R1', source)
         self.assertIn('ReadRegStr $0 HKCU "${CLAUDE_POLICY_KEY}" "ccds_managed"', source)
         self.assertIn('StrCmp $0 "true" 0 done_clear_policy', source)
