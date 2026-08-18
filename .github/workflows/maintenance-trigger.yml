@@ -58,7 +58,8 @@ jobs:
               raise RuntimeError('Could not repair the generated NSIS assertion')
           generated_test.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
-          rm -f .github/workflows/maintenance-trigger.yml
+          git checkout -- .github/workflows/maintenance-patch.yml .github/workflows/maintenance-trigger.yml
+          rm -f .github/workflows/test.yml
 
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
