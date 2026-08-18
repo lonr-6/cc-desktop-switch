@@ -143,13 +143,23 @@ netstat -ano | findstr :18081
 netstat -ano | findstr :18080
 ```
 
+### Claude Desktop shows "Managed by your organization" after uninstall
+
+CC Desktop Switch uses Claude Desktop's policy location for third-party inference settings. A normal Windows uninstall now removes only policy values carrying the `ccds_managed=true` marker. Silent in-place upgrades pass `/UPGRADE` and keep the active provider configuration. Policies written under HKLM, delivered by MDM, or owned by another administrator are never removed.
+
+With v1.0.25 or earlier, use **Clear Desktop configuration** before uninstalling. If Claude Desktop is still managed afterwards, check for machine- or organization-level policy rather than deleting unrelated registry values.
+
+### DeepSeek Max / reasoning errors
+
+DeepSeek's official Anthropic-compatible endpoint supports `output_config.effort=max`. CC Desktop Switch now shows the Max compatibility hint only when a 400/422 response explicitly names a thinking/effort field and rejects it. Unrelated authentication, URL, model, context-length, or parameter errors remain visible for diagnosis.
+
 ### Claude Code attribution header
 
 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` is only a Claude Code prompt-cache compatibility option. It is not a Claude Desktop 3P setting and does not replace the local gateway.
 
 ### GitHub Copilot subscription
 
-GitHub Copilot subscriptions are not directly supported as a provider API in CC Desktop Switch. If you bring your own OpenAI Chat or Anthropic-compatible endpoint that proxies Copilot or another service, you can try it as a custom third-party provider at your own risk. Verify the endpoint's terms, account risk, API format, base URL, streaming behavior, and tool-call compatibility before relying on it.
+GitHub Copilot subscriptions are not directly supported as a provider API in CC Desktop Switch. Supported Copilot clients now offer their own BYOK/custom-provider settings, including OpenAI-compatible and local endpoints; configure those inside Copilot rather than routing a subscription through CC Desktop Switch. If you bring an independent OpenAI Chat or Anthropic-compatible endpoint, you can still test it as a custom provider after verifying its terms, API format, streaming behavior, and tool-call compatibility.
 
 ## Star History
 

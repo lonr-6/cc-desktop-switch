@@ -1335,7 +1335,7 @@
     setAuthSchemeValue(preset.authScheme);
     setApiKeyInputState(false);
     selectedPreset = preset;
-    setFormApiFormat(preset.apiFormat === "OpenAI" ? "openai_chat" : "anthropic");
+    setFormApiFormat(preset.apiFormat);
     formModelCapabilities = normalizeCapabilities(preset.modelCapabilities || {});
     formRequestOptions = normalizeRequestOptions(preset.requestOptions || {});
     providerAvailableModels = [];

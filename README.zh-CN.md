@@ -143,13 +143,23 @@ netstat -ano | findstr :18081
 netstat -ano | findstr :18080
 ```
 
+### 卸载后 Claude Desktop 仍显示“由组织管理”
+
+CC Desktop Switch 使用 Claude Desktop 的策略位置写入第三方推理配置。现在 Windows 正常卸载时，只会删除带有 `ccds_managed=true` 标记、由 CCDS 自己写入的策略值；静默覆盖升级会传入 `/UPGRADE` 并保留当前 provider 配置。HKLM、MDM 或其他管理员写入的组织策略不会被删除。
+
+v1.0.25 及更早版本建议先在应用中执行“清除桌面版配置”再卸载。若之后仍显示由组织管理，应检查机器级或组织级策略，不要直接删除无关注册表项。
+
+### DeepSeek Max / 推理参数报错
+
+DeepSeek 官方 Anthropic 兼容端点支持 `output_config.effort=max`。CC Desktop Switch 现在只有在上游 400/422 明确指出 thinking/effort 字段并拒绝它时，才显示 Max 兼容提示；鉴权、URL、模型、上下文长度或其他参数错误会保留原始诊断信息。
+
 ### Claude Code attribution header
 
 `CLAUDE_CODE_ATTRIBUTION_HEADER=0` 只用于 Claude Code 的 prompt cache 兼容，不是 Claude Desktop 第三方推理配置项，也不能替代本机 gateway。
 
 ### GitHub Copilot 订阅账号
 
-CC Desktop Switch 不直接支持把 GitHub Copilot 订阅账号当作 provider API 使用。如果你自己提供了 OpenAI Chat 或 Anthropic 兼容的 Copilot 中转端点，可以按自定义第三方 provider 尝试接入，但风险由用户自行承担。请先确认端点使用规则、账号风险、API 格式、Base URL、流式输出和工具调用是否真的兼容。
+CC Desktop Switch 不直接支持把 GitHub Copilot 订阅账号当作 provider API 使用。当前部分 Copilot 客户端已经提供自己的 BYOK / 自定义 provider 设置，可直接配置 OpenAI 兼容或本地端点；这类能力应在 Copilot 内部配置，而不是把订阅账号绕到 CC Desktop Switch。你仍可把独立的 OpenAI Chat 或 Anthropic 兼容端点作为自定义 provider 测试，但应先确认使用规则、API 格式、流式输出和工具调用兼容性。
 
 ## Star History
 
