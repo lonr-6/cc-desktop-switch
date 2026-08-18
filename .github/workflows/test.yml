@@ -1,0 +1,64 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Python and frontend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q backend main.py tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Check frontend JavaScript syntax
+        run: |
+          node --check frontend/js/api.js
+          node --check frontend/js/app.js
+          node --check frontend/js/i18n.js
+
+  installer-syntax:
+    name: NSIS installer syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install NSIS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis
+      - name: Compile installer with a dummy payload
+        run: |
+          mkdir -p dist/CC-Desktop-Switch
+          printf 'syntax-check' > dist/CC-Desktop-Switch/placeholder.txt
+          makensis -V2 installer.nsi
