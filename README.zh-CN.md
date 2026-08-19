@@ -163,8 +163,8 @@ CC Desktop Switch 不直接支持把 GitHub Copilot 订阅账号当作 provider 
 
 ## Star History
 
-<a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">
-  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lonr-6/cc-desktop-switch&type=Date">
+<a href="https://star-history.dera.page/#lonr-6/cc-desktop-switch&Date">
+  <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=lonr-6/cc-desktop-switch&type=Date">
 </a>
 
 ## 技术栈
